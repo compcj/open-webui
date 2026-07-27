@@ -10,26 +10,24 @@ async def search_search1api(
     count: int,
     filter_list: list[str | None] | None = None,
 ) -> list[SearchResult]:
-    """Search the web using Search1API and return normalised results."""
-    url = 'https://api.search1api.com/search'
+    """Search the web using Search1API and return normalized results."""
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',
     }
-    payload = {
-        'query': query,
-        'max_results': count,
-    }
-
+    payload = {'query': query, 'max_results': count}
     session = await get_session()
-    async with session.post(url, headers=headers, json=payload) as response:
+    async with session.post(
+        'https://api.search1api.com/search',
+        headers=headers,
+        json=payload,
+    ) as response:
         response.raise_for_status()
         data = await response.json()
 
     results = data.get('results', [])
     if filter_list:
         results = get_filtered_results(results, filter_list)
-
     return [
         SearchResult(
             link=result.get('link', ''),
