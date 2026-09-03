@@ -21,6 +21,8 @@
 	import FiltersSelector from '$lib/components/workspace/Models/FiltersSelector.svelte';
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
+	import AvailableReasoningEffortEditor from '$lib/components/workspace/Models/AvailableReasoningEffortEditor.svelte';
+	import { normalizeAvailableReasoningEffort } from '$lib/utils/reasoning-effort';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -106,6 +108,7 @@
 	let filterIds = [];
 	let defaultFilterIds = [];
 
+	let availableReasoningEffort = [];
 	let capabilities = { ...DEFAULT_CAPABILITIES };
 	let defaultFeatureIds = [];
 	let builtinTools = {};
@@ -265,6 +268,14 @@
 
 		info.access_grants = accessGrants;
 		info.meta.capabilities = capabilities;
+
+		const normalizedAvailableReasoningEffort =
+			normalizeAvailableReasoningEffort(availableReasoningEffort);
+		if (normalizedAvailableReasoningEffort.length > 0) {
+			info.meta.available_reasoning_effort = normalizedAvailableReasoningEffort;
+		} else {
+			delete info.meta.available_reasoning_effort;
+		}
 
 		if (enableDescription) {
 			info.meta.description = info.meta.description.trim() === '' ? null : info.meta.description;
@@ -460,6 +471,10 @@
 			filterIds = model?.meta?.filterIds ?? [];
 			defaultFilterIds = model?.meta?.defaultFilterIds ?? [];
 			actionIds = model?.meta?.actionIds ?? [];
+
+			availableReasoningEffort = normalizeAvailableReasoningEffort(
+				model?.meta?.available_reasoning_effort
+			);
 
 			// Per-model overrides take precedence over admin defaults
 			capabilities = { ...capabilities, ...(model?.meta?.capabilities ?? {}) };
@@ -851,6 +866,10 @@
 											{/if}
 										</div>
 									{/if}
+								</div>
+
+								<div class="mb-2">
+									<AvailableReasoningEffortEditor bind:values={availableReasoningEffort} />
 								</div>
 
 								<div class="flex h-7 w-full justify-between">

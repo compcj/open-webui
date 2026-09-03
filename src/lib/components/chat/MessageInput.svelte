@@ -75,6 +75,11 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
+	import ReasoningEffortSelector from './ReasoningEffortSelector.svelte';
+	import {
+		getAvailableReasoningEffort,
+		resolveReasoningEffortOverride
+	} from '$lib/utils/reasoning-effort';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 	import SkillsModal from './SkillsModal.svelte';
@@ -144,9 +149,14 @@
 
 	export let atSelectedModel: Model | undefined = undefined;
 	export let selectedModels: [''];
+	export let reasoningEffortByModel: Record<string, string> = {};
+	export let onReasoningEffortChange: (modelId: string, value: string) => void = () => {};
 
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+	$: reasoningEffortModels = selectedModelIds
+		.map((id) => $models.find((model) => model.id === id))
+		.filter((model) => model && getAvailableReasoningEffort(model).length > 0);
 	$: hasChatVariables = selectedModelIds.some(
 		(modelId) =>
 			($models.find((model) => model.id === modelId)?.info?.meta?.chat_variables_schema?.fields
@@ -2530,6 +2540,19 @@
 											triggerClassName="items-center gap-1.5 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
 										/>
 									</div>
+
+									{#each reasoningEffortModels as model (model.id)}
+										{@const available = getAvailableReasoningEffort(model)}
+										<ReasoningEffortSelector
+											{available}
+											label={reasoningEffortModels.length > 1 ? model.name : ''}
+											value={resolveReasoningEffortOverride(
+												reasoningEffortByModel[model.id],
+												available
+											) ?? ''}
+											onChange={(next) => onReasoningEffortChange(model.id, next)}
+										/>
+									{/each}
 
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">

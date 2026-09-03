@@ -1762,6 +1762,7 @@ export interface ModelMeta {
 	hidden?: boolean;
 	capabilities?: object;
 	profile_image_url?: string;
+	available_reasoning_effort?: string[];
 }
 
 export interface ModelParams {}

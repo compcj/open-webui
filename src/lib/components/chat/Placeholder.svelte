@@ -37,6 +37,8 @@
 
 	export let atSelectedModel: Model | undefined;
 	export let selectedModels: [''];
+	export let reasoningEffortByModel: Record<string, string> = {};
+	export let onReasoningEffortChange: (modelId: string, value: string) => void = () => {};
 
 	export let history;
 
@@ -234,6 +236,8 @@
 						bind:this={messageInput}
 						{history}
 						bind:selectedModels
+						{reasoningEffortByModel}
+						{onReasoningEffortChange}
 						bind:files
 						bind:prompt
 						bind:autoScroll

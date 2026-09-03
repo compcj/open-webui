@@ -82,8 +82,17 @@ class ModelMeta(BaseModel):
     description: str | None = Field(default=None, description='User-facing description of the model.')
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
+    available_reasoning_effort: list[str] | None = None
 
     model_config = ConfigDict(extra='allow')
+
+    @field_validator('available_reasoning_effort', mode='before')
+    @classmethod
+    def normalize_available_reasoning_effort(cls, v):
+        if not isinstance(v, list):
+            return None
+        values = [item.strip() for item in v if isinstance(item, str) and item.strip()]
+        return values or None
 
     @field_validator('profile_image_url', mode='before')
     @classmethod

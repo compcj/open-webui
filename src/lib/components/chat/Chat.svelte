@@ -66,6 +66,12 @@
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
+	import {
+		getAvailableReasoningEffort,
+		mergeRequestParamsWithReasoningEffort,
+		resolveReasoningEffortOverride,
+		sanitizeReasoningEffortByModel
+	} from '$lib/utils/reasoning-effort';
 	import { applyResponseStreamEvent, getOutputText } from './Messages/structuredOutput';
 
 	import {
@@ -410,6 +416,7 @@
 	let chatFiles = [];
 	let files: any[] = [];
 	let params = {};
+	let reasoningEffortByModel = {};
 	let chatVariables = {};
 	let showChatVariablesModal = false;
 	let loadedChatIdProp = '';
@@ -419,6 +426,32 @@
 		(params?.tool_approval_mode ?? $settings?.params?.tool_approval_mode) === 'ask'
 			? 'ask'
 			: 'full';
+
+	const getReasoningEffortByModelForSave = () =>
+		sanitizeReasoningEffortByModel(
+			reasoningEffortByModel,
+			Object.fromEntries(($models ?? []).map((model) => [model.id, getAvailableReasoningEffort(model)]))
+		);
+
+	const persistReasoningEffortByModel = async () => {
+		if (!$chatId || $temporaryChatEnabled) return;
+		await updateChatById(localStorage.token, $chatId, {
+			reasoning_effort_by_model: getReasoningEffortByModelForSave()
+		}).catch((err) => {
+			console.error('[reasoning effort autosave]', err);
+		});
+	};
+
+	const setReasoningEffortOverride = (modelId: string, value: string) => {
+		if (value) {
+			reasoningEffortByModel = { ...reasoningEffortByModel, [modelId]: value };
+		} else {
+			const next = { ...reasoningEffortByModel };
+			delete next[modelId];
+			reasoningEffortByModel = next;
+		}
+		persistReasoningEffortByModel();
+	};
 
 	const handleToolApprovalModeChange = async (mode: string) => {
 		const tool_approval_mode = mode === 'ask' ? 'ask' : 'full';
@@ -881,6 +914,7 @@
 			currentId: null
 		};
 		params = {};
+		reasoningEffortByModel = {};
 		chatVariables = {};
 		chatFiles = [];
 		files = [];
@@ -2131,6 +2165,7 @@
 
 		chatFiles = [];
 		params = {};
+		reasoningEffortByModel = {};
 		chatVariables = {};
 		taskIds = null;
 		chatTasks = [];
@@ -2319,6 +2354,7 @@
 
 				params = structuredClone(chatContent?.params ?? {});
 				delete params.note_id;
+				reasoningEffortByModel = structuredClone(chatContent?.reasoning_effort_by_model ?? {});
 				chatFiles = structuredClone(chatContent?.files ?? []);
 
 				// Load tasks from chat-level DB field
@@ -2582,6 +2618,7 @@
 					messages: messages,
 					history: history,
 					params: params,
+					reasoning_effort_by_model: getReasoningEffortByModelForSave(),
 					files: chatFiles
 				});
 
@@ -3551,11 +3588,17 @@
 				stream: stream,
 				model: model.id,
 				...(messages.length > 0 ? { messages } : {}),
-				params: {
-					...$settings?.params,
-					...params,
-					stop: getStopTokens()
-				},
+				params: mergeRequestParamsWithReasoningEffort(
+					{
+						...$settings?.params,
+						...params,
+						stop: getStopTokens()
+					},
+					resolveReasoningEffortOverride(
+						reasoningEffortByModel[model.id],
+						getAvailableReasoningEffort($models.find((m) => m.id === model.id))
+					)
+				),
 
 				files: (files?.length ?? 0) > 0 ? files : undefined,
 
@@ -3934,6 +3977,7 @@
 					models: selectedModels,
 					system: $settings.system ?? undefined,
 					params: params,
+					reasoning_effort_by_model: getReasoningEffortByModelForSave(),
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					tags: [],
@@ -3978,6 +4022,7 @@
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					params: params,
+					reasoning_effort_by_model: getReasoningEffortByModelForSave(),
 					files: chatFiles
 				});
 			}
@@ -4341,6 +4386,7 @@
 											title: title.length > 50 ? `${title.slice(0, 50)}...` : title,
 											models: selectedModels,
 											params: params,
+											reasoning_effort_by_model: getReasoningEffortByModelForSave(),
 											history: history,
 											messages: messages,
 											timestamp: Date.now()
@@ -4427,6 +4473,8 @@
 										{history}
 										{taskIds}
 										bind:selectedModels
+										{reasoningEffortByModel}
+										onReasoningEffortChange={setReasoningEffortOverride}
 										bind:files
 										bind:prompt
 										bind:autoScroll
@@ -4519,6 +4567,8 @@
 										{history}
 										{taskIds}
 										bind:selectedModels
+										{reasoningEffortByModel}
+										onReasoningEffortChange={setReasoningEffortOverride}
 										bind:files
 										bind:prompt
 										bind:autoScroll
@@ -4578,6 +4628,8 @@
 								<Placeholder
 									{history}
 									bind:selectedModels
+									{reasoningEffortByModel}
+									onReasoningEffortChange={setReasoningEffortOverride}
 									bind:messageInput
 									bind:files
 									bind:prompt
