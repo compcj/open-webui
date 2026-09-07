@@ -50,6 +50,7 @@ from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
     apply_system_prompt_to_body,
 )
+from open_webui.utils.responses_reasoning import remap_reasoning_effort_for_responses
 from open_webui.utils.session_pool import (
     cleanup_response,
     get_client_timeout,
@@ -1400,6 +1401,10 @@ def convert_to_responses_payload(payload: dict) -> dict:
         'stop',
     ):
         responses_payload.pop(unsupported_key, None)
+
+    # Completions: { "reasoning_effort": "medium" }
+    # Responses:   { "reasoning": { "effort": "medium" } }
+    remap_reasoning_effort_for_responses(responses_payload)
 
     # Convert Chat Completions tools format to Responses API format
     # Chat Completions: {"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}
