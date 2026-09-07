@@ -1763,6 +1763,7 @@ export interface ModelMeta {
 	capabilities?: object;
 	profile_image_url?: string;
 	available_reasoning_effort?: string[];
+	default_reasoning_effort?: string;
 }
 
 export interface ModelParams {}

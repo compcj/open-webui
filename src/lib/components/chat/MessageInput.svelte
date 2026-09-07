@@ -78,6 +78,7 @@
 	import ReasoningEffortSelector from './ReasoningEffortSelector.svelte';
 	import {
 		getAvailableReasoningEffort,
+		getEffectiveDefaultReasoningEffort,
 		resolveReasoningEffortOverride
 	} from '$lib/utils/reasoning-effort';
 
@@ -2546,6 +2547,7 @@
 										<ReasoningEffortSelector
 											{available}
 											label={reasoningEffortModels.length > 1 ? model.name : ''}
+											defaultEffort={getEffectiveDefaultReasoningEffort(model, $settings?.params)}
 											value={resolveReasoningEffortOverride(
 												reasoningEffortByModel[model.id],
 												available

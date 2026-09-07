@@ -7,7 +7,10 @@ import {
 	resolveReasoningEffortOverride,
 	sanitizeReasoningEffortByModel,
 	toggleAvailableReasoningEffort,
-	fillReasoningEffortFromLastUsed
+	fillReasoningEffortFromLastUsed,
+	formatDefaultReasoningEffortLabel,
+	getDefaultReasoningEffort,
+	getEffectiveDefaultReasoningEffort
 } from './reasoning-effort';
 
 describe('normalizeAvailableReasoningEffort', () => {
@@ -139,6 +142,50 @@ describe('fillReasoningEffortFromLastUsed', () => {
 		expect(
 			fillReasoningEffortFromLastUsed({ extra: 'high' }, { a: 'low', extra: 'low' }, ['a'], available)
 		).toEqual({ extra: 'high', a: 'low' });
+	});
+});
+
+describe('getDefaultReasoningEffort', () => {
+	it('reads a trimmed model-level default from meta', () => {
+		expect(
+			getDefaultReasoningEffort({
+				info: { meta: { default_reasoning_effort: ' medium ' } }
+			})
+		).toBe('medium');
+	});
+
+	it('returns undefined when the model default is missing or blank', () => {
+		expect(getDefaultReasoningEffort(undefined)).toBeUndefined();
+		expect(getDefaultReasoningEffort({ info: { meta: {} } })).toBeUndefined();
+		expect(
+			getDefaultReasoningEffort({ info: { meta: { default_reasoning_effort: '   ' } } })
+		).toBeUndefined();
+	});
+});
+
+describe('getEffectiveDefaultReasoningEffort', () => {
+	const model = { info: { meta: { default_reasoning_effort: 'medium' } } };
+
+	it('prefers a non-empty user settings override', () => {
+		expect(getEffectiveDefaultReasoningEffort(model, { reasoning_effort: 'high' })).toBe('high');
+	});
+
+	it('falls back to the model default when settings has no override', () => {
+		expect(getEffectiveDefaultReasoningEffort(model, {})).toBe('medium');
+		expect(getEffectiveDefaultReasoningEffort(model, { reasoning_effort: '  ' })).toBe('medium');
+		expect(getEffectiveDefaultReasoningEffort(model, undefined)).toBe('medium');
+	});
+});
+
+describe('formatDefaultReasoningEffortLabel', () => {
+	it('appends a non-empty effort in square brackets', () => {
+		expect(formatDefaultReasoningEffortLabel('Default', 'medium')).toBe('Default [medium]');
+	});
+
+	it('leaves the default label unchanged when effort is empty', () => {
+		expect(formatDefaultReasoningEffortLabel('Default', undefined)).toBe('Default');
+		expect(formatDefaultReasoningEffortLabel('Default', '')).toBe('Default');
+		expect(formatDefaultReasoningEffortLabel('Default', '   ')).toBe('Default');
 	});
 });
 

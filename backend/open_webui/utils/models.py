@@ -21,6 +21,7 @@ from open_webui.routers import ollama, openai
 from open_webui.socket.utils import RedisDict
 from open_webui.utils.access_control import has_access, has_base_model_access
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.misc import merge_model_params
 from open_webui.utils.plugin import (
     get_functions_cache,
     get_function_module_from_cache,
@@ -30,6 +31,22 @@ logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
 
 BASE_MODELS_CACHE_KEY = f'{REDIS_KEY_PREFIX}:models:base'
+
+
+def effective_reasoning_effort(default_params: dict | None, model_params: dict | None) -> str | None:
+    merged = merge_model_params(default_params or {}, model_params or {})
+    value = merged.get('reasoning_effort')
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def stamp_default_reasoning_effort(info: dict | None, default_params: dict | None, model_params: dict | None) -> None:
+    if not isinstance(info, dict):
+        return
+    effort = effective_reasoning_effort(default_params, model_params)
+    if effort:
+        info.setdefault('meta', {})['default_reasoning_effort'] = effort
 
 
 async def fetch_ollama_models(request: Request, user: UserModel = None):
@@ -72,6 +89,7 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
         'evaluation.arena.enable',
         'evaluation.arena.models',
         'models.default_metadata',
+        'models.default_params',
     )
     if refresh:
         await openai.get_all_models.cache.clear()
@@ -165,6 +183,9 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
         enabled_filter_ids = set()
 
     custom_models = await Models.get_all_models()
+    default_model_params = config.get('models.default_params') or {}
+    if not isinstance(default_model_params, dict):
+        default_model_params = {}
 
     # Single O(1) lookup: Ollama base names first, then exact IDs (exact wins).
     base_model_lookup = {}
@@ -197,6 +218,11 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
                                 action_ids.extend(model['info']['meta'].get('actionIds', []))
                                 filter_ids.extend(model['info']['meta'].get('filterIds', []))
 
+                        stamp_default_reasoning_effort(
+                            model['info'],
+                            default_model_params,
+                            custom_model.params.model_dump() if custom_model.params else {},
+                        )
                         if 'params' in model['info']:
                             del model['info']['params']
 
@@ -239,6 +265,11 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             schema = get_chat_variables_schema(custom_model.params.model_dump().get('system'))
             if schema:
                 info.setdefault('meta', {})['chat_variables_schema'] = schema
+            stamp_default_reasoning_effort(
+                info,
+                default_model_params,
+                custom_model.params.model_dump() if custom_model.params else {},
+            )
             if 'params' in info:
                 # Remove params to avoid exposing sensitive info
                 del info['params']
@@ -261,6 +292,17 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             model['filter_ids'] = filter_ids
 
             models.append(model)
+
+    global_default_effort = effective_reasoning_effort(default_model_params, {})
+    if global_default_effort:
+        for model in models:
+            info = model.setdefault('info', {})
+            if not isinstance(info, dict):
+                continue
+            meta = info.setdefault('meta', {})
+            if not isinstance(meta, dict) or meta.get('default_reasoning_effort'):
+                continue
+            meta['default_reasoning_effort'] = global_default_effort
 
     # Process action_ids to get the actions
     def get_action_items_from_module(function, module):

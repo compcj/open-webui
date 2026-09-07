@@ -123,3 +123,32 @@ export function fillReasoningEffortFromLastUsed(
 
 	return next;
 }
+
+function trimReasoningEffort(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	return trimmed || undefined;
+}
+
+export function getDefaultReasoningEffort(model: {
+	info?: { meta?: { default_reasoning_effort?: unknown } };
+} | null | undefined): string | undefined {
+	return trimReasoningEffort(model?.info?.meta?.default_reasoning_effort);
+}
+
+export function getEffectiveDefaultReasoningEffort(
+	model: { info?: { meta?: { default_reasoning_effort?: unknown } } } | null | undefined,
+	settingsParams: { reasoning_effort?: unknown } | null | undefined
+): string | undefined {
+	return trimReasoningEffort(settingsParams?.reasoning_effort) ?? getDefaultReasoningEffort(model);
+}
+
+export function formatDefaultReasoningEffortLabel(
+	defaultLabel: string,
+	effort: string | undefined | null
+): string {
+	const trimmed = trimReasoningEffort(effort);
+	return trimmed ? `${defaultLabel} [${trimmed}]` : defaultLabel;
+}
