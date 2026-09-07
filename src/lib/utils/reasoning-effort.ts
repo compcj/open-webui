@@ -95,3 +95,31 @@ export function sanitizeReasoningEffortByModel(
 	}
 	return result;
 }
+
+export function fillReasoningEffortFromLastUsed(
+	chatMap: Record<string, string> | null | undefined,
+	lastUsed: Record<string, string> | null | undefined,
+	modelIds: string[],
+	availableByModel: Record<string, string[]>
+): Record<string, string> {
+	const next = { ...(chatMap ?? {}) };
+
+	for (const modelId of modelIds) {
+		if (!modelId) {
+			continue;
+		}
+
+		const available = availableByModel[modelId] ?? [];
+		if (resolveReasoningEffortOverride(next[modelId], available)) {
+			continue;
+		}
+
+		delete next[modelId];
+		const filled = resolveReasoningEffortOverride(lastUsed?.[modelId], available);
+		if (filled) {
+			next[modelId] = filled;
+		}
+	}
+
+	return next;
+}

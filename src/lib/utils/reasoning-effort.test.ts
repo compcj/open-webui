@@ -6,7 +6,8 @@ import {
 	normalizeAvailableReasoningEffort,
 	resolveReasoningEffortOverride,
 	sanitizeReasoningEffortByModel,
-	toggleAvailableReasoningEffort
+	toggleAvailableReasoningEffort,
+	fillReasoningEffortFromLastUsed
 } from './reasoning-effort';
 
 describe('normalizeAvailableReasoningEffort', () => {
@@ -104,6 +105,40 @@ describe('sanitizeReasoningEffortByModel', () => {
 
 	it('returns an empty object for missing maps', () => {
 		expect(sanitizeReasoningEffortByModel(undefined, {})).toEqual({});
+	});
+});
+
+describe('fillReasoningEffortFromLastUsed', () => {
+	const available = { a: ['low', 'high'], b: ['medium', 'high'] };
+
+	it('fills missing chat keys from last-used when the value is still available', () => {
+		expect(
+			fillReasoningEffortFromLastUsed({}, { a: 'high', b: 'medium' }, ['a', 'b'], available)
+		).toEqual({ a: 'high', b: 'medium' });
+	});
+
+	it('does not overwrite a valid chat override', () => {
+		expect(
+			fillReasoningEffortFromLastUsed({ a: 'low' }, { a: 'high', b: 'medium' }, ['a', 'b'], available)
+		).toEqual({ a: 'low', b: 'medium' });
+	});
+
+	it('drops last-used values that are not in the current available list', () => {
+		expect(
+			fillReasoningEffortFromLastUsed({}, { a: 'medium', b: 'high' }, ['a', 'b'], available)
+		).toEqual({ b: 'high' });
+	});
+
+	it('replaces a stale chat override with last-used when last-used is still valid', () => {
+		expect(
+			fillReasoningEffortFromLastUsed({ a: 'medium' }, { a: 'high' }, ['a'], available)
+		).toEqual({ a: 'high' });
+	});
+
+	it('only considers the requested model ids', () => {
+		expect(
+			fillReasoningEffortFromLastUsed({ extra: 'high' }, { a: 'low', extra: 'low' }, ['a'], available)
+		).toEqual({ extra: 'high', a: 'low' });
 	});
 });
 

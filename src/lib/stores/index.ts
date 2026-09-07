@@ -260,6 +260,7 @@ type Settings = {
 	chatBubble?: boolean;
 	copyFormatted?: boolean;
 	models?: string[];
+	reasoningEffortByModel?: Record<string, string>;
 	conversationMode?: boolean;
 	speechAutoSend?: boolean;
 	responseAutoPlayback?: boolean;

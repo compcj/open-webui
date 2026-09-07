@@ -67,6 +67,7 @@
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import {
+		fillReasoningEffortFromLastUsed,
 		getAvailableReasoningEffort,
 		mergeRequestParamsWithReasoningEffort,
 		resolveReasoningEffortOverride,
@@ -427,11 +428,11 @@
 			? 'ask'
 			: 'full';
 
+	const getAvailableReasoningEffortByModel = () =>
+		Object.fromEntries(($models ?? []).map((model) => [model.id, getAvailableReasoningEffort(model)]));
+
 	const getReasoningEffortByModelForSave = () =>
-		sanitizeReasoningEffortByModel(
-			reasoningEffortByModel,
-			Object.fromEntries(($models ?? []).map((model) => [model.id, getAvailableReasoningEffort(model)]))
-		);
+		sanitizeReasoningEffortByModel(reasoningEffortByModel, getAvailableReasoningEffortByModel());
 
 	const persistReasoningEffortByModel = async () => {
 		if (!$chatId || $temporaryChatEnabled) return;
@@ -440,6 +441,38 @@
 		}).catch((err) => {
 			console.error('[reasoning effort autosave]', err);
 		});
+	};
+
+	const persistLastUsedReasoningEffort = async (modelId: string, value: string) => {
+		const next = { ...($settings?.reasoningEffortByModel ?? {}) };
+		if (value) {
+			next[modelId] = value;
+		} else {
+			delete next[modelId];
+		}
+		settings.set({
+			...$settings,
+			reasoningEffortByModel: next
+		});
+		await updateUserSettings(localStorage.token, { ui: $settings }).catch((err) => {
+			console.error('[reasoning effort settings]', err);
+		});
+	};
+
+	const seedReasoningEffortFromLastUsed = (modelIds = selectedModelIds, persist = true) => {
+		const next = fillReasoningEffortFromLastUsed(
+			reasoningEffortByModel,
+			$settings?.reasoningEffortByModel,
+			modelIds,
+			getAvailableReasoningEffortByModel()
+		);
+		if (equal(next, reasoningEffortByModel)) {
+			return;
+		}
+		reasoningEffortByModel = next;
+		if (persist) {
+			persistReasoningEffortByModel();
+		}
 	};
 
 	const setReasoningEffortOverride = (modelId: string, value: string) => {
@@ -451,6 +484,7 @@
 			reasoningEffortByModel = next;
 		}
 		persistReasoningEffortByModel();
+		persistLastUsedReasoningEffort(modelId, value);
 	};
 
 	const handleToolApprovalModeChange = async (mode: string) => {
@@ -758,6 +792,7 @@
 	const onSelectedModelIdsChange = () => {
 		resetInput();
 		oldSelectedModelIds = structuredClone(selectedModelIds);
+		seedReasoningEffortFromLastUsed(selectedModelIds, false);
 	};
 
 	const mergeFiles = (current, incoming) => {
@@ -915,6 +950,7 @@
 		};
 		params = {};
 		reasoningEffortByModel = {};
+		seedReasoningEffortFromLastUsed(selectedModelIds, false);
 		chatVariables = {};
 		chatFiles = [];
 		files = [];
@@ -2166,6 +2202,7 @@
 		chatFiles = [];
 		params = {};
 		reasoningEffortByModel = {};
+		seedReasoningEffortFromLastUsed(selectedModelIds, false);
 		chatVariables = {};
 		taskIds = null;
 		chatTasks = [];
@@ -2355,6 +2392,7 @@
 				params = structuredClone(chatContent?.params ?? {});
 				delete params.note_id;
 				reasoningEffortByModel = structuredClone(chatContent?.reasoning_effort_by_model ?? {});
+				seedReasoningEffortFromLastUsed(selectedModels, false);
 				chatFiles = structuredClone(chatContent?.files ?? []);
 
 				// Load tasks from chat-level DB field
