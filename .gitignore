@@ -15,7 +15,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 .nvmrc
-CLAUDE.md
+# Shared agent instructions are tracked; personal state stays local.
+CLAUDE.local.md
+.claude/settings.local.json
+/.agent-work/
+/.worktrees/
 # C extensions
 *.so
 

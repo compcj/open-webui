@@ -54,6 +54,13 @@ Describe the change, the problem it solves, and the impact on users.
 
 List the exact manual checks you ran. Include commands, setup details, screenshots, or recordings where helpful.
 
+<!-- See ../docs/DEVELOPMENT.md for repository checks and ../AGENTS.md for shared agent guidance. -->
+
+- Automated checks: list commands, runtime versions, and results.
+- Manual checks: describe the affected workflow and outcome.
+- Not run or blocked: state the reason, including existing failures or environment limitations.
+- Cross-cutting changes: describe API, configuration, migration, or fork-regression checks when applicable.
+
 ## Changelog Entry
 
 ### Added

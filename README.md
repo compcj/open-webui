@@ -21,6 +21,9 @@ Passionate about open-source AI? [Join our team →](https://careers.openwebui.c
 
 For more information, be sure to check out our [Open WebUI Documentation](https://docs.openwebui.com/).
 
+For development in this checkout, see [CONTRIBUTING.md](CONTRIBUTING.md),
+[development commands](docs/DEVELOPMENT.md), and the shared [agent guide](AGENTS.md).
+
 ## Key Features of Open WebUI ⭐
 
 - 🚀 **Effortless Setup**: Install seamlessly via pip, uv, Docker, or Kubernetes (kubectl, kustomize, or helm), with `:ollama` and `:cuda` tagged images available for container deployments.
