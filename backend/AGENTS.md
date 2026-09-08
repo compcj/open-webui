@@ -33,6 +33,15 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Responses API payload conversion uses `utils/responses_reasoning.py` from `routers/openai.py`.
   Preserve removal of top-level `reasoning_effort` and merging into `reasoning.effort` without
   dropping other reasoning fields. Check the accompanying frontend selection/default behavior.
+- OpenClaw-compatible skills span `models/skills.py` (`SkillMeta.openclaw` permissive bag),
+  `routers/skills.py` (`/load/url`, `/id/{id}/install_deps`), `utils/skills_runtime.py`,
+  `utils/middleware.py` (skill injection block), `tools/builtin.py` (`view_skill`), and the
+  frontend `lib/utils/skills.ts`. Preserve gating semantics (`always` exempts `requires.*` only
+  when the `os` constraint holds; `requires.config` checks the skill's own `config` bag),
+  fingerprint-idempotent terminal file sync, degradation to default skill loading on any terminal
+  failure, and the trust model: `/load/url` requires admin or `workspace.skills_import` (same
+  trusted-SSRF rationale as tools), `install_deps` requires skill write access and runs declared
+  specs only on explicit request.
 
 ## Verification
 

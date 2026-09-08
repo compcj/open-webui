@@ -14,6 +14,7 @@
 	export let editHandler: Function;
 	export let cloneHandler: Function;
 	export let exportHandler: Function;
+	export let exportSkillMdHandler: Function;
 	export let deleteHandler: Function;
 	export let onClose: Function;
 
@@ -85,6 +86,17 @@
 				>
 					<Download className="size-3.5" />
 					<div class="flex items-center">{$i18n.t('Export')}</div>
+				</button>
+
+				<button
+					class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:text-gray-900 dark:hover:text-gray-100"
+					on:click={() => {
+						exportSkillMdHandler();
+						closeMenu();
+					}}
+				>
+					<Download className="size-3.5" />
+					<div class="flex items-center">{$i18n.t('Export SKILL.md')}</div>
 				</button>
 			{/if}
 

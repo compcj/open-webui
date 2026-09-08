@@ -31,6 +31,7 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 | Backend application and endpoints          | `backend/open_webui/main.py`, `backend/open_webui/routers/`                                         |
 | Persistence and schema changes             | `backend/open_webui/models/`, `backend/open_webui/internal/db.py`, `backend/open_webui/migrations/` |
 | Retrieval, providers, shared backend logic | `backend/open_webui/retrieval/`, `backend/open_webui/utils/`                                        |
+| Skill formats and terminal runtime         | `backend/open_webui/utils/skills_runtime.py`, `src/lib/utils/skills.ts`                             |
 | Tests                                      | Colocated `src/**/*.test.ts`, `backend/tests/`                                                      |
 | Build and automation                       | `package.json`, `pyproject.toml`, `vite.config.ts`, `Dockerfile`, `.github/workflows/`              |
 | Assets                                     | `static/`; read local `BRANDING.md` before editing branding assets                                  |
@@ -41,6 +42,15 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
   reformat unrelated files or introduce dependencies for a small change without a concrete need.
 - Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API and
   model reasoning-effort behavior; [the development guide](docs/DEVELOPMENT.md) maps their files/tests.
+- Workspace skills support two formats: native OpenWebUI skills and OpenClaw-compatible `SKILL.md`
+  skills. `SkillMeta.openclaw` is a permissive JSON bag (`frontmatter`, `files`, `source`, `config`,
+  `env`) — keep it schema-tolerant and preserve its round-trip through import, edit, and
+  "Export SKILL.md". Import paths (file/zip plus `POST /skills/load/url` for direct links, GitHub,
+  and ClawHub refs) prefill the create editor. At chat time `utils/skills_runtime.py` enforces
+  OpenClaw gating against the configured Open Terminal, syncs bundled files there, and substitutes
+  `{baseDir}`; any terminal failure must degrade to the previous default loading, never break the
+  chat. `POST /skills/id/{id}/install_deps` runs declared install specs only on explicit user
+  action. Secrets never go into the shareable skill meta.
 - Trace frontend/backend contracts together: request fields, defaults, permissions, streaming events,
   persistent settings, and error responses. Test the affected boundary, not only one side.
 - Keep `package.json` and `package-lock.json` consistent. For Python dependency changes, inspect

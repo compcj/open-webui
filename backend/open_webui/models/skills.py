@@ -34,6 +34,7 @@ class Skill(Base):
 
 class SkillMeta(BaseModel):
     tags: Optional[list[str]] = []
+    openclaw: Optional[dict] = None
 
 
 class SkillModel(BaseModel):

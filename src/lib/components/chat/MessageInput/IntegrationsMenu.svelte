@@ -142,7 +142,10 @@
 
 	const setSkills = (skillItems: IntegrationItem[] | null, query = '') => {
 		skills = (skillItems ?? [])
-			.filter((skill) => skill.is_active)
+			.filter(
+				(skill) =>
+					skill.is_active && skill?.meta?.openclaw?.frontmatter?.['user-invocable'] !== false
+			)
 			.reduce<Record<string, IntegrationItem>>((a, skill) => {
 				a[skill.id] = {
 					...skill,
@@ -632,7 +635,12 @@
 													content={skills?.[skillId]?.description ?? ''}
 													placement="top-start"
 												>
-													<div class=" truncate">{skills?.[skillId]?.name}</div>
+													<div class=" truncate">
+														{#if skills?.[skillId]?.meta?.openclaw?.frontmatter?.metadata?.openclaw?.emoji}
+															{skills[skillId].meta.openclaw.frontmatter.metadata.openclaw.emoji}
+														{/if}
+														{skills?.[skillId]?.name}
+													</div>
 												</Tooltip>
 											</div>
 										</div>

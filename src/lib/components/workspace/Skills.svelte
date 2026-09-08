@@ -25,14 +25,26 @@
 		exportSkills,
 		createNewSkill,
 		deleteSkillById,
-		toggleSkillById
+		toggleSkillById,
+		loadSkillFromUrl
 	} from '$lib/apis/skills';
-	import { capitalizeFirstLetter, parseFrontmatter, formatSkillName, slugify } from '$lib/utils';
+	import { capitalizeFirstLetter } from '$lib/utils';
+	import {
+		parseSkillMarkdown,
+		openclawToSkill,
+		skillToOpenclawMarkdown,
+		extractSkillFromZip,
+		buildSkillZip,
+		extractGating,
+		base64ToBlob,
+		getOpenclaw
+	} from '$lib/utils/skills';
 	import TagInput from '$lib/components/common/Tags/TagInput.svelte';
 
 	import Tooltip from '../common/Tooltip.svelte';
 	import ConfirmDialog from '../common/ConfirmDialog.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import Modal from '../common/Modal.svelte';
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import GarbageBin from '../icons/GarbageBin.svelte';
 	import Search from '../icons/Search.svelte';
@@ -58,6 +70,10 @@
 	let selectedSkill = null;
 	let showDeleteConfirm = false;
 
+	let showUrlImport = false;
+	let urlImportValue = '';
+	let urlImportLoading = false;
+
 	let filteredItems = null;
 	let total = null;
 	let loading = false;
@@ -79,8 +95,17 @@
 			},
 			{
 				id: 'skills-import',
-				label: $i18n.t('Import JSON'),
+				label: $i18n.t('Import'),
 				onClick: () => importInputElement?.click(),
+				visible: $user?.role === 'admin' || $user?.permissions?.workspace?.skills_import
+			},
+			{
+				id: 'skills-import-url',
+				label: $i18n.t('Import from URL'),
+				onClick: () => {
+					urlImportValue = '';
+					showUrlImport = true;
+				},
 				visible: $user?.role === 'admin' || $user?.permissions?.workspace?.skills_import
 			},
 			{
@@ -202,6 +227,96 @@
 		}
 	};
 
+	const exportSkillMdHandler = async (skill) => {
+		const _skill = await getSkillById(localStorage.token, skill.id).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+
+		if (_skill) {
+			const files = _skill?.meta?.openclaw?.files ?? {};
+			if (Object.keys(files).length > 0) {
+				const blob = await buildSkillZip(_skill);
+				saveAs(blob, `skill-${_skill.id}.zip`);
+			} else {
+				const blob = new Blob([skillToOpenclawMarkdown(_skill)], {
+					type: 'text/markdown;charset=utf-8'
+				});
+				saveAs(blob, 'SKILL.md');
+			}
+		}
+	};
+
+	const prefillFromOpenclaw = (parsed, fallbackName, source, files = null, skipped = 0) => {
+		const skill = openclawToSkill(parsed, fallbackName, source);
+		if (files && Object.keys(files).length > 0) {
+			skill.meta.openclaw.files = files;
+		}
+
+		const gating = extractGating(skill);
+		if (gating && (gating.bins.length > 0 || gating.anyBins.length > 0)) {
+			toast.info($i18n.t('Requires CLI tools in the terminal environment'));
+		}
+		if (skipped > 0) {
+			toast.info($i18n.t('{{count}} files were skipped (too large)', { count: skipped }));
+		}
+
+		sessionStorage.skill = JSON.stringify({
+			...skill,
+			is_active: true,
+			access_grants: []
+		});
+		goto('/workspace/skills/create');
+	};
+
+	const urlImportHandler = async () => {
+		const url = urlImportValue.trim();
+		if (!url || urlImportLoading) return;
+
+		urlImportLoading = true;
+		try {
+			const res = await loadSkillFromUrl(localStorage.token, url).catch((error) => {
+				toast.error(`${error}`);
+				return null;
+			});
+
+			if (res) {
+				if (res.format === 'zip') {
+					const { skillMarkdown, files, skipped, dirName } = await extractSkillFromZip(
+						base64ToBlob(res.content)
+					);
+					const parsed = parseSkillMarkdown(skillMarkdown);
+					if (!parsed) {
+						toast.error($i18n.t('Invalid SKILL.md file'));
+						return;
+					}
+					const fallbackName =
+						dirName.split('/').pop() || (res.fileName ?? 'skill').replace(/\.zip$/i, '');
+					prefillFromOpenclaw(
+						parsed,
+						fallbackName,
+						res.source ?? { type: 'url', url },
+						files,
+						skipped
+					);
+				} else {
+					const parsed = parseSkillMarkdown(res.content);
+					if (!parsed) {
+						toast.error($i18n.t('Invalid SKILL.md file'));
+						return;
+					}
+					const fallbackName = (res.fileName ?? 'SKILL.md').replace(/\.md$/i, '');
+					prefillFromOpenclaw(parsed, fallbackName, res.source ?? { type: 'url', url });
+				}
+				showUrlImport = false;
+			}
+		} catch (error) {
+			toast.error(`${error}`);
+		} finally {
+			urlImportLoading = false;
+		}
+	};
+
 	const deleteHandler = async (skill) => {
 		const res = await deleteSkillById(localStorage.token, skill.id).catch((error) => {
 			toast.error(`${error}`);
@@ -268,7 +383,7 @@
 		bind:this={importInputElement}
 		bind:files={importFiles}
 		type="file"
-		accept=".md,.json"
+		accept=".md,.json,.zip"
 		hidden
 		on:change={() => {
 			if (importFiles && importFiles.length > 0) {
@@ -301,25 +416,40 @@
 						}
 					};
 					reader.readAsText(file);
+				} else if (ext === 'zip') {
+					// Zip import: extract SKILL.md and bundled files, then open in editor
+					const reader = new FileReader();
+					reader.onload = async (event) => {
+						try {
+							const data = event.target?.result;
+							if (!(data instanceof ArrayBuffer)) return;
+
+							const { skillMarkdown, files, skipped, dirName } = await extractSkillFromZip(data);
+							const parsed = parseSkillMarkdown(skillMarkdown);
+							if (!parsed) {
+								toast.error($i18n.t('Invalid SKILL.md file'));
+								return;
+							}
+
+							const fallbackName = dirName.split('/').pop() || file.name.replace(/\.zip$/i, '');
+							prefillFromOpenclaw(parsed, fallbackName, { type: 'zip' }, files, skipped);
+						} catch (error) {
+							toast.error(`${error}`);
+						}
+					};
+					reader.readAsArrayBuffer(file);
 				} else {
 					// Markdown import: parse frontmatter and open in editor
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						const mdContent = event.target?.result;
 						if (typeof mdContent === 'string') {
-							const fm = parseFrontmatter(mdContent);
-							const fileName = file.name.replace(/\.md$/, '');
-							const rawName = fm.name || fileName;
-							const displayName = formatSkillName(rawName);
-							sessionStorage.skill = JSON.stringify({
-								name: displayName,
-								id: slugify(rawName),
-								description: fm.description || '',
-								content: mdContent,
-								is_active: true,
-								access_grants: []
-							});
-							goto('/workspace/skills/create');
+							const fileName = file.name.replace(/\.md$/i, '');
+							const parsed = parseSkillMarkdown(mdContent) ?? {
+								frontmatter: {},
+								body: mdContent
+							};
+							prefillFromOpenclaw(parsed, fileName, { type: 'file' });
 						}
 					};
 					reader.readAsText(file);
@@ -453,6 +583,9 @@
 												<div
 													class="truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
 												>
+													{#if getOpenclaw(skill)?.frontmatter?.metadata?.openclaw?.emoji}
+														{getOpenclaw(skill).frontmatter.metadata.openclaw.emoji}
+													{/if}
 													{skill.name}
 												</div>
 											</Tooltip>
@@ -481,6 +614,10 @@
 
 											{#if !skill.write_access}
 												<Badge type="muted" content={$i18n.t('Read Only')} />
+											{/if}
+
+											{#if skill?.meta?.openclaw}
+												<Badge type="muted" content="OpenClaw" />
 											{/if}
 										</div>
 									</div>
@@ -542,6 +679,9 @@
 												}}
 												exportHandler={() => {
 													exportHandler(skill);
+												}}
+												exportSkillMdHandler={() => {
+													exportSkillMdHandler(skill);
 												}}
 												deleteHandler={async () => {
 													selectedSkill = skill;
@@ -609,6 +749,48 @@
 			</div>
 		{/if}
 	</div>
+
+	<Modal bind:show={showUrlImport} size="sm">
+		<div>
+			<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
+				<div class=" text-sm font-medium self-center">{$i18n.t('Import from URL')}</div>
+				<button
+					class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+					aria-label={$i18n.t('Close')}
+					on:click={() => {
+						showUrlImport = false;
+					}}
+				>
+					<XMark className={'size-4'} />
+				</button>
+			</div>
+
+			<form
+				class="flex w-full items-center gap-2 px-4 pb-4 pt-1"
+				on:submit|preventDefault={urlImportHandler}
+			>
+				<input
+					class="w-full rounded-lg bg-gray-50 px-3 py-1.5 text-sm outline-hidden dark:bg-gray-850 dark:text-gray-200"
+					type="text"
+					placeholder={$i18n.t('Enter a URL or @owner/skill')}
+					aria-label={$i18n.t('Enter a URL or @owner/skill')}
+					bind:value={urlImportValue}
+					required
+				/>
+
+				<button
+					class="flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+					type="submit"
+					disabled={urlImportLoading}
+				>
+					{$i18n.t('Import')}
+					{#if urlImportLoading}
+						<Spinner className="size-3" />
+					{/if}
+				</button>
+			</form>
+		</div>
+	</Modal>
 
 	<DeleteConfirmDialog
 		bind:show={showDeleteConfirm}

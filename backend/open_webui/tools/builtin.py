@@ -3468,6 +3468,7 @@ async def view_skill(
     id: str,
     __request__: Request = None,
     __user__: dict = None,
+    __metadata__: dict = None,
 ) -> str:
     """
     Load the full instructions of a skill by its id from the available skills manifest.
@@ -3506,6 +3507,27 @@ async def view_skill(
                 user_group_ids=set(user_group_ids),
             ):
                 return JSONCodec.dumps({'error': 'Access denied'})
+
+        # OpenClaw-compatible skills are gated and synced against the active terminal
+        terminal_id = (__metadata__ or {}).get('terminal_id')
+        if terminal_id and __metadata__ is not None:
+            from open_webui.utils.skills_runtime import openclaw_meta, prepare_skills_for_terminal
+
+            if openclaw_meta(skill):
+                prepared = await prepare_skills_for_terminal(__request__, __user__, __metadata__, terminal_id, [skill])
+                info = prepared.get(skill.id) or {}
+                if info.get('skip_reason'):
+                    return JSONCodec.dumps(
+                        {'error': f"Skill '{id}' unavailable: {info['skip_reason']}"},
+                        ensure_ascii=False,
+                    )
+                return JSONCodec.dumps(
+                    {
+                        'name': skill.name,
+                        'content': info.get('content', skill.content),
+                    },
+                    ensure_ascii=False,
+                )
 
         return JSONCodec.dumps(
             {

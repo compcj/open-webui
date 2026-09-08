@@ -2774,6 +2774,11 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     if skill_ids:
         from open_webui.models.skills import Skills as SkillsModel
+        from open_webui.utils.skills_runtime import (
+            openclaw_frontmatter,
+            openclaw_meta,
+            prepare_skills_for_terminal,
+        )
 
         accessible_skills = {s.id: s for s in await SkillsModel.get_skills(user_id=user.id, ids=skill_ids)}
         for sid in skill_ids:
@@ -2781,15 +2786,50 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             if s and s.is_active:
                 available_skills.append(s)
 
+        # OpenClaw-compatible skills: probe the terminal environment, enforce
+        # gating requirements, and sync bundled files before injecting content.
+        prepared_skills = {}
+        terminal_capability = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
+        if terminal_id and terminal_capability and any(openclaw_meta(s) for s in available_skills):
+            try:
+                prepared_skills = await prepare_skills_for_terminal(
+                    request, user, metadata, terminal_id, available_skills
+                )
+            except Exception:
+                log.exception('Failed to prepare openclaw skills; using default skill loading')
+                prepared_skills = {}
+
+        skipped_skills = {sid: info for sid, info in prepared_skills.items() if info.get('skip_reason')}
+        if skipped_skills:
+            available_skills = [s for s in available_skills if s.id not in skipped_skills]
+            if event_emitter:
+                for sid, info in skipped_skills.items():
+                    await event_emitter(
+                        {
+                            'type': 'status',
+                            'data': {
+                                'action': 'skill',
+                                'description': f"Skill '{info.get('name') or sid}' skipped: {info['skip_reason']}",
+                                'done': True,
+                            },
+                        }
+                    )
+
         skill_manifest = ''
         for skill in available_skills:
+            prepared = prepared_skills.get(skill.id) or {}
+            skill_content = prepared.get('content', skill.content)
+            disable_model_invocation = openclaw_frontmatter(openclaw_meta(skill)).get('disable-model-invocation')
+            if isinstance(disable_model_invocation, str):
+                disable_model_invocation = disable_model_invocation.strip().lower() == 'true'
+
             if skill.id in mentioned_skill_ids or not use_builtin_tools:
                 form_data['messages'] = add_or_update_system_message(
-                    f'<skill name="{skill.name}">\n{skill.content}\n</skill>',
+                    f'<skill name="{skill.name}">\n{skill_content}\n</skill>',
                     form_data['messages'],
                     append=True,
                 )
-            else:
+            elif not disable_model_invocation:
                 view_skill_ids.append(skill.id)
                 skill_manifest += (
                     f'<skill>\n<id>{skill.id}</id>\n<name>{skill.name}</name>\n'

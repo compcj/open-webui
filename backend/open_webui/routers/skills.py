@@ -1,10 +1,14 @@
+import base64
 import logging
 import re
 from typing import Optional
+from urllib.parse import quote, urlparse
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
 from open_webui.models.access_grants import AccessGrants
@@ -141,6 +145,244 @@ async def export_skills(
         return await Skills.get_skills(db=db)
     else:
         return await Skills.get_skills(db=db, user_id=user.id)
+
+
+############################
+# LoadSkillFromUrl
+############################
+
+CLAWHUB_API_BASE = 'https://clawhub.ai'
+CLAWHUB_HOSTS = {'clawhub.ai', 'www.clawhub.ai'}
+MAX_SKILL_DOWNLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+
+class LoadSkillUrlForm(BaseModel):
+    url: str
+
+
+def github_url_to_skill_url(url: str) -> str:
+    # Handle 'tree' (folder) URLs (add SKILL.md at the end)
+    m1 = re.match(r'https://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*)', url)
+    if m1:
+        org, repo, branch, path = m1.groups()
+        return f'https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/{path.rstrip("/")}/SKILL.md'
+
+    # Handle 'blob' (file) URLs
+    m2 = re.match(r'https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)', url)
+    if m2:
+        org, repo, branch, path = m2.groups()
+        return f'https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/{path}'
+
+    # No match; return as-is
+    return url
+
+
+def parse_clawhub_ref(text: str) -> tuple[str | None, str | None]:
+    """Return (slug, owner) for a ClawHub ref (@owner/slug or clawhub.ai URL)."""
+    text = text.strip()
+    m = re.fullmatch(r'@([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)', text)
+    if m:
+        return m.group(2), m.group(1)
+    parsed = urlparse(text)
+    if parsed.netloc in CLAWHUB_HOSTS:
+        parts = [part for part in parsed.path.split('/') if part]
+        if parts:
+            return parts[-1], (parts[-2] if len(parts) > 1 else None)
+    return None, None
+
+
+async def resolve_clawhub_skill(url_or_ref: str) -> tuple[str, str, str]:
+    """Resolve a ClawHub skill ref to (download_url, slug, latest version).
+
+    Verified against the public API: GET /api/v1/skills/{slug} returns
+    {'skill': ..., 'latestVersion': {'version': ...}, 'owner': {'handle': ...}}
+    and GET /api/v1/download?slug=...&version=... returns the skill zip.
+    """
+    slug, owner = parse_clawhub_ref(url_or_ref)
+    if not slug:
+        raise HTTPException(status_code=400, detail='Invalid ClawHub skill reference')
+
+    api_url = f'{CLAWHUB_API_BASE}/api/v1/skills/{quote(slug, safe="")}'
+    try:
+        async with aiohttp.ClientSession(
+            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
+        ) as session:
+            async with session.get(api_url, ssl=AIOHTTP_CLIENT_SESSION_SSL) as resp:
+                if resp.status != 200:
+                    raise HTTPException(status_code=400, detail=f"ClawHub skill '{slug}' not found")
+                data = await resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ERROR_MESSAGES.DEFAULT(e, 'Error resolving ClawHub skill'),
+        )
+
+    version = (data.get('latestVersion') or {}).get('version')
+    if not version:
+        raise HTTPException(status_code=400, detail=f"ClawHub skill '{slug}' has no published version")
+    owner = owner or (data.get('owner') or {}).get('handle')
+    full_slug = f'@{owner}/{slug}' if owner else slug
+    download_url = (
+        f'{CLAWHUB_API_BASE}/api/v1/download?slug={quote(slug, safe="")}&version={quote(str(version), safe="")}'
+    )
+    return download_url, full_slug, str(version)
+
+
+@router.post('/load/url', response_model=dict)
+async def load_skill_from_url(
+    request: Request,
+    form_data: LoadSkillUrlForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    # NOTE: This is NOT a SSRF vulnerability:
+    # This endpoint is restricted to admins and users with the skills_import
+    # permission, meant for *trusted* internal use, and does NOT accept
+    # untrusted user input. Access is enforced by authentication.
+    if user.role != 'admin' and not await has_permission(
+        user.id,
+        'workspace.skills_import',
+        await Config.get('user.permissions'),
+        db=db,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.UNAUTHORIZED,
+        )
+
+    url = (form_data.url or '').strip()
+    if not url:
+        raise HTTPException(status_code=400, detail='Please enter a valid URL')
+
+    source = {'type': 'url', 'url': url}
+    file_name = None
+    slug, _ = parse_clawhub_ref(url)
+    if slug:
+        download_url, full_slug, version = await resolve_clawhub_skill(url)
+        source = {'type': 'clawhub', 'slug': full_slug, 'version': version, 'url': url}
+        file_name = f'{full_slug.split("/")[-1]}.zip'
+        url = download_url
+    else:
+        raw_url = github_url_to_skill_url(url)
+        if raw_url != url:
+            source = {'type': 'github', 'url': url}
+            url = raw_url
+
+    try:
+        async with aiohttp.ClientSession(
+            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
+        ) as session:
+            async with session.get(
+                url, headers={'Content-Type': 'application/json'}, ssl=AIOHTTP_CLIENT_SESSION_SSL
+            ) as resp:
+                if resp.status != 200:
+                    raise HTTPException(status_code=resp.status, detail='Failed to fetch the skill')
+                content_type = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
+                is_zip = (
+                    source['type'] == 'clawhub' or 'zip' in content_type or url.split('?')[0].lower().endswith('.zip')
+                )
+                if is_zip:
+                    content_length = resp.headers.get('Content-Length')
+                    if content_length and content_length.isdigit() and int(content_length) > MAX_SKILL_DOWNLOAD_BYTES:
+                        raise HTTPException(status_code=400, detail='Skill archive exceeds the 32 MiB limit')
+                    data = bytearray()
+                    async for chunk in resp.content.iter_chunked(65536):
+                        data.extend(chunk)
+                        if len(data) > MAX_SKILL_DOWNLOAD_BYTES:
+                            raise HTTPException(status_code=400, detail='Skill archive exceeds the 32 MiB limit')
+                    if not data:
+                        raise HTTPException(status_code=400, detail='No data received from the URL')
+                    if not file_name:
+                        file_name = url.split('?')[0].rstrip('/').split('/')[-1] or 'skill.zip'
+                    return {
+                        'format': 'zip',
+                        'fileName': file_name,
+                        'content': base64.b64encode(bytes(data)).decode('ascii'),
+                        'source': source,
+                    }
+                text = await resp.text()
+                if not text:
+                    raise HTTPException(status_code=400, detail='No data received from the URL')
+                if not file_name:
+                    file_name = url.split('?')[0].rstrip('/').split('/')[-1] or 'SKILL.md'
+                return {
+                    'format': 'markdown',
+                    'fileName': file_name,
+                    'content': text,
+                    'source': source,
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ERROR_MESSAGES.DEFAULT(e, 'Error fetching skill'),
+        )
+
+
+############################
+# InstallSkillDeps
+############################
+
+
+class InstallSkillDepsForm(BaseModel):
+    terminal_id: str
+
+
+@router.post('/id/{id}/install_deps', response_model=dict)
+async def install_skill_deps(
+    request: Request,
+    id: str,
+    form_data: InstallSkillDepsForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    skill = await Skills.get_skill_by_id(id, db=db)
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if (
+        skill.user_id != user.id
+        and not await AccessGrants.has_access(
+            user_id=user.id,
+            resource_type='skill',
+            resource_id=skill.id,
+            permission='write',
+            db=db,
+        )
+        and user.role != 'admin'
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.UNAUTHORIZED,
+        )
+
+    if not form_data.terminal_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT('terminal_id is required'),
+        )
+
+    from open_webui.utils.skills_runtime import (
+        gating_requirements,
+        openclaw_frontmatter,
+        openclaw_meta,
+        run_install_specs,
+    )
+
+    req = gating_requirements(openclaw_frontmatter(openclaw_meta(skill)))
+    if not req.get('install'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT('Skill declares no install specs'),
+        )
+
+    return await run_install_specs(request, user, form_data.terminal_id, skill)
 
 
 ############################

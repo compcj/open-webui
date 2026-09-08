@@ -15,6 +15,11 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   events with their backend producer or consumer. Distinguish absent values from explicit overrides.
 - Put user-visible text through the existing i18n context (`$i18n.t(...)`). Preserve translation
   interpolation variables and avoid mass changes to locale files unrelated to the task.
+- `lib/utils/skills.ts` owns OpenClaw `SKILL.md` parsing/serialization and zip bundle extraction
+  (single parsing pipeline for file, zip, and URL imports). The workspace skill editor keeps
+  `meta.openclaw` intact on submit and renders its OpenClaw section (gating summary, non-secret
+  `env`/`config` bags, explicit dependency install). The `$` mention picker (`IntegrationsMenu.svelte`)
+  hides `user-invocable: false` skills. Preserve these contracts when touching skills UI.
 - `npm run i18n:parse` regenerates and formats catalogs. Inspect its diff; the current parser input
   is `src/**/*.{js,svelte}`, so do not assume a string added only to a `.ts` file will be extracted.
 - Reuse existing components and styles. Check keyboard interaction, focus, loading/error states,

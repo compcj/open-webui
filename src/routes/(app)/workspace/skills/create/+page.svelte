@@ -14,6 +14,7 @@
 		id: string;
 		description: string;
 		content: string;
+		meta: any;
 		is_active: boolean;
 		access_grants: any[];
 	} | null = null;
@@ -44,6 +45,7 @@
 				id: _skill.id || '',
 				description: _skill.description || '',
 				content: _skill.content || '',
+				meta: _skill.meta ?? { tags: [] },
 				is_active: _skill.is_active ?? true,
 				access_grants: _skill.access_grants !== undefined ? _skill.access_grants : []
 			};

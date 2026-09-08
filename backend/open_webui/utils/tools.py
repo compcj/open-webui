@@ -1354,26 +1354,20 @@ async def get_terminal_servers(request: Request):
     return terminal_servers
 
 
-async def get_terminal_tools(
+async def build_terminal_request_context(
     request: Request,
-    terminal_id: str,
+    connection: dict,
     user: UserModel,
-    extra_params: dict,
-) -> dict[str, dict] | tuple[dict[str, dict], str | None]:
-    """Resolve tools for a terminal server identified by terminal_id.
+    metadata: dict | None = None,
+    extra_params: dict | None = None,
+) -> tuple[dict, dict, dict]:
+    """Resolve (server_data, headers, cookies) for a terminal connection.
 
-    - Finds the connection in TERMINAL_SERVER_CONNECTIONS
-    - Checks access_grants
-    - Loads specs from cache
-    - Builds callables that route through the terminal proxy
+    Shared by get_terminal_tools and out-of-band terminal callers (e.g. skill
+    file sync). Raises RuntimeError for disabled/inaccessible/unavailable
+    terminals, matching get_terminal_tools behavior.
     """
-    connections = await Config.get('terminal_server.connections', []) or []
-    connection = next(
-        (terminal_connection for terminal_connection in connections if terminal_connection.get('id') == terminal_id),
-        None,
-    )
-    if connection is None:
-        raise RuntimeError(f"Terminal server '{terminal_id}' not found")
+    terminal_id = connection.get('id')
     if not connection.get('enabled', True):
         raise RuntimeError(f"Terminal server '{terminal_id}' is disabled")
 
@@ -1403,13 +1397,13 @@ async def get_terminal_tools(
         headers.update(bearer_auth_header(request.state.token.credentials))
     elif auth_type == 'system_oauth':
         cookies = request.cookies
-        oauth_token = extra_params.get('__oauth_token__', None)
+        oauth_token = (extra_params or {}).get('__oauth_token__', None)
         if oauth_token:
             headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
     # auth_type == "none": no Authorization header
 
     # Use chat_id as the per-session key for cwd tracking
-    metadata = extra_params.get('__metadata__', {})
+    metadata = metadata or {}
     terminal_context = 'automation' if metadata.get('automation_id') else 'chat'
     if not terminal_context_available(connection, terminal_context):
         raise RuntimeError(f"Terminal server '{terminal_id}' is not available for {terminal_context}")
@@ -1424,6 +1418,39 @@ async def get_terminal_tools(
         raise RuntimeError(f"Terminal server '{terminal_id}' requires a saved {terminal_context} context")
     if context_id:
         headers[TERMINAL_CONTEXT_HEADER] = context_id
+
+    return server_data, headers, cookies
+
+
+async def get_terminal_tools(
+    request: Request,
+    terminal_id: str,
+    user: UserModel,
+    extra_params: dict,
+) -> dict[str, dict] | tuple[dict[str, dict], str | None]:
+    """Resolve tools for a terminal server identified by terminal_id.
+
+    - Finds the connection in TERMINAL_SERVER_CONNECTIONS
+    - Checks access_grants
+    - Loads specs from cache
+    - Builds callables that route through the terminal proxy
+    """
+    connections = await Config.get('terminal_server.connections', []) or []
+    connection = next(
+        (terminal_connection for terminal_connection in connections if terminal_connection.get('id') == terminal_id),
+        None,
+    )
+    if connection is None:
+        raise RuntimeError(f"Terminal server '{terminal_id}' not found")
+
+    server_data, headers, cookies = await build_terminal_request_context(
+        request,
+        connection,
+        user,
+        extra_params.get('__metadata__', {}),
+        extra_params,
+    )
+    specs = server_data.get('specs', [])
 
     # Fetch live with the user's credentials so prompt changes apply without a restart
     terminal_cwd, system_prompt = await asyncio.gather(
