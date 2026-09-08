@@ -2,7 +2,6 @@ import base64
 import logging
 import re
 from typing import Optional
-from urllib.parse import quote, urlparse
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -25,6 +24,12 @@ from open_webui.models.skills import (
 )
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.skills_runtime import (
+    clawhub_download_url,
+    clawhub_skill_api_url,
+    format_clawhub_ambiguity,
+    parse_clawhub_ref,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,8 +156,6 @@ async def export_skills(
 # LoadSkillFromUrl
 ############################
 
-CLAWHUB_API_BASE = 'https://clawhub.ai'
-CLAWHUB_HOSTS = {'clawhub.ai', 'www.clawhub.ai'}
 MAX_SKILL_DOWNLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 
@@ -177,37 +180,27 @@ def github_url_to_skill_url(url: str) -> str:
     return url
 
 
-def parse_clawhub_ref(text: str) -> tuple[str | None, str | None]:
-    """Return (slug, owner) for a ClawHub ref (@owner/slug or clawhub.ai URL)."""
-    text = text.strip()
-    m = re.fullmatch(r'@([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)', text)
-    if m:
-        return m.group(2), m.group(1)
-    parsed = urlparse(text)
-    if parsed.netloc in CLAWHUB_HOSTS:
-        parts = [part for part in parsed.path.split('/') if part]
-        if parts:
-            return parts[-1], (parts[-2] if len(parts) > 1 else None)
-    return None, None
-
-
 async def resolve_clawhub_skill(url_or_ref: str) -> tuple[str, str, str]:
     """Resolve a ClawHub skill ref to (download_url, slug, latest version).
 
-    Verified against the public API: GET /api/v1/skills/{slug} returns
-    {'skill': ..., 'latestVersion': {'version': ...}, 'owner': {'handle': ...}}
-    and GET /api/v1/download?slug=...&version=... returns the skill zip.
+    Verified against the public API: GET /api/v1/skills/{slug} (optionally with
+    ?owner= to disambiguate shared slugs) returns
+    {'skill': ..., 'latestVersion': {'version': ...}, 'owner': {'handle': ...}};
+    GET /api/v1/download?slug=...&version=...[&owner=...] returns the skill zip.
+    Both endpoints answer 409 AMBIGUOUS_SKILL_SLUG when the slug is shared.
     """
     slug, owner = parse_clawhub_ref(url_or_ref)
     if not slug:
         raise HTTPException(status_code=400, detail='Invalid ClawHub skill reference')
 
-    api_url = f'{CLAWHUB_API_BASE}/api/v1/skills/{quote(slug, safe="")}'
     try:
         async with aiohttp.ClientSession(
             trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
         ) as session:
-            async with session.get(api_url, ssl=AIOHTTP_CLIENT_SESSION_SSL) as resp:
+            async with session.get(clawhub_skill_api_url(slug, owner), ssl=AIOHTTP_CLIENT_SESSION_SSL) as resp:
+                if resp.status == 409:
+                    payload = await resp.json(content_type=None)
+                    raise HTTPException(status_code=400, detail=format_clawhub_ambiguity(slug, payload))
                 if resp.status != 200:
                     raise HTTPException(status_code=400, detail=f"ClawHub skill '{slug}' not found")
                 data = await resp.json()
@@ -224,10 +217,7 @@ async def resolve_clawhub_skill(url_or_ref: str) -> tuple[str, str, str]:
         raise HTTPException(status_code=400, detail=f"ClawHub skill '{slug}' has no published version")
     owner = owner or (data.get('owner') or {}).get('handle')
     full_slug = f'@{owner}/{slug}' if owner else slug
-    download_url = (
-        f'{CLAWHUB_API_BASE}/api/v1/download?slug={quote(slug, safe="")}&version={quote(str(version), safe="")}'
-    )
-    return download_url, full_slug, str(version)
+    return clawhub_download_url(slug, str(version), owner), full_slug, str(version)
 
 
 @router.post('/load/url', response_model=dict)

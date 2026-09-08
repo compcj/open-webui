@@ -18,6 +18,7 @@ import logging
 import posixpath
 import re
 import shlex
+from urllib.parse import quote, urlparse
 
 log = logging.getLogger(__name__)
 
@@ -376,6 +377,71 @@ def build_install_command(spec: dict, skill_id: str, node_manager: str = 'npm') 
         return ' && '.join(commands)
 
     return None
+
+
+####################
+# ClawHub registry helpers
+####################
+
+CLAWHUB_API_BASE = 'https://clawhub.ai'
+CLAWHUB_HOSTS = {'clawhub.ai', 'www.clawhub.ai'}
+
+
+def parse_clawhub_ref(text: str) -> tuple[str | None, str | None]:
+    """Return (slug, owner) for a ClawHub ref or page URL.
+
+    Accepted forms: ``@owner/slug``, ``owner/slug``, canonical page URLs
+    ``https://clawhub.ai/<owner>/skills/<slug>``, and bare
+    ``https://clawhub.ai/<slug>`` / ``https://clawhub.ai/skills/<slug>``.
+    """
+    if not isinstance(text, str):
+        return None, None
+    text = text.strip()
+    if not text:
+        return None, None
+
+    m = re.fullmatch(r'@?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)', text)
+    if m:
+        return m.group(2), m.group(1)
+
+    parsed = urlparse(text)
+    if parsed.netloc.lower() in CLAWHUB_HOSTS:
+        parts = [part for part in parsed.path.split('/') if part]
+        if len(parts) >= 3 and parts[-2] == 'skills':
+            return parts[-1], parts[-3]
+        if len(parts) == 2 and parts[0] == 'skills':
+            return parts[1], None
+        if parts:
+            return parts[-1], None
+    return None, None
+
+
+def clawhub_skill_api_url(slug: str, owner: str | None = None) -> str:
+    """Skill metadata endpoint; ``owner`` disambiguates shared slugs."""
+    url = f'{CLAWHUB_API_BASE}/api/v1/skills/{quote(str(slug), safe="")}'
+    if owner:
+        url += f'?owner={quote(str(owner), safe="")}'
+    return url
+
+
+def clawhub_download_url(slug: str, version: str, owner: str | None = None) -> str:
+    """Zip download endpoint; ``owner`` disambiguates shared slugs."""
+    url = f'{CLAWHUB_API_BASE}/api/v1/download?slug={quote(str(slug), safe="")}&version={quote(str(version), safe="")}'
+    if owner:
+        url += f'&owner={quote(str(owner), safe="")}'
+    return url
+
+
+def format_clawhub_ambiguity(slug: str, payload) -> str:
+    """Render a 409 AMBIGUOUS_SKILL_SLUG payload as an actionable message."""
+    refs = []
+    if isinstance(payload, dict):
+        for match in payload.get('matches') or []:
+            if isinstance(match, dict) and match.get('ref'):
+                refs.append(str(match['ref']))
+    if refs:
+        return f"ClawHub skill '{slug}' is ambiguous; specify the owner: {', '.join(refs)}"
+    return f"ClawHub skill '{slug}' is ambiguous; specify the owner as @owner/slug"
 
 
 ####################

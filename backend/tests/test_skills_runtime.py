@@ -357,3 +357,68 @@ def test_build_install_command_quotes_interpolations():
 def test_build_install_command_unknown_kind():
     assert sr.build_install_command({'kind': 'apt', 'package': 'x'}, 's1') is None
     assert sr.build_install_command(None, 's1') is None
+
+
+####################
+# ClawHub registry helpers
+####################
+
+
+def test_parse_clawhub_ref_owner_slash_slug():
+    assert sr.parse_clawhub_ref('@pskoett/self-improving-agent') == ('self-improving-agent', 'pskoett')
+    assert sr.parse_clawhub_ref('pskoett/self-improving-agent') == ('self-improving-agent', 'pskoett')
+
+
+def test_parse_clawhub_ref_canonical_page_url():
+    assert sr.parse_clawhub_ref('https://clawhub.ai/pskoett/skills/self-improving-agent') == (
+        'self-improving-agent',
+        'pskoett',
+    )
+    assert sr.parse_clawhub_ref('https://www.clawhub.ai/pskoett/skills/self-improving-agent/') == (
+        'self-improving-agent',
+        'pskoett',
+    )
+
+
+def test_parse_clawhub_ref_slug_only_urls():
+    assert sr.parse_clawhub_ref('https://clawhub.ai/skills/self-improving-agent') == ('self-improving-agent', None)
+    assert sr.parse_clawhub_ref('https://clawhub.ai/self-improving-agent') == ('self-improving-agent', None)
+
+
+def test_parse_clawhub_ref_rejects_non_clawhub():
+    assert sr.parse_clawhub_ref('https://github.com/owner/repo') == (None, None)
+    assert sr.parse_clawhub_ref('not a ref at all') == (None, None)
+    assert sr.parse_clawhub_ref('') == (None, None)
+
+
+def test_clawhub_skill_api_url_includes_owner():
+    assert sr.clawhub_skill_api_url('self-improving-agent', 'pskoett') == (
+        'https://clawhub.ai/api/v1/skills/self-improving-agent?owner=pskoett'
+    )
+    assert sr.clawhub_skill_api_url('grill-me') == 'https://clawhub.ai/api/v1/skills/grill-me'
+    assert sr.clawhub_skill_api_url('grill-me', None) == 'https://clawhub.ai/api/v1/skills/grill-me'
+
+
+def test_clawhub_download_url_includes_owner():
+    url = sr.clawhub_download_url('self-improving-agent', '4.0.2', 'pskoett')
+    assert url == 'https://clawhub.ai/api/v1/download?slug=self-improving-agent&version=4.0.2&owner=pskoett'
+    assert sr.clawhub_download_url('grill-me', '1.0.0') == (
+        'https://clawhub.ai/api/v1/download?slug=grill-me&version=1.0.0'
+    )
+
+
+def test_format_clawhub_ambiguity_lists_candidate_refs():
+    payload = {
+        'code': 'AMBIGUOUS_SKILL_SLUG',
+        'matches': [
+            {'ownerHandle': 'pskoett', 'slug': 'self-improving-agent', 'ref': '@pskoett/self-improving-agent'},
+            {'ownerHandle': 'thcjp', 'slug': 'self-improving-agent', 'ref': '@thcjp/self-improving-agent'},
+        ],
+    }
+    message = sr.format_clawhub_ambiguity('self-improving-agent', payload)
+    assert '@pskoett/self-improving-agent' in message
+    assert '@thcjp/self-improving-agent' in message
+    assert 'self-improving-agent' in message
+    # Garbage payloads still produce a usable message
+    assert 'x' in sr.format_clawhub_ambiguity('x', None)
+    assert 'x' in sr.format_clawhub_ambiguity('x', {'matches': 'nope'})
