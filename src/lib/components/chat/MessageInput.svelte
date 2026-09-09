@@ -109,6 +109,7 @@
 	import Dropdown from '../common/Dropdown.svelte';
 
 	import CommandSuggestionList from './MessageInput/CommandSuggestionList.svelte';
+	import { buildSlashMentionContent } from './MessageInput/slash-mention';
 	import Knobs from '../icons/Knobs.svelte';
 	import ValvesModal from '../workspace/common/ValvesModal.svelte';
 	import Note from '../icons/Note.svelte';
@@ -1426,17 +1427,7 @@
 						return;
 					}
 
-					editor
-						.chain()
-						.focus()
-						.insertContentAt(range, [
-							{
-								type: 'mention',
-								attrs: props
-							},
-							{ type: 'text', text: ' ' }
-						])
-						.run();
+					editor.chain().focus().insertContentAt(range, buildSlashMentionContent(props)).run();
 				},
 				render: getSuggestionRenderer(CommandSuggestionList, {
 					i18n,
