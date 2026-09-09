@@ -29,6 +29,7 @@ from open_webui.utils.skills_runtime import (
     clawhub_skill_api_url,
     format_clawhub_ambiguity,
     parse_clawhub_ref,
+    resolve_github_skill_url,
 )
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -163,23 +164,6 @@ class LoadSkillUrlForm(BaseModel):
     url: str
 
 
-def github_url_to_skill_url(url: str) -> str:
-    # Handle 'tree' (folder) URLs (add SKILL.md at the end)
-    m1 = re.match(r'https://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*)', url)
-    if m1:
-        org, repo, branch, path = m1.groups()
-        return f'https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/{path.rstrip("/")}/SKILL.md'
-
-    # Handle 'blob' (file) URLs
-    m2 = re.match(r'https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)', url)
-    if m2:
-        org, repo, branch, path = m2.groups()
-        return f'https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/{path}'
-
-    # No match; return as-is
-    return url
-
-
 async def resolve_clawhub_skill(url_or_ref: str) -> tuple[str, str, str]:
     """Resolve a ClawHub skill ref to (download_url, slug, latest version).
 
@@ -248,6 +232,8 @@ async def load_skill_from_url(
 
     source = {'type': 'url', 'url': url}
     file_name = None
+    select = None
+    force_zip = False
     slug, _ = parse_clawhub_ref(url)
     if slug:
         download_url, full_slug, version = await resolve_clawhub_skill(url)
@@ -255,10 +241,13 @@ async def load_skill_from_url(
         file_name = f'{full_slug.split("/")[-1]}.zip'
         url = download_url
     else:
-        raw_url = github_url_to_skill_url(url)
-        if raw_url != url:
-            source = {'type': 'github', 'url': url}
-            url = raw_url
+        resolved = resolve_github_skill_url(url)
+        if resolved:
+            source = resolved['source']
+            file_name = resolved['file_name']
+            select = resolved['select']
+            force_zip = resolved['is_zip']
+            url = resolved['download_url']
 
     try:
         async with aiohttp.ClientSession(
@@ -271,7 +260,10 @@ async def load_skill_from_url(
                     raise HTTPException(status_code=resp.status, detail='Failed to fetch the skill')
                 content_type = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
                 is_zip = (
-                    source['type'] == 'clawhub' or 'zip' in content_type or url.split('?')[0].lower().endswith('.zip')
+                    force_zip
+                    or source['type'] == 'clawhub'
+                    or 'zip' in content_type
+                    or url.split('?')[0].lower().endswith('.zip')
                 )
                 if is_zip:
                     content_length = resp.headers.get('Content-Length')
@@ -291,6 +283,7 @@ async def load_skill_from_url(
                         'fileName': file_name,
                         'content': base64.b64encode(bytes(data)).decode('ascii'),
                         'source': source,
+                        **({'select': select} if select else {}),
                     }
                 text = await resp.text()
                 if not text:

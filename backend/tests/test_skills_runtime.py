@@ -422,3 +422,115 @@ def test_format_clawhub_ambiguity_lists_candidate_refs():
     # Garbage payloads still produce a usable message
     assert 'x' in sr.format_clawhub_ambiguity('x', None)
     assert 'x' in sr.format_clawhub_ambiguity('x', {'matches': 'nope'})
+
+
+####################
+# skills.sh refs
+####################
+
+
+def test_parse_skillsh_ref_skill_page_url():
+    assert sr.parse_skillsh_ref('https://skills.sh/vercel-labs/agent-skills/web-design-guidelines') == (
+        'vercel-labs',
+        'agent-skills',
+        'web-design-guidelines',
+    )
+
+
+def test_parse_skillsh_ref_repo_page_url():
+    assert sr.parse_skillsh_ref('https://skills.sh/vercel-labs/agent-skills') == (
+        'vercel-labs',
+        'agent-skills',
+        None,
+    )
+    assert sr.parse_skillsh_ref('https://www.skills.sh/vercel-labs/agent-skills/') == (
+        'vercel-labs',
+        'agent-skills',
+        None,
+    )
+
+
+def test_parse_skillsh_ref_rejects_non_skillsh():
+    assert sr.parse_skillsh_ref('https://github.com/owner/repo') == (None, None, None)
+    assert sr.parse_skillsh_ref('https://skills.sh/onlyone') == (None, None, None)
+    assert sr.parse_skillsh_ref('https://skills.sh/') == (None, None, None)
+    assert sr.parse_skillsh_ref('not a url') == (None, None, None)
+    assert sr.parse_skillsh_ref('') == (None, None, None)
+    assert sr.parse_skillsh_ref(None) == (None, None, None)
+
+
+####################
+# GitHub / skills.sh download resolution
+####################
+
+
+def test_resolve_tree_url_downloads_repo_zip_with_path_hint():
+    res = sr.resolve_github_skill_url(
+        'https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines'
+    )
+    assert res == {
+        'download_url': 'https://codeload.github.com/vercel-labs/agent-skills/zip/refs/heads/main',
+        'is_zip': True,
+        'file_name': 'agent-skills.zip',
+        'select': {'path': 'skills/web-design-guidelines'},
+        'source': {
+            'type': 'github',
+            'url': 'https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines',
+            'repo': 'vercel-labs/agent-skills',
+            'path': 'skills/web-design-guidelines',
+        },
+    }
+
+
+def test_resolve_bare_repo_url_downloads_default_branch_zip():
+    for url in (
+        'https://github.com/owner/repo',
+        'https://github.com/owner/repo/',
+        'https://github.com/owner/repo.git',
+    ):
+        res = sr.resolve_github_skill_url(url)
+        assert res['download_url'] == 'https://codeload.github.com/owner/repo/zip/HEAD'
+        assert res['is_zip'] is True
+        assert res['select'] is None
+        assert res['file_name'] == 'repo.zip'
+        assert res['source']['type'] == 'github'
+        assert res['source']['repo'] == 'owner/repo'
+
+
+def test_resolve_blob_url_keeps_raw_single_file_download():
+    res = sr.resolve_github_skill_url('https://github.com/o/r/blob/main/skills/x/SKILL.md')
+    assert res['download_url'] == 'https://raw.githubusercontent.com/o/r/refs/heads/main/skills/x/SKILL.md'
+    assert res['is_zip'] is False
+    assert res['select'] is None
+    assert res['file_name'] == 'SKILL.md'
+    assert res['source']['type'] == 'github'
+
+
+def test_resolve_skillsh_skill_url_maps_to_github_zip_with_name_hint():
+    res = sr.resolve_github_skill_url('https://skills.sh/vercel-labs/agent-skills/web-design-guidelines')
+    assert res['download_url'] == 'https://codeload.github.com/vercel-labs/agent-skills/zip/HEAD'
+    assert res['is_zip'] is True
+    assert res['select'] == {'name': 'web-design-guidelines'}
+    assert res['file_name'] == 'agent-skills.zip'
+    assert res['source'] == {
+        'type': 'skillsh',
+        'url': 'https://skills.sh/vercel-labs/agent-skills/web-design-guidelines',
+        'repo': 'vercel-labs/agent-skills',
+        'skill': 'web-design-guidelines',
+    }
+
+
+def test_resolve_skillsh_repo_url_has_no_hint():
+    res = sr.resolve_github_skill_url('https://skills.sh/vercel-labs/agent-skills')
+    assert res['download_url'] == 'https://codeload.github.com/vercel-labs/agent-skills/zip/HEAD'
+    assert res['select'] is None
+    assert res['source']['type'] == 'skillsh'
+    assert res['source']['repo'] == 'vercel-labs/agent-skills'
+
+
+def test_resolve_github_skill_url_rejects_other_urls():
+    assert sr.resolve_github_skill_url('https://example.com/SKILL.md') is None
+    assert sr.resolve_github_skill_url('https://clawhub.ai/skills/x') is None
+    assert sr.resolve_github_skill_url('https://github.com/owner') is None
+    assert sr.resolve_github_skill_url('') is None
+    assert sr.resolve_github_skill_url(None) is None

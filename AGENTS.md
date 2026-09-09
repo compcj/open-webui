@@ -45,8 +45,11 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 - Workspace skills support two formats: native OpenWebUI skills and OpenClaw-compatible `SKILL.md`
   skills. `SkillMeta.openclaw` is a permissive JSON bag (`frontmatter`, `files`, `source`, `config`,
   `env`) — keep it schema-tolerant and preserve its round-trip through import, edit, and
-  "Export SKILL.md". Import paths (file/zip plus `POST /skills/load/url` for direct links, GitHub,
-  and ClawHub refs) prefill the create editor. At chat time `utils/skills_runtime.py` enforces
+  "Export SKILL.md". Import paths (file/zip plus `POST /skills/load/url` for direct links, GitHub
+  repo/tree URLs, skills.sh links, and ClawHub refs) prefill the create editor. GitHub tree URLs and
+  bare repo URLs download the repo zipball (codeload, no token); skills.sh links map to their
+  backing GitHub repo. When an archive contains multiple skills and the URL carries no select hint,
+  the frontend shows a picker instead of guessing. At chat time `utils/skills_runtime.py` enforces
   OpenClaw gating against the configured Open Terminal, syncs bundled files there, and substitutes
   `{baseDir}`; any terminal failure must degrade to the previous default loading, never break the
   chat. `POST /skills/id/{id}/install_deps` runs declared install specs only on explicit user

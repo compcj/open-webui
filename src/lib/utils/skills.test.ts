@@ -6,6 +6,7 @@ import {
 	openclawToSkill,
 	skillToOpenclawMarkdown,
 	extractSkillFromZip,
+	listSkillsInZip,
 	buildSkillZip,
 	extractGating,
 	extractInstallSpecs,
@@ -169,6 +170,98 @@ describe('extractSkillFromZip', () => {
 		expect(reparsed?.body).toBe('Do things.\n');
 		expect(result.files['scripts/run.sh']).toEqual({ content: 'echo ok\n', encoding: 'utf-8' });
 		expect(result.files['assets/bin.dat'].encoding).toBe('base64');
+	});
+});
+
+const makeRepoZip = async () => {
+	const zip = new JSZip();
+	zip.file(
+		'repo-sha/skills/web-design/SKILL.md',
+		'---\nname: web-design-guidelines\ndescription: WD\n---\nweb body\n'
+	);
+	zip.file('repo-sha/skills/web-design/scripts/check.sh', 'echo web\n');
+	zip.file(
+		'repo-sha/skills/frontend-design/SKILL.md',
+		'---\nname: frontend-design\ndescription: FD\n---\nfront body\n'
+	);
+	zip.file(
+		'repo-sha/skills/odd-dir/SKILL.md',
+		'---\nname: special-skill\ndescription: SD\n---\nodd\n'
+	);
+	zip.file('repo-sha/README.md', 'readme\n');
+	return zip.generateAsync({ type: 'uint8array' });
+};
+
+describe('extractSkillFromZip select hints', () => {
+	it('selects the skill at the hinted path via suffix match', async () => {
+		const data = await makeRepoZip();
+		const result = await extractSkillFromZip(data.buffer as ArrayBuffer, {
+			path: 'skills/frontend-design'
+		});
+		expect(result.dirName).toBe('repo-sha/skills/frontend-design');
+		expect(result.skillMarkdown).toContain('name: frontend-design');
+		expect(Object.keys(result.files)).toEqual([]);
+	});
+
+	it('selects the skill whose directory matches the hinted name', async () => {
+		const data = await makeRepoZip();
+		const result = await extractSkillFromZip(data.buffer as ArrayBuffer, { name: 'web-design' });
+		expect(result.dirName).toBe('repo-sha/skills/web-design');
+		expect(result.files['scripts/check.sh']).toEqual({ content: 'echo web\n', encoding: 'utf-8' });
+	});
+
+	it('selects the skill whose frontmatter name matches the hinted name', async () => {
+		const data = await makeRepoZip();
+		const result = await extractSkillFromZip(data.buffer as ArrayBuffer, {
+			name: 'special-skill'
+		});
+		expect(result.dirName).toBe('repo-sha/skills/odd-dir');
+		expect(result.skillMarkdown).toContain('odd');
+	});
+
+	it('falls back to the shallowest SKILL.md when the hint does not match', async () => {
+		const zip = new JSZip();
+		zip.file('top/SKILL.md', '---\nname: top\n---\ntop\n');
+		zip.file('top/nested/SKILL.md', '---\nname: nested\n---\nnested\n');
+		const data = await zip.generateAsync({ type: 'uint8array' });
+		const result = await extractSkillFromZip(data.buffer as ArrayBuffer, { path: 'missing/path' });
+		expect(result.dirName).toBe('top');
+	});
+});
+
+describe('listSkillsInZip', () => {
+	it('lists every skill with frontmatter metadata, shallowest then by path', async () => {
+		const data = await makeRepoZip();
+		const list = await listSkillsInZip(data.buffer as ArrayBuffer);
+		expect(list.map((s) => s.name)).toEqual([
+			'frontend-design',
+			'special-skill',
+			'web-design-guidelines'
+		]);
+		expect(list[0]).toEqual({
+			path: 'repo-sha/skills/frontend-design/SKILL.md',
+			dirName: 'repo-sha/skills/frontend-design',
+			name: 'frontend-design',
+			description: 'FD'
+		});
+	});
+
+	it('falls back to the directory name when frontmatter has no name', async () => {
+		const zip = new JSZip();
+		zip.file('bundle/root-skill/SKILL.md', 'no frontmatter body\n');
+		const data = await zip.generateAsync({ type: 'uint8array' });
+		const list = await listSkillsInZip(data.buffer as ArrayBuffer);
+		expect(list).toHaveLength(1);
+		expect(list[0].name).toBe('root-skill');
+		expect(list[0].description).toBe('');
+	});
+
+	it('ignores metadata junk and returns an empty list when no SKILL.md exists', async () => {
+		const zip = new JSZip();
+		zip.file('__MACOSX/x/SKILL.md', 'junk');
+		zip.file('README.md', 'nope');
+		const data = await zip.generateAsync({ type: 'uint8array' });
+		await expect(listSkillsInZip(data.buffer as ArrayBuffer)).resolves.toEqual([]);
 	});
 });
 

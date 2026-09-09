@@ -445,6 +445,118 @@ def format_clawhub_ambiguity(slug: str, payload) -> str:
 
 
 ####################
+# skills.sh / GitHub download resolution
+####################
+
+SKILLSH_HOSTS = {'skills.sh', 'www.skills.sh'}
+GITHUB_HOSTS = {'github.com', 'www.github.com'}
+
+
+def parse_skillsh_ref(text: str) -> tuple[str | None, str | None, str | None]:
+    """Return (owner, repo, skill_name) for a skills.sh page URL.
+
+    Accepted forms: ``https://skills.sh/<owner>/<repo>/<skill>`` and the
+    repo-level ``https://skills.sh/<owner>/<repo>`` (skill_name is None).
+    skills.sh is a directory over GitHub repos, so owner/repo map directly
+    to the backing ``github.com/<owner>/<repo>`` repository.
+    """
+    if not isinstance(text, str):
+        return None, None, None
+    parsed = urlparse(text.strip())
+    if parsed.netloc.lower() not in SKILLSH_HOSTS:
+        return None, None, None
+    parts = [part for part in parsed.path.split('/') if part]
+    if len(parts) not in (2, 3):
+        return None, None, None
+    if not all(re.fullmatch(r'[A-Za-z0-9_.-]+', part) for part in parts):
+        return None, None, None
+    owner, repo = parts[0], parts[1]
+    skill = parts[2] if len(parts) == 3 else None
+    return owner, repo, skill
+
+
+def resolve_github_skill_url(url: str) -> dict | None:
+    """Resolve a GitHub or skills.sh URL to a skill download descriptor.
+
+    Returns a dict with ``download_url``, ``is_zip``, ``file_name``,
+    ``select`` (a hint telling the frontend which skill inside a repo zip to
+    import), and ``source`` metadata; ``None`` when the URL is not a
+    recognized GitHub/skills.sh reference.
+
+    GitHub tree URLs download the branch zipball with a path hint so bundled
+    files survive; bare repo URLs download the default-branch zipball without
+    a hint; blob URLs keep the single raw file download. codeload accepts
+    ``HEAD`` for the default branch, so no GitHub API call (and no token) is
+    needed.
+    """
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    if not url:
+        return None
+
+    owner, repo, skill = parse_skillsh_ref(url)
+    if owner:
+        source = {'type': 'skillsh', 'url': url, 'repo': f'{owner}/{repo}'}
+        if skill:
+            source['skill'] = skill
+        return {
+            'download_url': f'https://codeload.github.com/{owner}/{repo}/zip/HEAD',
+            'is_zip': True,
+            'file_name': f'{repo}.zip',
+            'select': {'name': skill} if skill else None,
+            'source': source,
+        }
+
+    parsed = urlparse(url)
+    if parsed.netloc.lower() not in GITHUB_HOSTS:
+        return None
+    parts = [part for part in parsed.path.split('/') if part]
+    if len(parts) < 2:
+        return None
+    if not all(re.fullmatch(r'[A-Za-z0-9_.-]+', part) for part in parts[:2]):
+        return None
+    owner, repo = parts[0], parts[1]
+    if repo.endswith('.git'):
+        repo = repo[: -len('.git')]
+
+    if len(parts) >= 4 and parts[2] in ('tree', 'blob'):
+        kind, branch = parts[2], parts[3]
+        path = '/'.join(parts[4:])
+        source = {'type': 'github', 'url': url, 'repo': f'{owner}/{repo}'}
+        if path:
+            source['path'] = path
+        if kind == 'blob':
+            if not path:
+                return None
+            return {
+                'download_url': f'https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{branch}/{path}',
+                'is_zip': False,
+                'file_name': parts[-1],
+                'select': None,
+                'source': source,
+            }
+        return {
+            'download_url': f'https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch}',
+            'is_zip': True,
+            'file_name': f'{repo}.zip',
+            'select': {'path': path} if path else None,
+            'source': source,
+        }
+
+    if len(parts) == 2:
+        return {
+            'download_url': f'https://codeload.github.com/{owner}/{repo}/zip/HEAD',
+            'is_zip': True,
+            'file_name': f'{repo}.zip',
+            'select': None,
+            'source': {'type': 'github', 'url': url, 'repo': f'{owner}/{repo}'},
+        }
+
+    return None
+
+
+####################
 # Terminal operations (lazy open_webui imports)
 ####################
 

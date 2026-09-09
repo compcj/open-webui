@@ -36,7 +36,9 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - OpenClaw-compatible skills span `models/skills.py` (`SkillMeta.openclaw` permissive bag),
   `routers/skills.py` (`/load/url`, `/id/{id}/install_deps`), `utils/skills_runtime.py`,
   `utils/middleware.py` (skill injection block), `tools/builtin.py` (`view_skill`), and the
-  frontend `lib/utils/skills.ts`. Preserve gating semantics (`always` exempts `requires.*` only
+  frontend `lib/utils/skills.ts`. `/load/url` resolves direct links, ClawHub refs, and GitHub
+  repo/tree/blob URLs plus skills.sh links (repo zipball via codeload, `select` hint guides the
+  frontend pick). Preserve gating semantics (`always` exempts `requires.*` only
   when the `os` constraint holds; `requires.config` checks the skill's own `config` bag),
   fingerprint-idempotent terminal file sync, degradation to default skill loading on any terminal
   failure, and the trust model: `/load/url` requires admin or `workspace.skills_import` (same

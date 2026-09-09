@@ -34,10 +34,13 @@
 		openclawToSkill,
 		skillToOpenclawMarkdown,
 		extractSkillFromZip,
+		listSkillsInZip,
 		buildSkillZip,
 		extractGating,
 		base64ToBlob,
-		getOpenclaw
+		getOpenclaw,
+		type SkillFileEntry,
+		type SkillZipListEntry
 	} from '$lib/utils/skills';
 	import TagInput from '$lib/components/common/Tags/TagInput.svelte';
 
@@ -73,6 +76,11 @@
 	let showUrlImport = false;
 	let urlImportValue = '';
 	let urlImportLoading = false;
+
+	let showSkillPicker = false;
+	let skillPickerItems: SkillZipListEntry[] = [];
+	let skillPickerBlob: Blob | null = null;
+	let skillPickerSource: Record<string, any> | null = null;
 
 	let filteredItems = null;
 	let total = null;
@@ -247,7 +255,13 @@
 		}
 	};
 
-	const prefillFromOpenclaw = (parsed, fallbackName, source, files = null, skipped = 0) => {
+	const prefillFromOpenclaw = (
+		parsed,
+		fallbackName,
+		source,
+		files: Record<string, SkillFileEntry> | null = null,
+		skipped = 0
+	) => {
 		const skill = openclawToSkill(parsed, fallbackName, source);
 		if (files && Object.keys(files).length > 0) {
 			skill.meta.openclaw.files = files;
@@ -269,6 +283,39 @@
 		goto('/workspace/skills/create');
 	};
 
+	const importZipCandidate = async (
+		blob: Blob,
+		candidate: SkillZipListEntry,
+		source: any,
+		fileName: string | null = null
+	) => {
+		const { skillMarkdown, files, skipped, dirName } = await extractSkillFromZip(blob, {
+			path: candidate.dirName
+		});
+		const parsed = parseSkillMarkdown(skillMarkdown);
+		if (!parsed) {
+			toast.error($i18n.t('Invalid SKILL.md file'));
+			return;
+		}
+		const fallbackName = dirName.split('/').pop() || (fileName ?? 'skill').replace(/\.zip$/i, '');
+		prefillFromOpenclaw(parsed, fallbackName, source, files, skipped);
+	};
+
+	const pickSkillHandler = async (item: SkillZipListEntry) => {
+		const blob = skillPickerBlob;
+		const source = skillPickerSource;
+		showSkillPicker = false;
+		skillPickerBlob = null;
+		skillPickerItems = [];
+		skillPickerSource = null;
+		if (!blob) return;
+		try {
+			await importZipCandidate(blob, item, source);
+		} catch (error) {
+			toast.error(`${error}`);
+		}
+	};
+
 	const urlImportHandler = async () => {
 		const url = urlImportValue.trim();
 		if (!url || urlImportLoading) return;
@@ -282,23 +329,42 @@
 
 			if (res) {
 				if (res.format === 'zip') {
-					const { skillMarkdown, files, skipped, dirName } = await extractSkillFromZip(
-						base64ToBlob(res.content)
-					);
-					const parsed = parseSkillMarkdown(skillMarkdown);
-					if (!parsed) {
-						toast.error($i18n.t('Invalid SKILL.md file'));
+					const blob = base64ToBlob(res.content);
+					const source = res.source ?? { type: 'url', url };
+					const candidates = await listSkillsInZip(blob);
+
+					if (candidates.length === 0) {
+						toast.error($i18n.t('SKILL.md not found in archive'));
 						return;
 					}
-					const fallbackName =
-						dirName.split('/').pop() || (res.fileName ?? 'skill').replace(/\.zip$/i, '');
-					prefillFromOpenclaw(
-						parsed,
-						fallbackName,
-						res.source ?? { type: 'url', url },
-						files,
-						skipped
-					);
+
+					let chosen = null;
+					const select = res.select;
+					if (select?.path) {
+						const suffix = `${select.path}/SKILL.md`;
+						chosen =
+							candidates.find((c) => c.path === suffix || c.path.endsWith(`/${suffix}`)) ?? null;
+					} else if (select?.name) {
+						chosen =
+							candidates.find((c) => (c.dirName.split('/').pop() ?? '') === select.name) ??
+							candidates.find((c) => c.name === select.name) ??
+							null;
+					}
+					if (!chosen && candidates.length === 1) {
+						chosen = candidates[0];
+					}
+
+					if (!chosen) {
+						// Multi-skill archive without a clear target: let the user pick
+						skillPickerBlob = blob;
+						skillPickerItems = candidates;
+						skillPickerSource = source;
+						showUrlImport = false;
+						showSkillPicker = true;
+						return;
+					}
+
+					await importZipCandidate(blob, chosen, source, res.fileName);
 				} else {
 					const parsed = parseSkillMarkdown(res.content);
 					if (!parsed) {
@@ -772,8 +838,8 @@
 				<input
 					class="w-full rounded-lg bg-gray-50 px-3 py-1.5 text-sm outline-hidden dark:bg-gray-850 dark:text-gray-200"
 					type="text"
-					placeholder={$i18n.t('Enter a URL or @owner/skill')}
-					aria-label={$i18n.t('Enter a URL or @owner/skill')}
+					placeholder={$i18n.t('Enter a URL, GitHub/skills.sh link, or @owner/skill')}
+					aria-label={$i18n.t('Enter a URL, GitHub/skills.sh link, or @owner/skill')}
 					bind:value={urlImportValue}
 					required
 				/>
@@ -789,6 +855,46 @@
 					{/if}
 				</button>
 			</form>
+		</div>
+	</Modal>
+
+	<Modal bind:show={showSkillPicker} size="sm">
+		<div>
+			<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
+				<div class=" text-sm font-medium self-center">{$i18n.t('Select a skill to import')}</div>
+				<button
+					class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+					aria-label={$i18n.t('Close')}
+					on:click={() => {
+						showSkillPicker = false;
+						skillPickerBlob = null;
+						skillPickerItems = [];
+						skillPickerSource = null;
+					}}
+				>
+					<XMark className={'size-4'} />
+				</button>
+			</div>
+
+			<div class="max-h-96 overflow-y-auto px-2 pb-3 pt-1">
+				{#each skillPickerItems as item (item.path)}
+					<button
+						class="w-full rounded-lg px-2.5 py-1.5 text-left transition hover:bg-gray-50 dark:hover:bg-gray-850"
+						type="button"
+						on:click={() => pickSkillHandler(item)}
+					>
+						<div class="truncate text-sm text-gray-800 dark:text-gray-200">{item.name}</div>
+						{#if item.description}
+							<div class="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
+								{item.description}
+							</div>
+						{/if}
+						<div class="mt-0.5 truncate text-[0.6875rem] text-gray-400 dark:text-gray-600">
+							{item.dirName || 'SKILL.md'}
+						</div>
+					</button>
+				{/each}
+			</div>
 		</div>
 	</Modal>
 

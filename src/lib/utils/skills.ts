@@ -124,8 +124,62 @@ const isIgnoredZipPath = (path: string): boolean => {
 	);
 };
 
+export type SkillZipSelect = {
+	path?: string;
+	name?: string;
+};
+
+export type SkillZipListEntry = {
+	path: string;
+	dirName: string;
+	name: string;
+	description: string;
+};
+
+const findSkillMdEntries = (zip: JSZip): JSZip.JSZipObject[] => {
+	return Object.values(zip.files).filter((entry) => {
+		if (entry.dir) return false;
+		const path = normalizeZipPath(entry.name);
+		return (path === 'SKILL.md' || path.endsWith('/SKILL.md')) && !isIgnoredZipPath(path);
+	});
+};
+
+const dirNameOf = (skillMdPath: string): string =>
+	skillMdPath.includes('/') ? skillMdPath.slice(0, skillMdPath.lastIndexOf('/')) : '';
+
+const matchSelectHint = async (
+	candidates: JSZip.JSZipObject[],
+	select?: SkillZipSelect
+): Promise<JSZip.JSZipObject | undefined> => {
+	const selectPath = select?.path?.replace(/\/+$/, '');
+	if (selectPath) {
+		const suffix = `${selectPath}/SKILL.md`;
+		const match = candidates.find((entry) => {
+			const path = normalizeZipPath(entry.name);
+			return path === suffix || path.endsWith(`/${suffix}`);
+		});
+		if (match) return match;
+	}
+
+	const selectName = select?.name;
+	if (selectName) {
+		const byDir = candidates.find(
+			(entry) => dirNameOf(normalizeZipPath(entry.name)).split('/').pop() === selectName
+		);
+		if (byDir) return byDir;
+
+		for (const entry of candidates) {
+			const parsed = parseSkillMarkdown(await entry.async('string'));
+			if (parsed?.frontmatter?.name === selectName) return entry;
+		}
+	}
+
+	return undefined;
+};
+
 export const extractSkillFromZip = async (
-	data: Blob | ArrayBuffer
+	data: Blob | ArrayBuffer,
+	select?: SkillZipSelect
 ): Promise<{
 	skillMarkdown: string;
 	files: Record<string, SkillFileEntry>;
@@ -139,27 +193,23 @@ export const extractSkillFromZip = async (
 	const zip = await JSZip.loadAsync(data);
 	const entries = Object.values(zip.files).filter((entry) => !entry.dir);
 
-	// Prefer a root-level SKILL.md, otherwise the shallowest */SKILL.md
+	// Honor the select hint (repo subdirectory or skill name), then prefer a
+	// root-level SKILL.md, otherwise the shallowest */SKILL.md
+	const candidates = findSkillMdEntries(zip);
 	const skillMdEntry =
-		entries.find((entry) => normalizeZipPath(entry.name) === 'SKILL.md') ??
-		entries
-			.filter(
-				(entry) =>
-					normalizeZipPath(entry.name).endsWith('/SKILL.md') && !isIgnoredZipPath(entry.name)
-			)
-			.sort(
-				(a, b) =>
-					normalizeZipPath(a.name).split('/').length - normalizeZipPath(b.name).split('/').length
-			)[0];
+		(await matchSelectHint(candidates, select)) ??
+		candidates.find((entry) => normalizeZipPath(entry.name) === 'SKILL.md') ??
+		candidates.sort(
+			(a, b) =>
+				normalizeZipPath(a.name).split('/').length - normalizeZipPath(b.name).split('/').length
+		)[0];
 
 	if (!skillMdEntry) {
 		throw new Error('SKILL.md not found in archive');
 	}
 
 	const skillMdPath = normalizeZipPath(skillMdEntry.name);
-	const dirName = skillMdPath.includes('/')
-		? skillMdPath.slice(0, skillMdPath.lastIndexOf('/'))
-		: '';
+	const dirName = dirNameOf(skillMdPath);
 	const prefix = dirName ? `${dirName}/` : '';
 
 	const skillMarkdown = await skillMdEntry.async('string');
@@ -199,6 +249,39 @@ export const extractSkillFromZip = async (
 	}
 
 	return { skillMarkdown, files, skipped, dirName };
+};
+
+export const listSkillsInZip = async (data: Blob | ArrayBuffer): Promise<SkillZipListEntry[]> => {
+	if (typeof Blob !== 'undefined' && data instanceof Blob) {
+		data = await data.arrayBuffer();
+	}
+
+	const zip = await JSZip.loadAsync(data);
+	const candidates = findSkillMdEntries(zip).sort((a, b) => {
+		const pathA = normalizeZipPath(a.name);
+		const pathB = normalizeZipPath(b.name);
+		return pathA.split('/').length - pathB.split('/').length || pathA.localeCompare(pathB);
+	});
+
+	const skills: SkillZipListEntry[] = [];
+	for (const entry of candidates.slice(0, 100)) {
+		const path = normalizeZipPath(entry.name);
+		const dirName = dirNameOf(path);
+		const parsed = parseSkillMarkdown(await entry.async('string'));
+		const frontmatterName = parsed?.frontmatter?.name;
+		const frontmatterDescription = parsed?.frontmatter?.description;
+		skills.push({
+			path,
+			dirName,
+			name:
+				typeof frontmatterName === 'string' && frontmatterName.trim() !== ''
+					? frontmatterName
+					: (dirName.split('/').pop() ?? 'SKILL.md'),
+			description: typeof frontmatterDescription === 'string' ? frontmatterDescription : ''
+		});
+	}
+
+	return skills;
 };
 
 export const buildSkillZip = async (skill: SkillLike): Promise<Blob> => {
