@@ -300,6 +300,11 @@ async def search_web(
     Search the public web for information. Best for current events, external references,
     or topics not covered in internal documents.
 
+    Each result contains only a title, link, and short snippet — never the full page
+    content. When the answer depends on the actual page content, always call `fetch_url`
+    on the most relevant result links before answering; never claim the content is
+    missing or empty just because search results include only snippets.
+
     :param query: The search query to look up
     :param count: Number of results to return (default: admin-configured value)
     :return: JSON with search results containing title, link, and snippet for each result
@@ -336,6 +341,10 @@ async def fetch_url(
 ) -> str:
     """
     Fetch and extract the main text content from a web page URL.
+
+    Use this after `search_web` to read the full content of relevant result links —
+    search results include only short snippets, not the page body. Also use it
+    whenever the user shares a URL whose content should be read.
 
     :param url: The URL to fetch content from
     :return: The extracted text content from the page
