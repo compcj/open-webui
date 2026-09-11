@@ -2257,53 +2257,52 @@
 											class="flex self-center w-[0.0625rem] h-4 mx-1 bg-gray-200/50 dark:bg-gray-800/50 shrink-0"
 										/>
 									{/if}
+									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+										<IntegrationsMenu
+											selectedModels={selectedModelIds}
+											{toggleFilters}
+											{showWebSearchButton}
+											{showImageGenerationButton}
+											{showCodeInterpreterButton}
+											bind:selectedToolIds
+											bind:selectedSkillIds
+											bind:selectedFilterIds
+											bind:webSearchEnabled
+											bind:imageGenerationEnabled
+											bind:codeInterpreterEnabled
+											oauthRedirectHandler={(tool: {
+												id: string;
+												serverId: string;
+												authType?: string | null;
+											}) => oauthRedirectHandler(tool, chatInputDraft)}
+											{onWebSearchToggle}
+											closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
+											onShowValves={(e) => {
+												const { type, id } = e;
+												selectedValvesType = type;
+												selectedValvesItemId = id;
+												showValvesModal = true;
+												integrationsMenuCloseOnOutsideClick = false;
+											}}
+											onClose={async () => {
+												await tick();
+
+												const chatInput = document.getElementById('chat-input');
+												chatInput?.focus();
+											}}
+										>
+											<button
+												type="button"
+												id="integration-menu-button"
+												class="bg-transparent hover:bg-gray-100 text-gray-700 dark:text-white dark:hover:bg-gray-800 rounded-full size-[1.875rem] flex justify-center items-center outline-hidden focus:outline-hidden shrink-0"
+												aria-label={$i18n.t('Integrations')}
+											>
+												<Component className="size-4.5" strokeWidth="1.5" />
+											</button>
+										</IntegrationsMenu>
+									{/if}
 
 									<div class="flex flex-1 items-center min-w-0 overflow-x-auto scrollbar-none">
-										{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
-											<IntegrationsMenu
-												selectedModels={selectedModelIds}
-												{toggleFilters}
-												{showWebSearchButton}
-												{showImageGenerationButton}
-												{showCodeInterpreterButton}
-												bind:selectedToolIds
-												bind:selectedSkillIds
-												bind:selectedFilterIds
-												bind:webSearchEnabled
-												bind:imageGenerationEnabled
-												bind:codeInterpreterEnabled
-												oauthRedirectHandler={(tool: {
-													id: string;
-													serverId: string;
-													authType?: string | null;
-												}) => oauthRedirectHandler(tool, chatInputDraft)}
-												{onWebSearchToggle}
-												closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
-												onShowValves={(e) => {
-													const { type, id } = e;
-													selectedValvesType = type;
-													selectedValvesItemId = id;
-													showValvesModal = true;
-													integrationsMenuCloseOnOutsideClick = false;
-												}}
-												onClose={async () => {
-													await tick();
-
-													const chatInput = document.getElementById('chat-input');
-													chatInput?.focus();
-												}}
-											>
-												<button
-													type="button"
-													id="integration-menu-button"
-													class="bg-transparent hover:bg-gray-100 text-gray-700 dark:text-white dark:hover:bg-gray-800 rounded-full size-[1.875rem] flex justify-center items-center outline-hidden focus:outline-hidden shrink-0"
-													aria-label={$i18n.t('Integrations')}
-												>
-													<Component className="size-4.5" strokeWidth="1.5" />
-												</button>
-											</IntegrationsMenu>
-										{/if}
-
 										{#if selectedModelIds.length === 1 && $models.find((m) => m.id === selectedModelIds[0])?.has_user_valves}
 											<div class="ml-1 flex gap-1.5 shrink-0">
 												<Tooltip content={$i18n.t('Valves')} placement="top">
@@ -2518,35 +2517,39 @@
 												/>
 											{/if}
 										</div>
+										<div class="ml-auto flex shrink-0 items-center gap-1">
+											<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]">
+												<ModelSelector
+													bind:this={modelSelector}
+													bind:selectedModels
+													showSetDefault={!history?.currentId}
+													placement="auto"
+													align="end"
+													triggerClassName="items-center gap-1.5 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+												/>
+											</div>
+
+											{#each reasoningEffortModels as model (model.id)}
+												{@const available = getAvailableReasoningEffort(model)}
+												<ReasoningEffortSelector
+													{available}
+													label={reasoningEffortModels.length > 1 ? model.name : ''}
+													defaultEffort={getEffectiveDefaultReasoningEffort(
+														model,
+														$settings?.params
+													)}
+													value={resolveReasoningEffortOverride(
+														reasoningEffortByModel[model.id],
+														available
+													) ?? ''}
+													onChange={(next) => onReasoningEffortChange(model.id, next)}
+												/>
+											{/each}
+										</div>
 									</div>
 								</div>
 
-								<div class="self-end flex space-x-1 mr-1 min-w-0 gap-[0.03125rem]">
-									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]">
-										<ModelSelector
-											bind:this={modelSelector}
-											bind:selectedModels
-											showSetDefault={!history?.currentId}
-											placement="auto"
-											align="end"
-											triggerClassName="items-center gap-1.5 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
-										/>
-									</div>
-
-									{#each reasoningEffortModels as model (model.id)}
-										{@const available = getAvailableReasoningEffort(model)}
-										<ReasoningEffortSelector
-											{available}
-											label={reasoningEffortModels.length > 1 ? model.name : ''}
-											defaultEffort={getEffectiveDefaultReasoningEffort(model, $settings?.params)}
-											value={resolveReasoningEffortOverride(
-												reasoningEffortByModel[model.id],
-												available
-											) ?? ''}
-											onChange={(next) => onReasoningEffortChange(model.id, next)}
-										/>
-									{/each}
-
+								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.03125rem]">
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">
 											<button
