@@ -15,6 +15,7 @@
 	"{{COUNT}} files": "",
 	"{{count}} files selected. Only new and modified files will be uploaded. Deleted files will be removed. The folder structure will be mirrored. Continue?_one": "",
 	"{{count}} files selected. Only new and modified files will be uploaded. Deleted files will be removed. The folder structure will be mirrored. Continue?_other": "",
+	"{{count}} files were skipped (too large)_one": "",
 	"{{count}} files were skipped (too large)_other": "",
 	"{{count}} filters_one": "",
 	"{{count}} filters_other": "",

@@ -22,11 +22,9 @@ describe('normalizeAvailableReasoningEffort', () => {
 	});
 
 	it('trims, drops blanks, and dedupes while preserving order', () => {
-		expect(normalizeAvailableReasoningEffort([' low ', 'medium', 'low', '', '  ', 'high'])).toEqual([
-			'low',
-			'medium',
-			'high'
-		]);
+		expect(normalizeAvailableReasoningEffort([' low ', 'medium', 'low', '', '  ', 'high'])).toEqual(
+			['low', 'medium', 'high']
+		);
 	});
 
 	it('ignores non-string entries', () => {
@@ -122,7 +120,12 @@ describe('fillReasoningEffortFromLastUsed', () => {
 
 	it('does not overwrite a valid chat override', () => {
 		expect(
-			fillReasoningEffortFromLastUsed({ a: 'low' }, { a: 'high', b: 'medium' }, ['a', 'b'], available)
+			fillReasoningEffortFromLastUsed(
+				{ a: 'low' },
+				{ a: 'high', b: 'medium' },
+				['a', 'b'],
+				available
+			)
 		).toEqual({ a: 'low', b: 'medium' });
 	});
 
@@ -140,7 +143,12 @@ describe('fillReasoningEffortFromLastUsed', () => {
 
 	it('only considers the requested model ids', () => {
 		expect(
-			fillReasoningEffortFromLastUsed({ extra: 'high' }, { a: 'low', extra: 'low' }, ['a'], available)
+			fillReasoningEffortFromLastUsed(
+				{ extra: 'high' },
+				{ a: 'low', extra: 'low' },
+				['a'],
+				available
+			)
 		).toEqual({ extra: 'high', a: 'low' });
 	});
 });
@@ -191,6 +199,13 @@ describe('formatDefaultReasoningEffortLabel', () => {
 
 describe('STANDARD_REASONING_EFFORTS', () => {
 	it('includes the common OpenAI reasoning effort values', () => {
-		expect(STANDARD_REASONING_EFFORTS).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+		expect(STANDARD_REASONING_EFFORTS).toEqual([
+			'none',
+			'minimal',
+			'low',
+			'medium',
+			'high',
+			'xhigh'
+		]);
 	});
 });

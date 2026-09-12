@@ -429,7 +429,9 @@
 			: 'full';
 
 	const getAvailableReasoningEffortByModel = () =>
-		Object.fromEntries(($models ?? []).map((model) => [model.id, getAvailableReasoningEffort(model)]));
+		Object.fromEntries(
+			($models ?? []).map((model) => [model.id, getAvailableReasoningEffort(model)])
+		);
 
 	const getReasoningEffortByModelForSave = () =>
 		sanitizeReasoningEffortByModel(reasoningEffortByModel, getAvailableReasoningEffortByModel());

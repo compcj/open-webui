@@ -22,10 +22,12 @@
 ### Task 1: Materialize and Guard the v0.11.0 Candidate
 
 **Files:**
+
 - Create locally: `candidate-v0.11.0/` from the upstream release archive
 - Verify: `candidate-v0.11.0/package.json`
 
 **Interfaces:**
+
 - Consumes: upstream commit `f9590b8017199e56d5e953657e6498e3cef1d246`
 - Produces: a writable v0.11.0 source tree and the exact guarded fork-head SHA
 
@@ -79,10 +81,12 @@ Expected: pytest, pytest-asyncio, and Ruff install successfully. Application dep
 ### Task 2: Port the Search1API Provider with Unit Tests
 
 **Files:**
+
 - Create: `backend/open_webui/retrieval/web/search1api.py`
 - Create: `backend/tests/test_search1api.py`
 
 **Interfaces:**
+
 - Consumes: `SearchResult`, `get_filtered_results`, and `get_session()` from v0.11.0
 - Produces: `async search_search1api(api_key: str, query: str, count: int, filter_list: list[str | None] | None = None) -> list[SearchResult]`
 
@@ -317,11 +321,13 @@ Expected: `4 passed`.
 ### Task 3: Integrate Configuration and Router Contracts
 
 **Files:**
+
 - Modify: `backend/open_webui/config.py:1228,2943`
 - Modify: `backend/open_webui/routers/retrieval.py:103,366,729,808,1284,1435,2403`
 - Create: `backend/tests/test_search1api_integration.py`
 
 **Interfaces:**
+
 - Consumes: `search_search1api` from Task 2
 - Produces: `SEARCH1API_API_KEY` through config reads/writes and an async `search1api` dispatch branch
 
@@ -450,9 +456,11 @@ Expected at this point: provider and backend contract tests pass; only `test_adm
 ### Task 4: Adapt the v0.11.0 Admin UI
 
 **Files:**
+
 - Modify: `src/lib/components/admin/Settings/WebSearch.svelte:20-50,574`
 
 **Interfaces:**
+
 - Consumes: `SEARCH1API_API_KEY` returned by the retrieval configuration API
 - Produces: selectable `search1api` engine and settings-styled sensitive key input
 
@@ -461,11 +469,7 @@ Expected at this point: provider and backend contract tests pass; only `test_adm
 Insert Search1API next to SearchApi:
 
 ```svelte
-		'serphouse',
-		'serply',
-		'search1api',
-		'searchapi',
-		'serpapi',
+'serphouse', 'serply', 'search1api', 'searchapi', 'serpapi',
 ```
 
 - [ ] **Step 2: Add the v0.11.0-styled key field**
@@ -502,11 +506,13 @@ Expected: `7 passed`.
 ### Task 5: Validate and Publish the Guarded Merge
 
 **Files:**
+
 - Verify all files from Tasks 1-4
 - Preserve: `docs/superpowers/specs/2026-07-27-open-webui-v0.11.0-upstream-merge-design.md`
 - Preserve: `docs/superpowers/plans/2026-07-27-open-webui-v0.11.0-upstream-merge.md`
 
 **Interfaces:**
+
 - Consumes: tested candidate tree, guarded fork head, upstream tag SHA
 - Produces: a two-parent merge commit and a non-force update of `compcj/open-webui:main`
 
@@ -639,4 +645,3 @@ gh api "repos/compcj/open-webui/git/commits/$mergeSha" --jq '[.parents[].sha]'
 ```
 
 Expected: package version is `0.11.0`, Search1API files are present, and the two parents remain correct.
-

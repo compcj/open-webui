@@ -72,9 +72,14 @@ export function mergeRequestParamsWithReasoningEffort<T extends Record<string, u
 	};
 }
 
-export function getAvailableReasoningEffort(model: {
-	info?: { meta?: { available_reasoning_effort?: unknown } };
-} | null | undefined): string[] {
+export function getAvailableReasoningEffort(
+	model:
+		| {
+				info?: { meta?: { available_reasoning_effort?: unknown } };
+		  }
+		| null
+		| undefined
+): string[] {
 	return normalizeAvailableReasoningEffort(model?.info?.meta?.available_reasoning_effort);
 }
 
@@ -132,9 +137,14 @@ function trimReasoningEffort(value: unknown): string | undefined {
 	return trimmed || undefined;
 }
 
-export function getDefaultReasoningEffort(model: {
-	info?: { meta?: { default_reasoning_effort?: unknown } };
-} | null | undefined): string | undefined {
+export function getDefaultReasoningEffort(
+	model:
+		| {
+				info?: { meta?: { default_reasoning_effort?: unknown } };
+		  }
+		| null
+		| undefined
+): string | undefined {
 	return trimReasoningEffort(model?.info?.meta?.default_reasoning_effort);
 }
 

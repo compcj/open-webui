@@ -15,6 +15,7 @@
 	"{{COUNT}} files": "{{COUNT}} comhad",
 	"{{count}} files selected. Only new and modified files will be uploaded. Deleted files will be removed. The folder structure will be mirrored. Continue?_one": "Roghnaíodh {{count}} comhad. Ní uaslódálfar ach comhaid nua agus modhnaithe. Bainfear comhaid scriosta. Déanfar struchtúr an fhillteáin a scáthánú. Lean ar aghaidh?_one",
 	"{{count}} files selected. Only new and modified files will be uploaded. Deleted files will be removed. The folder structure will be mirrored. Continue?_other": "Roghnaíodh {{count}} comhad. Ní uaslódálfar ach comhaid nua agus modhnaithe. Bainfear comhaid scriosta. Déanfar struchtúr an fhillteáin a scáthánú. Lean ar aghaidh?_other",
+	"{{count}} files were skipped (too large)_one": "",
 	"{{count}} files were skipped (too large)_other": "",
 	"{{count}} filters_one": "{{count}} scagaire",
 	"{{count}} filters_other": "{{count}} scagairí_eile",
