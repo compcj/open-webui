@@ -825,7 +825,19 @@
 		window.visualViewport?.addEventListener('resize', scheduleSettledPositionUpdates);
 		window.visualViewport?.addEventListener('scroll', schedulePositionUpdate);
 
+		// Container reflow can move the trigger without resizing the window or the button itself.
+		const resizeObserver =
+			typeof ResizeObserver !== 'undefined'
+				? new ResizeObserver(() => {
+						if (show) schedulePositionUpdate();
+					})
+				: null;
+		for (let element = triggerElement; element; element = element.parentElement) {
+			resizeObserver?.observe(element);
+		}
+
 		return () => {
+			resizeObserver?.disconnect();
 			if (positionFrame != null) cancelAnimationFrame(positionFrame);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			window.removeEventListener('scroll', handleScroll, true);

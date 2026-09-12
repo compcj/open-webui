@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { flyAndScale } from '$lib/utils/transitions';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
 	/** Currently selected value */
@@ -42,7 +42,7 @@
 
 	export let open = false;
 
-	let triggerEl;
+	let triggerEl: HTMLButtonElement | null = null;
 	let contentEl;
 
 	$: selectedLabel = items.find((i) => i.value === value)?.label ?? placeholder;
@@ -121,6 +121,20 @@
 		open = false;
 		onChange(value);
 	}
+
+	onMount(() => {
+		// Container reflow can move the trigger without resizing the window or the button itself.
+		const resizeObserver =
+			typeof ResizeObserver !== 'undefined'
+				? new ResizeObserver(() => {
+						if (open) positionContent();
+					})
+				: null;
+		for (let element: HTMLElement | null = triggerEl; element; element = element.parentElement) {
+			resizeObserver?.observe(element);
+		}
+		return () => resizeObserver?.disconnect();
+	});
 </script>
 
 <svelte:window
