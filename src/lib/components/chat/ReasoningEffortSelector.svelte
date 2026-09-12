@@ -22,7 +22,10 @@
 	$: selectedLabel = items.find((item) => item.value === value)?.label ?? defaultLabel;
 </script>
 
-<Tooltip content={label ? `${label}: ${$i18n.t('Reasoning Effort')}` : $i18n.t('Reasoning Effort')}>
+<Tooltip
+	className="flex shrink-0"
+	content={label ? `${label}: ${$i18n.t('Reasoning Effort')}` : $i18n.t('Reasoning Effort')}
+>
 	<div class="flex min-w-0 items-center">
 		<Select
 			{value}
@@ -30,7 +33,7 @@
 			align="end"
 			side="top"
 			contentClass="min-w-[7.5rem]"
-			triggerClass="flex min-w-0 max-w-[9rem] items-center gap-1 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+			triggerClass="reasoning-effort-trigger flex min-w-0 max-w-[9rem] items-center gap-1 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
 			onChange={(next) => onChange(next)}
 		>
 			<div slot="trigger" class="flex min-w-0 items-center gap-1">

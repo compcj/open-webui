@@ -2523,8 +2523,10 @@
 								<div
 									class="composer-models flex min-w-0 items-center overflow-x-auto scrollbar-none"
 								>
-									<div class="ml-auto flex shrink-0 items-center gap-1">
-										<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]">
+									<div class="composer-model-controls ml-auto flex shrink-0 items-center gap-1">
+										<div
+											class="composer-model-selection flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]"
+										>
 											<ModelSelector
 												bind:this={modelSelector}
 												bind:selectedModels
@@ -2780,6 +2782,21 @@
 
 	.composer-actions {
 		grid-area: actions;
+	}
+
+	@container chat-composer (width < 480px) {
+		.composer-model-controls {
+			width: 100%;
+		}
+
+		.composer-model-selection {
+			flex: 1 0 10rem;
+			max-width: none;
+		}
+
+		.composer-models :global(.reasoning-effort-trigger) {
+			max-width: none;
+		}
 	}
 
 	@container chat-composer (min-width: 480px) {
