@@ -219,7 +219,8 @@ class TikaLoader:
         content_key = 'tk:content' if self.server_version == '4' else 'X-TIKA:content'
         endpoint = f'{self.url.rstrip("/")}/{endpoint_path}'
 
-        r = requests.put(endpoint, data=data, headers=headers, verify=REQUESTS_VERIFY)
+        # Tika 3 negotiates the JSON metadata envelope through Accept.
+        r = requests.put(endpoint, data=data, headers={**headers, 'Accept': 'application/json'}, verify=REQUESTS_VERIFY)
 
         if r.ok:
             raw_metadata = r.json()
