@@ -18,6 +18,7 @@
 		pinnedChats,
 		pinnedNotes,
 		temporaryChatEnabled,
+		temporaryChatAllowed,
 		channels,
 		socket,
 		config,
@@ -814,7 +815,11 @@
 		selectedFolder.set(null);
 		closeMobileSidebar();
 
-		if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
+		if (
+			$temporaryChatAllowed &&
+			$user?.role !== 'admin' &&
+			$user?.permissions?.chat?.temporary_enforced
+		) {
 			await temporaryChatEnabled.set(true);
 		} else {
 			await temporaryChatEnabled.set(false);

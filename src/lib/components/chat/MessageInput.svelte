@@ -38,7 +38,8 @@
 		showFileNavDir,
 		selectedTerminalId,
 		TTSWorker,
-		temporaryChatEnabled
+		temporaryChatEnabled,
+		temporaryChatAllowed
 	} from '$lib/stores';
 
 	import {
@@ -185,6 +186,7 @@
 	$: canToggleTemporary =
 		!embedded &&
 		!chatId &&
+		$temporaryChatAllowed &&
 		($_user?.role === 'admin' ||
 			($_user?.role === 'user' &&
 				($_user?.permissions?.chat?.temporary ?? true) &&

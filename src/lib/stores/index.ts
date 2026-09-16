@@ -4,6 +4,7 @@ import type { ModelConfig } from '$lib/apis';
 import type { Banner } from '$lib/types';
 import type { Socket } from 'socket.io-client';
 import type { AudioQueue } from '$lib/utils/audio';
+import { canUseTemporaryChat } from '$lib/utils/chat-access';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
 
@@ -151,6 +152,13 @@ export const artifactContents = writable(null);
 export const embed = writable(null);
 
 export const temporaryChatEnabled = writable(false);
+export const temporaryChatAllowed = derived([config, user], ([$config, $user]) =>
+	canUseTemporaryChat(
+		$user?.role,
+		$config?.features?.enable_temporary_chats,
+		$user?.permissions?.chat?.temporary
+	)
+);
 
 // Transient one-shot event from the desktop shell (Spotlight, drag-and-drop, etc.).
 // Set by +layout.svelte, consumed and cleared by Chat.svelte.
@@ -337,6 +345,8 @@ type Config = {
 		auth: boolean;
 		auth_trusted_header: boolean;
 		enable_api_keys: boolean;
+		enable_temporary_chats?: boolean;
+		enable_direct_api_chat?: boolean;
 		enable_signup: boolean;
 		enable_login_form: boolean;
 		enable_web_search?: boolean;

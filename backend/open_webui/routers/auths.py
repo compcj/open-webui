@@ -108,6 +108,8 @@ ADMIN_CONFIG_KEYS = {
     'WEBUI_URL': 'webui.url',
     'ENABLE_SIGNUP': 'ui.enable_signup',
     'ENABLE_API_KEYS': 'auth.enable_api_keys',
+    'ENABLE_TEMPORARY_CHATS': 'chat.temporary.enable',
+    'ENABLE_DIRECT_API_CHAT': 'chat.direct_api.enable',
     'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': 'auth.api_key.endpoint_restrictions',
     'API_KEYS_ALLOWED_ENDPOINTS': 'auth.api_key.allowed_endpoints',
     'DEFAULT_USER_ROLE': 'ui.default_user_role',
@@ -1211,6 +1213,8 @@ class AdminConfig(BaseModel):
     WEBUI_URL: str
     ENABLE_SIGNUP: bool
     ENABLE_API_KEYS: bool
+    ENABLE_TEMPORARY_CHATS: bool | None = None
+    ENABLE_DIRECT_API_CHAT: bool | None = None
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: bool
     API_KEYS_ALLOWED_ENDPOINTS: str
     DEFAULT_USER_ROLE: str
@@ -1240,6 +1244,11 @@ class AdminConfig(BaseModel):
 @router.post('/admin/config')
 async def update_admin_config(request: Request, form_data: AdminConfig, user=Depends(get_admin_user)):
     updates = config_updates(form_data.model_dump(), ADMIN_CONFIG_KEYS)
+    # Older clients omit these fields; saving another setting must not reset them.
+    if form_data.ENABLE_TEMPORARY_CHATS is None:
+        updates.pop('chat.temporary.enable', None)
+    if form_data.ENABLE_DIRECT_API_CHAT is None:
+        updates.pop('chat.direct_api.enable', None)
     updates['ui.default_interface_settings'] = form_data.DEFAULT_INTERFACE_SETTINGS or {}
     updates['folders.max_file_count'] = int(form_data.FOLDER_MAX_FILE_COUNT) if form_data.FOLDER_MAX_FILE_COUNT else ''
     updates['automations.max_count'] = int(form_data.AUTOMATION_MAX_COUNT) if form_data.AUTOMATION_MAX_COUNT else ''

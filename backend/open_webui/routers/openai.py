@@ -42,6 +42,7 @@ from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access, has_connection_access, has_permission
 from open_webui.utils.anthropic import ANTHROPIC_VERSION, get_anthropic_models, is_anthropic_url
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.chat_access import get_direct_chat_user
 from open_webui.utils.headers import get_custom_headers, include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import convert_logit_bias_input_to_json
@@ -1470,7 +1471,7 @@ def convert_responses_result(response: dict) -> dict:
 async def generate_chat_completion(
     request: Request,
     form_data: dict,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     if not await Config.get('openai.enable'):
         raise HTTPException(status_code=503, detail='OpenAI API is disabled')
@@ -1853,7 +1854,7 @@ class ResponsesForm(BaseModel):
 async def responses(
     request: Request,
     form_data: ResponsesForm,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     """
     Forward requests to the OpenAI Responses API endpoint.
@@ -1961,7 +1962,7 @@ async def responses(
 
 
 @router.api_route('/{path:path}', methods=['GET', 'POST', 'PUT', 'DELETE'])
-async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
+async def proxy(path: str, request: Request, user=Depends(get_direct_chat_user)):
     """
     Deprecated: proxy all requests to OpenAI API.
     Disabled by default. Set ENABLE_OPENAI_API_PASSTHROUGH=True to enable.

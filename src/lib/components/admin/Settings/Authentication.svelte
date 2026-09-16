@@ -216,6 +216,26 @@
 					{/if}
 				{/if}
 
+				<AdminSettingRow
+					label={$i18n.t('Allow Temporary Chats')}
+					description={$i18n.t(
+						'Allow non-admin users to start temporary chats. Disabling this overrides temporary chat defaults and group permissions.'
+					)}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_TEMPORARY_CHATS} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+
+				<AdminSettingRow
+					label={$i18n.t('Allow Direct API Chat')}
+					description={$i18n.t(
+						'Allow non-admin users to generate responses without a chat conversation using JWT or API keys. Disabling this also blocks direct OpenAI and Ollama generation endpoints.'
+					)}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_DIRECT_API_CHAT} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+
 				<AdminSettingField
 					label={$i18n.t('JWT Expiration')}
 					description={$i18n.t(

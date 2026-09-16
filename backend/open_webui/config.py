@@ -2468,6 +2468,9 @@ Responses from models: {{responses}}"""
 
 ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'False').lower() == 'true'
 
+ENABLE_TEMPORARY_CHATS = os.getenv('ENABLE_TEMPORARY_CHATS', 'True').lower() == 'true'
+ENABLE_DIRECT_API_CHAT = os.getenv('ENABLE_DIRECT_API_CHAT', 'True').lower() == 'true'
+
 ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = (
     os.getenv(
         'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS',
@@ -3162,6 +3165,8 @@ DEFAULT_CONFIG = {
     'task.voice.prompt.enable': ENABLE_VOICE_MODE_PROMPT,
     'task.tools.prompt_template': TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE,
     'auth.enable_api_keys': ENABLE_API_KEYS,
+    'chat.temporary.enable': ENABLE_TEMPORARY_CHATS,
+    'chat.direct_api.enable': ENABLE_DIRECT_API_CHAT,
     'auth.api_key.endpoint_restrictions': ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS,
     'auth.api_key.allowed_endpoints': API_KEYS_ALLOWED_ENDPOINTS,
     'auth.jwt_expiry': JWT_EXPIRES_IN,

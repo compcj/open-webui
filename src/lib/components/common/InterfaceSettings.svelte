@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { config, settings, user } from '$lib/stores';
+	import { config, settings, user, temporaryChatAllowed } from '$lib/stores';
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { updateUserInfo } from '$lib/apis/users';
@@ -924,7 +924,7 @@
 		</p>
 	</div>
 
-	{#if $user?.role === 'admin' || $user?.permissions?.chat?.temporary}
+	{#if $temporaryChatAllowed}
 		<div>
 			<div class={settingRowClass}>
 				<div id="temp-chat-default-label" class={settingLabelClass}>

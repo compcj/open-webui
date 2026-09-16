@@ -22,9 +22,8 @@
 	dayjs.extend(relativeTime);
 
 	import { compressImage, copyToClipboard, convertHeicToJpeg } from '$lib/utils';
-	import { WEBUI_BASE_URL } from '$lib/constants';
 	import { getFileById, uploadFile } from '$lib/apis/files';
-	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
+	import { generateTitle } from '$lib/apis';
 
 	import {
 		config,
@@ -340,74 +339,23 @@
 
 	const generateTitleHandler = async () => {
 		const content = note.data.content.md;
-		const DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE = `### Task:
-Generate a concise title summarizing the content in the content's primary language.
-### Guidelines:
-- The title should clearly represent the main theme or subject of the content.
-- Keep it short: 2-4 words is best.
-- Do not use emojis, quotation marks, or special formatting.
-- Write the title in the content's primary language.
-- Prioritize accuracy over creativity.
-- Your entire response must consist solely of the JSON object, without any introductory or concluding text.
-- The output must be a single, raw JSON object, without any markdown code fences or other encapsulating text.
-- Ensure no conversational text, affirmations, or explanations precede or follow the raw JSON output, as this will cause direct parsing failure.
-### Output:
-JSON format: { "title": "your concise title here" }
-### Examples:
-- { "title": "Stock Trends" },
-- { "title": "Chocolate Chip Cookies" },
-- { "title": "Music Streaming" },
-- { "title": "Remote Work" }
-### Content:
-<content>
-${content}
-</content>`;
-
-		const oldTitle = JSON.parse(JSON.stringify(note.title));
+		const oldTitle = note.title;
 		note.title = '';
 		titleGenerating = true;
 
-		const res = await generateOpenAIChatCompletion(
-			localStorage.token,
-			{
-				model: selectedModelId,
-				stream: false,
-				messages: [
-					{
-						role: 'user',
-						content: DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE
-					}
-				]
-			},
-			`${WEBUI_BASE_URL}/api`
-		);
-		if (res) {
-			// Step 1: Safely extract the response string
-			const response = res?.choices[0]?.message?.content ?? '';
-
-			try {
-				const jsonStartIndex = response.indexOf('{');
-				const jsonEndIndex = response.lastIndexOf('}');
-
-				if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
-					const jsonResponse = response.substring(jsonStartIndex, jsonEndIndex + 1);
-					const parsed = JSON.parse(jsonResponse);
-
-					if (parsed && parsed.title) {
-						note.title = parsed.title.trim();
-					}
-				}
-			} catch (e) {
-				console.error('Error parsing JSON response:', e);
-				toast.error($i18n.t('Failed to generate title'));
-			}
-		}
-
-		if (!note.title) {
+		try {
+			const title = await generateTitle(localStorage.token, selectedModelId, [
+				{ role: 'user', content }
+			]);
+			note.title = title?.trim() || oldTitle;
+		} catch (e) {
+			console.error('Error generating note title:', e);
 			note.title = oldTitle;
+			toast.error($i18n.t('Failed to generate title'));
+		} finally {
+			titleGenerating = false;
 		}
 
-		titleGenerating = false;
 		await tick();
 		changeDebounceHandler();
 	};

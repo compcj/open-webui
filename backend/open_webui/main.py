@@ -227,6 +227,7 @@ from open_webui.utils.chat_id import (
     is_saved_chat_id,
     is_temporary_chat_id,
 )
+from open_webui.utils.chat_access import check_chat_access, get_direct_chat_user
 from open_webui.utils.chat_variables import (
     normalize_chat_variables,
 )
@@ -1089,6 +1090,8 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
+    await check_chat_access(form_data, user)
+
     if not request.app.state.MODELS:
         await get_all_models(request, user=user)
 
@@ -1316,7 +1319,12 @@ async def chat_completion(
                     if not target_message_id:
                         continue
                     target_message = await Messages.get_message_by_id(target_message_id)
-                    if target_message and (
+                    if not target_message:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail=ERROR_MESSAGES.NOT_FOUND,
+                        )
+                    if (
                         target_message.channel_id != channel.id
                         # Write access is not authorship — block cross-member edits.
                         or (user.role != 'admin' and target_message.user_id != user.id)
@@ -1977,7 +1985,7 @@ async def passthrough_anthropic_messages(request: Request, form_data: dict, user
 async def generate_messages(
     request: Request,
     form_data: dict,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     """
     Anthropic Messages API compatible endpoint.
@@ -2233,6 +2241,8 @@ async def get_app_config(request: Request):
         'ui.enable_signup',
         'ui.enable_login_form',
         'auth.enable_api_keys',
+        'chat.temporary.enable',
+        'chat.direct_api.enable',
         'ui.enable_password_change_form',
         'direct.enable',
         'folders.enable',
@@ -2311,6 +2321,8 @@ async def get_app_config(request: Request):
             **(
                 {
                     'enable_api_keys': config.get('auth.enable_api_keys'),
+                    'enable_temporary_chats': config.get('chat.temporary.enable', True),
+                    'enable_direct_api_chat': config.get('chat.direct_api.enable', True),
                     'enable_password_change_form': config.get('ui.enable_password_change_form'),
                     'enable_version_update_check': ENABLE_VERSION_UPDATE_CHECK,
                     'enable_pyodide_file_persistence': ENABLE_PYODIDE_FILE_PERSISTENCE,

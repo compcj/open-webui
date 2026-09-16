@@ -32,6 +32,7 @@
 		showSettings,
 		showChangelog,
 		temporaryChatEnabled,
+		temporaryChatAllowed,
 		toolServers,
 		terminalServers,
 		selectedTerminalId,
@@ -339,6 +340,7 @@
 				} else if (shortcut === Shortcut.NEW_TEMPORARY_CHAT) {
 					console.log('Shortcut triggered: NEW_TEMPORARY_CHAT');
 					event.preventDefault();
+					if (!$temporaryChatAllowed) return;
 					if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
 						temporaryChatEnabled.set(true);
 					} else {
@@ -386,7 +388,7 @@
 			showChangelog.set($settings?.version !== $config.version);
 		}
 
-		if ($user?.role === 'admin' || ($user?.permissions?.chat?.temporary ?? true)) {
+		if ($temporaryChatAllowed) {
 			if ($page.url.searchParams.get('temporary-chat') === 'true') {
 				temporaryChatEnabled.set(true);
 			}
@@ -394,6 +396,8 @@
 			if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
 				temporaryChatEnabled.set(true);
 			}
+		} else {
+			temporaryChatEnabled.set(false);
 		}
 
 		// Check for version updates

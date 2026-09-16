@@ -36,6 +36,7 @@ from open_webui.models.models import Models
 from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.chat_access import get_direct_chat_user
 from open_webui.utils.headers import get_custom_headers, include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import calculate_sha256
@@ -992,7 +993,7 @@ async def generate_completion(
     request: Request,
     form_data: GenerateCompletionForm,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     """Run text completion via Ollama /api/generate."""
     if not await Config.get('ollama.enable'):
@@ -1094,7 +1095,7 @@ async def generate_chat_completion(
     request: Request,
     form_data: dict,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),  # noqa: B008
+    user=Depends(get_direct_chat_user),  # noqa: B008
 ):
     """Forward a chat completion request to an Ollama backend."""
     if not await Config.get('ollama.enable'):
@@ -1211,7 +1212,7 @@ async def generate_openai_completion(
     request: Request,
     form_data: dict,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),  # noqa: B008
+    user=Depends(get_direct_chat_user),  # noqa: B008
 ):
     """Forward a text completion request via the OpenAI-compatible proxy."""
     # NOTE: We intentionally do NOT use Depends(get_async_session) here.
@@ -1315,7 +1316,7 @@ async def generate_openai_chat_completion(
     request: Request,
     form_data: dict,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),  # noqa: B008
+    user=Depends(get_direct_chat_user),  # noqa: B008
 ):
     """Forward a chat completion request via the OpenAI-compatible proxy."""
     # NOTE: We intentionally do NOT use Depends(get_async_session) here.
@@ -1374,7 +1375,7 @@ async def generate_anthropic_messages(
     request: Request,
     form_data: dict,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     """
     Proxy for Ollama's Anthropic-compatible /v1/messages endpoint.
@@ -1432,7 +1433,7 @@ async def generate_responses(
     request: Request,
     form_data: ResponsesForm,
     url_idx: int | None = None,
-    user=Depends(get_verified_user),
+    user=Depends(get_direct_chat_user),
 ):
     """
     Proxy for Ollama's OpenAI-compatible /v1/responses endpoint.

@@ -30,6 +30,7 @@
 		showControls,
 		showCallOverlay,
 		temporaryChatEnabled,
+		temporaryChatAllowed,
 		mobile,
 		chatTitle,
 		showArtifacts,
@@ -2072,11 +2073,15 @@
 			updateLastReadAt($chatId);
 		}
 
-		if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
+		if (
+			$temporaryChatAllowed &&
+			$user?.role !== 'admin' &&
+			$user?.permissions?.chat?.temporary_enforced
+		) {
 			await temporaryChatEnabled.set(true);
 		}
 
-		if ($settings?.temporaryChatByDefault ?? false) {
+		if ($temporaryChatAllowed && ($settings?.temporaryChatByDefault ?? false)) {
 			if ($temporaryChatEnabled === false) {
 				await temporaryChatEnabled.set(true);
 			} else if ($temporaryChatEnabled === null) {
@@ -2085,7 +2090,7 @@
 			}
 		}
 
-		if ($user?.role !== 'admin' && !$user?.permissions?.chat?.temporary) {
+		if (!$temporaryChatAllowed) {
 			await temporaryChatEnabled.set(false);
 		}
 
