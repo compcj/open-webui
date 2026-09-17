@@ -347,27 +347,26 @@ async def fetch_url(
     whenever the user shares a URL whose content should be read.
 
     :param url: The URL to fetch content from
-    :return: The extracted text content from the page
+    :return: The extracted text (with a notice if truncated), or a JSON error containing the URL
     """
     if __request__ is None:
-        return JSONCodec.dumps({'error': 'Request context not available'})
+        return JSONCodec.dumps({'error': 'Request context not available', 'url': url})
 
     try:
         content, _ = await get_content_from_url(__request__, url)
 
+        if content is None or not content.strip():
+            return JSONCodec.dumps({'error': 'No readable content was retrieved from this URL.', 'url': url})
+
         # Truncate if configured (WEB_FETCH_MAX_CONTENT_LENGTH)
-        # Guard: content may be None if the web loader silently failed
-        if content is not None:
-            max_length = await Config.get('web.fetch.max_content_length')
-            if max_length and max_length > 0 and len(content) > max_length:
-                content = content[:max_length] + '\n\n[Content truncated...]'
-        else:
-            content = ''
+        max_length = await Config.get('web.fetch.max_content_length')
+        if max_length and max_length > 0 and len(content) > max_length:
+            content = content[:max_length] + '\n\n[Content truncated...]'
 
         return content
     except Exception as e:
         log.warning(f'fetch_url error: {e}')
-        return JSONCodec.dumps({'error': str(e)})
+        return JSONCodec.dumps({'error': str(e) or type(e).__name__, 'url': url})
 
 
 # =============================================================================
