@@ -479,7 +479,11 @@ async def ws_terminal(
     # For orchestrator-backed servers, pass user_id
     upstream_params['user_id'] = user.id
     context_id = terminal_context_id(connection, {'chat_id': chat_id}, 'chat')
-    upstream_headers = {}
+    # Match the ownership headers used to create the session via HTTP. Open
+    # Terminal checks both when attaching, independently of first-message auth.
+    upstream_headers = {'X-User-Id': user.id}
+    if chat_id:
+        upstream_headers['X-Session-Id'] = chat_id
     if terminal_context_config(connection, 'chat').get('context_id') == 'chat_id' and not context_id:
         await ws.close(code=4003, reason='A saved chat is required for this terminal')
         return
