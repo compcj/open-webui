@@ -5,6 +5,7 @@ import type { Banner } from '$lib/types';
 import type { Socket } from 'socket.io-client';
 import type { AudioQueue } from '$lib/utils/audio';
 import { canUseTemporaryChat } from '$lib/utils/chat-access';
+import type { ToolFeaturesByModel } from '$lib/utils/tool-feature-preferences';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
 
@@ -269,6 +270,7 @@ type Settings = {
 	copyFormatted?: boolean;
 	models?: string[];
 	reasoningEffortByModel?: Record<string, string>;
+	toolFeaturesByModel?: ToolFeaturesByModel;
 	conversationMode?: boolean;
 	speechAutoSend?: boolean;
 	responseAutoPlayback?: boolean;

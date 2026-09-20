@@ -65,6 +65,7 @@
 	export let onSelect = (e) => {};
 	export let onChange = (e) => {};
 	export let onWebSearchToggle: Function = () => {};
+	export let onImageGenerationToggle: Function = () => {};
 	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
@@ -266,6 +267,7 @@
 						{onQueueDelete}
 						{askUser}
 						{onWebSearchToggle}
+						{onImageGenerationToggle}
 						on:chatVariables
 						on:submit={(e) => {
 							dispatch('submit', e.detail);

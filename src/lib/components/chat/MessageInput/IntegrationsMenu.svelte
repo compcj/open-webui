@@ -66,6 +66,7 @@
 	export let onShowValves: Function;
 	export let onClose: Function;
 	export let onWebSearchToggle: Function = () => {};
+	export let onImageGenerationToggle: Function = () => {};
 	export let closeOnOutsideClick = true;
 
 	let show = false;
@@ -429,6 +430,7 @@
 								aria-pressed={imageGenerationEnabled}
 								on:click={() => {
 									imageGenerationEnabled = !imageGenerationEnabled;
+									onImageGenerationToggle(imageGenerationEnabled);
 								}}
 							>
 								<div class="flex-1 truncate">

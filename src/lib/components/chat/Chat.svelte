@@ -74,6 +74,14 @@
 		resolveReasoningEffortOverride,
 		sanitizeReasoningEffortByModel
 	} from '$lib/utils/reasoning-effort';
+	import {
+		enqueueChatSettingsSave,
+		getToolFeatureModelId,
+		resolveToolFeatureState,
+		updateToolFeaturePreference,
+		type ToolFeature,
+		type ToolFeaturePreferences
+	} from '$lib/utils/tool-feature-preferences';
 	import { applyResponseStreamEvent, getOutputText } from './Messages/structuredOutput';
 
 	import {
@@ -332,6 +340,91 @@
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
+	// undefined means no pending toggle; null is a multi-model toggle (never remembered).
+	let pendingWebSearchToggleModelId: string | null | undefined;
+	let webSearchConfirmTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	const getToolFeatureContext = () => {
+		const modelId = getToolFeatureModelId(selectedModels, atSelectedModel?.id);
+		const currentModels = atSelectedModel
+			? [atSelectedModel]
+			: selectedModels.filter(Boolean).map((id) => $models.find((model) => model.id === id));
+		const model = modelId ? (atSelectedModel ?? $models.find((m) => m.id === modelId)) : null;
+		const meta = model?.info?.meta as
+			| { capabilities?: ToolFeaturePreferences; defaultFeatureIds?: string[] }
+			| undefined;
+		const isAvailable = (feature: ToolFeature) =>
+			Boolean(
+				currentModels.length > 0 &&
+				currentModels.every(
+					(model) =>
+						model &&
+						((model.info?.meta?.capabilities as ToolFeaturePreferences | undefined)?.[feature] ??
+							true)
+				) &&
+				$config?.features?.[`enable_${feature}`] &&
+				($user?.role === 'admin' || $user?.permissions?.features?.[feature])
+			);
+		const isDefault = (feature: ToolFeature) =>
+			Boolean(meta?.capabilities?.[feature] && meta.defaultFeatureIds?.includes(feature));
+		return {
+			modelId,
+			preferences: $settings?.toolFeaturesByModel,
+			defaults: {
+				web_search: isDefault('web_search'),
+				image_generation: isDefault('image_generation')
+			},
+			available: {
+				web_search: isAvailable('web_search'),
+				image_generation: isAvailable('image_generation')
+			}
+		};
+	};
+
+	const applyToolFeatureDefaults = (overrides?: ToolFeaturePreferences) => {
+		const features = resolveToolFeatureState({ ...getToolFeatureContext(), overrides });
+		webSearchEnabled = features.web_search;
+		imageGenerationEnabled = features.image_generation;
+	};
+
+	const persistChatUserSettings = async (errorScope: string, notifyOnError = false) => {
+		if (!$user?.id) return;
+		const userId = $user.id;
+		const token = localStorage.token;
+		await enqueueChatSettingsSave(
+			async () => {
+				// Read the latest full settings, including other edits made while a save was pending.
+				// Queued work must never write one account's preferences into another account.
+				if (get(user)?.id !== userId || localStorage.token !== token) return;
+				const saved = await updateUserSettings(token, { ui: get(settings) });
+				if (!saved) throw new Error('Failed to update settings');
+			},
+			(error) => {
+				console.error(`[${errorScope}]`, error);
+				if (notifyOnError && get(user)?.id === userId) {
+					toast.error($i18n.t('Failed to update settings'));
+				}
+			}
+		);
+	};
+
+	const persistToolFeaturePreference = async (
+		modelId: string | null,
+		feature: ToolFeature,
+		enabled: boolean
+	) => {
+		if (!modelId || !$user?.id) return;
+		settings.update((current) => ({
+			...current,
+			toolFeaturesByModel: updateToolFeaturePreference(
+				current.toolFeaturesByModel,
+				modelId,
+				feature,
+				enabled
+			)
+		}));
+		await persistChatUserSettings('tool feature settings', true);
+	};
 
 	$: {
 		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
@@ -343,32 +436,59 @@
 		webSearchActive = Boolean(
 			$config?.features?.enable_web_search &&
 			($user?.role === 'admin' || $user?.permissions?.features?.web_search) &&
-			(webSearchEnabled ||
-				(allModelsSupportWebSearch && ($settings?.webSearch ?? false) === 'always'))
+			allModelsSupportWebSearch &&
+			(webSearchEnabled || ($settings?.webSearch ?? false) === 'always')
 		);
 	}
 
 	const openWebSearchConfirm = () => {
-		window.setTimeout(() => {
+		clearTimeout(webSearchConfirmTimeout);
+		webSearchConfirmTimeout = setTimeout(() => {
 			showWebSearchConfirm = true;
 		}, 0);
 	};
 
 	const handleWebSearchToggle = (enabled: boolean) => {
+		const { modelId, available } = getToolFeatureContext();
+		if (enabled && !available.web_search) {
+			webSearchEnabled = false;
+			return;
+		}
 		if (enabled && $config?.features?.enable_web_search_confirmation && !webSearchConfirmed) {
 			webSearchEnabled = false;
 			pendingWebSearchPrompt = null;
+			pendingWebSearchToggleModelId = modelId;
 			openWebSearchConfirm();
+			return;
 		}
+		webSearchEnabled = enabled;
+		if (!enabled) resetWebSearchConfirmation();
+		return persistToolFeaturePreference(modelId, 'web_search', enabled);
+	};
+
+	const handleImageGenerationToggle = (enabled: boolean) => {
+		const { modelId, available } = getToolFeatureContext();
+		if (enabled && !available.image_generation) {
+			imageGenerationEnabled = false;
+			return;
+		}
+		imageGenerationEnabled = enabled;
+		return persistToolFeaturePreference(modelId, 'image_generation', enabled);
 	};
 
 	const resetWebSearchConfirmation = () => {
+		clearTimeout(webSearchConfirmTimeout);
 		webSearchConfirmed = false;
 		pendingWebSearchPrompt = null;
+		pendingWebSearchToggleModelId = undefined;
 		showWebSearchConfirm = false;
 	};
 
-	$: if (!webSearchActive) {
+	$: if (
+		!webSearchActive &&
+		pendingWebSearchToggleModelId === undefined &&
+		pendingWebSearchPrompt === null
+	) {
 		resetWebSearchConfirmation();
 	}
 
@@ -457,9 +577,7 @@
 			...$settings,
 			reasoningEffortByModel: next
 		});
-		await updateUserSettings(localStorage.token, { ui: $settings }).catch((err) => {
-			console.error('[reasoning effort settings]', err);
-		});
+		await persistChatUserSettings('reasoning effort settings');
 	};
 
 	const seedReasoningEffortFromLastUsed = (modelIds = selectedModelIds, persist = true) => {
@@ -504,9 +622,7 @@
 				tool_approval_mode
 			}
 		});
-		await updateUserSettings(localStorage.token, { ui: $settings }).catch((err) => {
-			console.error('[tool permissions settings]', err);
-		});
+		await persistChatUserSettings('tool permissions settings');
 
 		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
 			const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
@@ -821,8 +937,15 @@
 			selectedToolIds = input.selectedToolIds ?? [];
 			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
-			webSearchEnabled = input.webSearchEnabled ?? false;
-			imageGenerationEnabled = input.imageGenerationEnabled ?? false;
+			// Existing chats keep their own draft; a new chat starts from the model preference.
+			applyToolFeatureDefaults(
+				chatIdProp
+					? {
+							web_search: input.webSearchEnabled,
+							image_generation: input.imageGenerationEnabled
+						}
+					: undefined
+			);
 			codeInterpreterEnabled = input.codeInterpreterEnabled ?? false;
 			if (input.toolApprovalMode) {
 				await handleToolApprovalModeChange(input.toolApprovalMode);
@@ -869,6 +992,7 @@
 
 	const navigateHandler = async () => {
 		noteChatDebug('navigateHandler start');
+		resetWebSearchConfirmation();
 		// Mark the outgoing chat as read before loading the new one.
 		// $chatId still holds the previous chat here — loadChat() updates it.
 		if ($chatId && $chatId !== chatIdProp && !$temporaryChatEnabled) {
@@ -933,6 +1057,7 @@
 	};
 
 	const initEmbeddedDraft = async () => {
+		resetWebSearchConfirmation();
 		clearTimeout(saveControlsTimer);
 		await saveControls();
 
@@ -1025,6 +1150,7 @@
 	};
 
 	const resetInput = async () => {
+		resetWebSearchConfirmation();
 		selectedToolIds = [];
 		selectedSkillIds = [];
 		selectedFilterIds = [];
@@ -1056,6 +1182,8 @@
 
 	let settingDefaults = false;
 	const setDefaults = async () => {
+		// Resolve these synchronously, even if another model's tool loading is still pending.
+		applyToolFeatureDefaults();
 		if (settingDefaults) return;
 		settingDefaults = true;
 
@@ -1131,22 +1259,6 @@
 
 				// Set Default Features
 				if (model?.info?.meta?.defaultFeatureIds) {
-					if (
-						model.info?.meta?.capabilities?.['image_generation'] &&
-						$config?.features?.enable_image_generation &&
-						($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
-					) {
-						imageGenerationEnabled = model.info.meta.defaultFeatureIds.includes('image_generation');
-					}
-
-					if (
-						model.info?.meta?.capabilities?.['web_search'] &&
-						$config?.features?.enable_web_search &&
-						($user?.role === 'admin' || $user?.permissions?.features?.web_search)
-					) {
-						webSearchEnabled = model.info.meta.defaultFeatureIds.includes('web_search');
-					}
-
 					if (
 						model.info?.meta?.capabilities?.['code_interpreter'] &&
 						$config?.features?.enable_code_interpreter &&
@@ -1682,6 +1794,7 @@
 
 		return () => {
 			try {
+				clearTimeout(webSearchConfirmTimeout);
 				clearTimeout(saveControlsTimer);
 				saveControls();
 				if (chatIdProp && !$temporaryChatEnabled) {
@@ -2195,7 +2308,7 @@
 
 		autoScroll = true;
 
-		// resetInput() must stay last: the selected model's defaults override the draft's selection.
+		// New chats use the selected model's remembered features, then its defaults.
 		await restoreChatInput(sessionStorage.getItem('chat-input'));
 		await resetInput();
 		await chatId.set('');
@@ -3445,15 +3558,12 @@
 
 	const getFeatures = () => {
 		let features = {};
+		const { available } = getToolFeatureContext();
 
 		if ($config?.features)
 			features = {
 				voice: $showCallOverlay,
-				image_generation:
-					$config?.features?.enable_image_generation &&
-					($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
-						? imageGenerationEnabled
-						: false,
+				image_generation: available.image_generation ? imageGenerationEnabled : false,
 				code_interpreter:
 					$config?.features?.enable_code_interpreter &&
 					($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
@@ -4189,14 +4299,29 @@
 
 	const confirmWebSearch = async () => {
 		const userPrompt = pendingWebSearchPrompt;
+		const modelId = pendingWebSearchToggleModelId;
 		pendingWebSearchPrompt = null;
-		webSearchConfirmed = true;
+		pendingWebSearchToggleModelId = undefined;
+		clearTimeout(webSearchConfirmTimeout);
+		showWebSearchConfirm = false;
 
 		if (userPrompt !== null) {
+			webSearchConfirmed = true;
 			await submitHandler(userPrompt);
-		} else {
+		} else if (
+			modelId !== undefined &&
+			modelId === getToolFeatureModelId(selectedModels, atSelectedModel?.id) &&
+			getToolFeatureContext().available.web_search
+		) {
+			webSearchConfirmed = true;
 			webSearchEnabled = true;
+			await persistToolFeaturePreference(modelId, 'web_search', true);
 		}
+	};
+
+	const cancelWebSearch = () => {
+		if (pendingWebSearchToggleModelId !== undefined) webSearchEnabled = false;
+		resetWebSearchConfirmation();
 	};
 
 	const deleteChatHandler = async (id: string) => {
@@ -4286,12 +4411,7 @@
 	confirmLabel={$i18n.t('Continue')}
 	cancelLabel={$i18n.t('Cancel')}
 	on:confirm={confirmWebSearch}
-	on:cancel={() => {
-		if (pendingWebSearchPrompt === null) {
-			webSearchEnabled = false;
-		}
-		pendingWebSearchPrompt = null;
-	}}
+	on:cancel={cancelWebSearch}
 />
 
 <DeleteConfirmDialog
@@ -4561,6 +4681,7 @@
 											}
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
+										onImageGenerationToggle={handleImageGenerationToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4655,6 +4776,7 @@
 											}
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
+										onImageGenerationToggle={handleImageGenerationToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4703,6 +4825,7 @@
 									onQueueEdit={editQueuedMessage}
 									onQueueDelete={deleteQueuedMessage}
 									onWebSearchToggle={handleWebSearchToggle}
+									onImageGenerationToggle={handleImageGenerationToggle}
 									on:chatVariables={() => {
 										showChatVariablesModal = true;
 									}}
