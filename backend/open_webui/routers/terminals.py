@@ -5,22 +5,33 @@ Routes:
   *    /{server_id}/{path:path}  — proxy request to terminal server
 """
 
+import asyncio
 import logging
 import posixpath
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import aiohttp
-from fastapi import APIRouter, Depends, Request, Response, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from open_webui.config import TERMINAL_PROXY_HEADERS
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, WEBUI_SECRET_KEY
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
+from open_webui.models.chats import Chats
 from open_webui.models.groups import Groups
 from open_webui.utils.access_control import has_connection_access
 from open_webui.utils.auth import get_verified_user
+from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.headers import bearer_auth_header, normalize_bearer_token
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.terminal_files import (
+    IMAGE_EXTENSIONS,
+    MAX_IMAGE_BYTES,
+    add_file_delivery_links,
+    detect_image_type,
+    file_response_headers,
+    verify_file_reference,
+)
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
@@ -38,8 +49,9 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-STREAMING_CONTENT_TYPES = ('application/octet-stream', 'image/', 'application/pdf')
-STRIPPED_RESPONSE_HEADERS = frozenset(('transfer-encoding', 'connection', 'content-encoding', 'content-length'))
+# Response headers from a terminal are untrusted on the WebUI origin. All
+# security/MIME headers are set here, including after custom proxy headers.
+SAFE_PROXY_HEADERS = {'content-language', 'retry-after', 'x-accel-buffering'}
 
 
 def _sanitize_proxy_path(path: str) -> str | None:
@@ -62,7 +74,9 @@ def _sanitize_proxy_path(path: str) -> str | None:
         return None
     # posixpath splits on '/' only, so 'a/..\..\b' survives normpath as one component.
     # Upstreams that treat '\' as a separator would resolve it, so reject outright.
-    if '\\' in decoded:
+    # URL parsers strip tabs/newlines and reinterpret ?/#. Validate before
+    # route policy checks so the path we authorize is exactly the path sent.
+    if any(char in '\\?#' or ord(char) < 32 or ord(char) == 127 for char in decoded):
         return None
     had_trailing_slash = decoded.endswith('/')
     normalized = posixpath.normpath(decoded)
@@ -99,139 +113,278 @@ async def list_terminal_servers(request: Request, user=Depends(get_verified_user
 PROXY_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 
 
-@router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)
-async def proxy_terminal(
-    server_id: str,
-    path: str,
-    request: Request,
-    user=Depends(get_verified_user),
-):
-    """Proxy a request to the admin terminal server identified by *server_id*."""
+def _terminal_error(status: int, detail: str):
+    headers = file_response_headers('error')
+    headers['Content-Type'] = 'application/json'
+    headers.pop('Content-Disposition')
+    return JSONResponse({'detail': detail}, status_code=status, headers=headers)
+
+
+def _cross_origin_file_request(request: Request) -> bool:
+    origin = request.headers.get('origin')
+    if origin:
+        # Fetch Metadata may be absent on ordinary HTTP deployments. CORS
+        # requests still carry Origin, independently of the app's CORS policy.
+        try:
+            supplied = urlsplit(origin)
+            expected = urlsplit(str(request.url))
+            if (
+                supplied.username
+                or supplied.password
+                or supplied.path not in {'', '/'}
+                or supplied.query
+                or supplied.fragment
+            ):
+                return True
+
+            def authority(url):
+                return url.scheme, url.hostname, url.port or {'http': 80, 'https': 443}.get(url.scheme)
+
+            if authority(supplied) != authority(expected):
+                return True
+        except ValueError:
+            return True
+    return (
+        request.headers.get('sec-fetch-site') in {'same-site', 'cross-site'}
+        and request.headers.get('sec-fetch-mode') != 'navigate'
+    )
+
+
+async def _http_terminal_context(server_id, request, user, metadata, *, require_context=False):
     connections = await Config.get('terminal_server.connections', []) or []
     connection = next((c for c in connections if c.get('id') == server_id), None)
-
     if connection is None:
-        return JSONResponse({'error': f"Terminal server '{server_id}' not found"}, status_code=404)
-
+        raise HTTPException(404, 'Terminal server not found')
     if not connection.get('enabled', True):
-        return JSONResponse({'error': 'Terminal server disabled'}, status_code=403)
-
+        raise HTTPException(403, 'Terminal server disabled')
     user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
     if not await has_connection_access(user, connection, user_group_ids):
-        return JSONResponse({'error': 'Access denied'}, status_code=403)
-
+        raise HTTPException(403, 'Access denied')
     base_url = get_terminal_server_url(connection)
     if not base_url:
-        return JSONResponse({'error': 'Terminal server URL not configured'}, status_code=503)
-
-    safe_path = _sanitize_proxy_path(path)
-    if safe_path is None:
-        return JSONResponse({'error': 'Invalid path'}, status_code=400)
-
-    target_url = f'{base_url}/{safe_path}'
-
-    if request.query_params:
-        target_url += f'?{request.query_params}'
-
+        raise HTTPException(503, 'Terminal server URL not configured')
+    session_id = metadata.get('chat_id')
+    if is_saved_chat_id(session_id) and not await Chats.get_chat_by_id_for_user(session_id, user):
+        raise HTTPException(404, 'Chat not found')
+    context = 'automation' if metadata.get('automation_id') else 'chat'
+    if not terminal_context_available(connection, context):
+        raise HTTPException(403, 'Terminal server is not available in this context')
+    context_id = terminal_context_id(connection, metadata, context)
+    context_config = terminal_context_config(connection, context)
+    if (
+        (require_context or session_id or metadata.get('automation_id'))
+        and context_config.get('context_id') in {'chat_id', 'automation_id'}
+        and not context_id
+    ):
+        raise HTTPException(409, 'A saved context is required for this terminal')
     headers = {'X-User-Id': user.id}
-    # Forward per-session cwd tracking header
-    session_id = request.headers.get('x-session-id')
     if session_id:
         headers['X-Session-Id'] = session_id
-        if not terminal_context_available(connection, 'chat'):
-            return JSONResponse({'error': 'Terminal server is not available in chats'}, status_code=403)
-        context_id = terminal_context_id(connection, {'chat_id': session_id}, 'chat')
-        if terminal_context_config(connection, 'chat').get('context_id') == 'chat_id' and not context_id:
-            return JSONResponse({'error': 'A saved chat is required for this terminal'}, status_code=409)
-        if context_id:
-            headers[TERMINAL_CONTEXT_HEADER] = context_id
+    if context_id:
+        headers[TERMINAL_CONTEXT_HEADER] = context_id
     cookies = {}
     auth_type = connection.get('auth_type', 'bearer')
-
     if auth_type == 'bearer':
         headers.update(bearer_auth_header(connection.get('key', '')))
     elif auth_type == 'session':
         cookies = request.cookies
-        headers.update(bearer_auth_header(request.state.token.credentials))
+        token = getattr(request.state, 'token', None)
+        credentials = token.credentials if token else request.cookies.get('token')
+        if not credentials:
+            credentials = request.headers.get('authorization', '').removeprefix('Bearer ')
+        headers.update(bearer_auth_header(credentials))
     elif auth_type == 'system_oauth':
         cookies = request.cookies
-        # Resolve the token server-side from the caller's OAuth session; never trust a client header.
-        oauth_token = None
         try:
-            if request.cookies.get('oauth_session_id', None):
+            if request.cookies.get('oauth_session_id'):
                 oauth_token = await request.app.state.oauth_manager.get_oauth_token(
                     user.id,
-                    request.cookies.get('oauth_session_id', None),
+                    request.cookies['oauth_session_id'],
                 )
-        except Exception as e:
-            log.error(f'Error getting OAuth token: {e}')
-        if oauth_token:
-            headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
-    # auth_type == "none": no Authorization header
+                if oauth_token:
+                    headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
+        except Exception:
+            raise HTTPException(503, 'Terminal authentication unavailable') from None
+    return base_url, headers, cookies, context_id
+
+
+@router.get('/{server_id}/files/download')
+async def download_terminal_file(server_id: str, ref: str, request: Request, user=Depends(get_verified_user)):
+    return await _proxy_http(server_id, 'files/view', request, user, reference=ref)
+
+
+@router.get('/{server_id}/files/image')
+async def display_terminal_image(server_id: str, ref: str, request: Request, user=Depends(get_verified_user)):
+    return await _proxy_http(server_id, 'files/view', request, user, reference=ref, image_only=True)
+
+
+@router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)
+async def proxy_terminal(server_id: str, path: str, request: Request, user=Depends(get_verified_user)):
+    return await _proxy_http(server_id, path, request, user)
+
+
+async def _proxy_http(server_id, path, request, user, *, reference=None, image_only=False):
+    safe_path = _sanitize_proxy_path(path)
+    if safe_path is None:
+        return _terminal_error(400, 'Invalid path')
+    if safe_path.rstrip('/') == 'proxy' or safe_path.startswith('proxy/'):
+        return _terminal_error(403, 'Terminal web previews are disabled on this origin')
+    # Do not let other methods or encoded aliases fall through to an upstream
+    # endpoint with the same name as a protected delivery endpoint.
+    if safe_path.rstrip('/') in {'files/download', 'files/image'}:
+        return _terminal_error(405, 'Method not allowed')
+    metadata = {'chat_id': request.headers.get('x-session-id')}
+    payload = None
+    if reference is not None:
+        try:
+            payload = verify_file_reference(reference, WEBUI_SECRET_KEY)
+        except ValueError:
+            return _terminal_error(403, 'Invalid file reference')
+        if payload['owner_id'] != user.id or payload['server_id'] != server_id:
+            return _terminal_error(403, 'Access denied')
+        metadata = payload
+    try:
+        base_url, headers, cookies, context_id = await _http_terminal_context(
+            server_id,
+            request,
+            user,
+            metadata,
+            require_context=payload is not None or safe_path.startswith('files/'),
+        )
+    except HTTPException as error:
+        return _terminal_error(error.status_code, error.detail)
+    if payload is not None and context_id != payload.get('context_id'):
+        return _terminal_error(403, 'Terminal context has changed')
+
+    query = [('path', payload['path'])] if payload else list(request.query_params.multi_items())
+    filename = payload['path'] if payload else request.query_params.get('path', safe_path)
+    raw_file = (
+        payload is not None
+        or safe_path.rstrip('/') in {'files/view', 'files/archive', 'files/serve'}
+        or safe_path.startswith('files/serve/')
+    )
+    # CORP protects no-cors embeds. Also reject cross-origin CORS subresources
+    # even when the application's global CORS policy permits credentials.
+    # Top-level links remain usable for authenticated downloads/navigation.
+    if raw_file and _cross_origin_file_request(request):
+        return _terminal_error(403, 'Cross-origin file embedding is not allowed')
 
     content_type = request.headers.get('content-type')
     if content_type:
         headers['Content-Type'] = content_type
-
     session = aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=300, connect=10),
+        timeout=aiohttp.ClientTimeout(total=None, connect=10, sock_read=60),
         trust_env=True,
     )
+    upstream = None
+    streaming = False
+    closed = False
+
+    async def cleanup():
+        nonlocal closed
+        if not closed:
+            closed = True
+            if upstream is not None:
+                upstream.release()
+            await session.close()
 
     try:
         body = await request.body()
-
-        upstream_response = await session.request(
+        upstream = await session.request(
             method=request.method,
-            url=target_url,
+            url=f'{base_url}/{safe_path}',
+            params=query,
             headers=headers,
             cookies=cookies,
             data=body or None,
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            allow_redirects=False,
         )
+        if 300 <= upstream.status < 400:
+            return _terminal_error(502, 'Terminal redirect refused')
+        if upstream.status >= 400:
+            status = upstream.status if upstream.status < 500 else 502
+            return _terminal_error(status, 'Terminal file not found' if status == 404 else 'Terminal request failed')
 
-        upstream_content_type = upstream_response.headers.get('content-type', '')
-        filtered_headers = {
-            key: value
-            for key, value in upstream_response.headers.items()
-            if key.lower() not in STRIPPED_RESPONSE_HEADERS
-        }
-        if TERMINAL_PROXY_HEADERS:
-            filtered_headers.update(TERMINAL_PROXY_HEADERS)
-
-        # Stream binary responses directly
-        if any(t in upstream_content_type for t in STREAMING_CONTENT_TYPES):
-
-            async def cleanup():
-                await upstream_response.release()
-                await session.close()
-
-            return StreamingResponse(
-                content=upstream_response.content.iter_any(),
-                status_code=upstream_response.status,
-                headers=filtered_headers,
-                background=BackgroundTask(cleanup),
+        mime = upstream.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+        response_headers = {}
+        for source in (upstream.headers, TERMINAL_PROXY_HEADERS or {}):
+            response_headers.update(
+                {key.lower(): value for key, value in source.items() if key.lower() in SAFE_PROXY_HEADERS}
             )
+        response_headers.update(file_response_headers(filename))
 
-        # Buffer text/JSON responses
-        response_body = await upstream_response.read()
-        status_code = upstream_response.status
-        await upstream_response.release()
-        await session.close()
+        if not raw_file and (mime == 'application/json' or mime.endswith('+json')):
+            data = await upstream.read()
+            if safe_path == 'files/display':
+                result = add_file_delivery_links(
+                    JSONCodec.loads(data),
+                    server_id=server_id,
+                    owner_id=user.id,
+                    metadata=metadata,
+                    secret=WEBUI_SECRET_KEY,
+                    context_id=context_id,
+                )
+                data = JSONCodec.dumps(result).encode('utf-8')
+            response_headers['Content-Type'] = 'application/json'
+            response_headers.pop('Content-Disposition')
+            return Response(data, status_code=upstream.status, headers=response_headers)
 
-        return Response(content=response_body, status_code=status_code, headers=filtered_headers)
+        prefix = b''
+        if image_only or (
+            payload is None
+            and (mime.startswith('image/') or posixpath.splitext(filename)[1].lower() in IMAGE_EXTENSIONS)
+        ):
+            chunks = []
+            size = 0
+            while size <= MAX_IMAGE_BYTES:
+                chunk = await upstream.content.read(min(65536, MAX_IMAGE_BYTES + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            prefix = b''.join(chunks)
+            if image_only and size > MAX_IMAGE_BYTES:
+                return _terminal_error(413, 'Image is too large to preview; download the file instead')
+            image_type = await asyncio.to_thread(detect_image_type, prefix) if size <= MAX_IMAGE_BYTES else None
+            if image_only and image_type is None:
+                return _terminal_error(415, 'Unsupported or invalid image')
+            if image_type:
+                response_headers.update(file_response_headers(filename, image_type))
+        elif not raw_file and mime == 'text/event-stream':
+            response_headers['Content-Type'] = 'text/event-stream'
+            response_headers.pop('Content-Disposition')
 
+        async def stream():
+            try:
+                if prefix:
+                    yield prefix
+                async for chunk in upstream.content.iter_chunked(65536):
+                    yield chunk
+            finally:
+                await cleanup()
+
+        response = StreamingResponse(
+            stream(),
+            status_code=upstream.status,
+            headers=response_headers,
+            background=BackgroundTask(cleanup),
+        )
+        streaming = True
+        return response
     except ClientDisconnect:
-        await session.close()
-        return Response(status_code=499)
-    except (aiohttp.ClientConnectionError, TimeoutError) as error:
-        await session.close()
-        log.error('Terminal proxy error: %s', str(error) or type(error).__name__)
-        return JSONResponse({'error': f'Terminal proxy error: {error}'}, status_code=502)
+        return _terminal_error(499, 'Client disconnected')
+    except TimeoutError:
+        return _terminal_error(504, 'Terminal request timed out')
+    except aiohttp.ClientError:
+        return _terminal_error(502, 'Terminal unavailable')
     except Exception as error:
-        await session.close()
-        log.exception('Terminal proxy error: %s', error)
-        return JSONResponse({'error': f'Terminal proxy error: {error}'}, status_code=502)
+        # Do not expose upstream URLs, response bodies, paths or credentials.
+        log.error('Terminal proxy failed (%s)', type(error).__name__)
+        return _terminal_error(502, 'Terminal request failed')
+    finally:
+        if not streaming:
+            await cleanup()
 
 
 # ---------------------------------------------------------------------------

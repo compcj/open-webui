@@ -24,8 +24,10 @@
 		getFileMatches,
 		listFiles,
 		readFile,
-		downloadFileBlob,
+		downloadFileBlob as downloadLegacyFileBlob,
 		downloadFilePreview,
+		downloadDeliveryFile,
+		getFileDelivery,
 		archiveFromTerminal,
 		uploadToTerminal,
 		createDirectory,
@@ -356,13 +358,13 @@
 	let shiftKey = false;
 
 	// ── Terminal resolution ──────────────────────────────────────────────
-	let selectedTerminal: { url: string; key: string } | null = null;
+	let selectedTerminal: { url: string; key: string; system: boolean } | null = null;
 	let terminalChatContextPending = false;
 	let terminalChatContextHidden = false;
 
 	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
 
-	const getTerminal = (): { url: string; key: string } | null => {
+	const getTerminal = (): { url: string; key: string; system: boolean } | null => {
 		const systemTerminal = $selectedTerminalId
 			? (($terminalServers ?? []).find((t) => t.id === $selectedTerminalId) ?? null)
 			: ($terminalServers?.[0] ?? null);
@@ -382,7 +384,20 @@
 		const url = systemTerminal?.url ?? userTerminal?.url ?? '';
 		const key = isSystem ? localStorage.token : (userTerminal?.key ?? '');
 
-		return url ? { url, key } : null;
+		return url ? { url, key, system: isSystem } : null;
+	};
+
+	const downloadFileBlob = async (
+		baseUrl: string,
+		apiKey: string,
+		path: string,
+		sessionId?: string
+	) => {
+		const system = selectedTerminal?.system === true && selectedTerminal.url === baseUrl;
+		if (!system) return downloadLegacyFileBlob(baseUrl, apiKey, path, sessionId);
+		const delivery = await getFileDelivery(baseUrl, apiKey, path, sessionId);
+		if (!delivery) return null;
+		return downloadDeliveryFile(delivery.download_url, baseUrl, apiKey, sessionId);
 	};
 
 	// Detect terminal or chat changes — the explicit store references ensure
@@ -427,6 +442,7 @@
 			}
 		}
 	}
+	$: if (selectedTerminal?.system) previewPort = null;
 
 	// ── Helpers ──────────────────────────────────────────────────────────
 	const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'avif']);
@@ -828,13 +844,23 @@
 		documentTargetPage = normalizeDocumentTargetPage(options.page);
 
 		if (isImage(filePath)) {
-			const result = await downloadFileBlob(
-				terminal.url,
-				terminal.key,
-				filePath,
-				chatId ?? undefined
-			);
-			if (result) fileImageUrl = URL.createObjectURL(result.blob);
+			if (terminal.system) {
+				const delivery = await getFileDelivery(
+					terminal.url,
+					terminal.key,
+					filePath,
+					chatId ?? undefined
+				);
+				if (selectedFile === filePath && delivery?.image_url) fileImageUrl = delivery.image_url;
+			} else {
+				const result = await downloadFileBlob(
+					terminal.url,
+					terminal.key,
+					filePath,
+					chatId ?? undefined
+				);
+				if (selectedFile === filePath && result) fileImageUrl = URL.createObjectURL(result.blob);
+			}
 		} else if (isVideo(filePath)) {
 			const result = await downloadFileBlob(
 				terminal.url,
@@ -939,6 +965,17 @@
 				console.error('Failed to render Office file:', e);
 				fileContent = `Error previewing file: ${e instanceof Error ? e.message : 'Unknown error'}`;
 			}
+		} else if (getFileExt(filePath) === 'svg') {
+			const [content, delivery] = await Promise.all([
+				readFile(terminal.url, terminal.key, filePath, chatId ?? undefined),
+				terminal.system
+					? getFileDelivery(terminal.url, terminal.key, filePath, chatId ?? undefined)
+					: Promise.resolve(null)
+			]);
+			if (selectedFile === filePath) {
+				fileContent = content;
+				fileImageUrl = delivery?.image_url ?? null;
+			}
 		} else {
 			fileContent = await readFile(terminal.url, terminal.key, filePath, chatId ?? undefined);
 		}
@@ -984,7 +1021,12 @@
 			// Directories end with '/', downloaded as a ZIP archive
 			const isDir = path.endsWith('/');
 			const result = isDir
-				? await archiveFromTerminal(terminal.url, terminal.key, [path.replace(/\/$/, '')])
+				? await archiveFromTerminal(
+						terminal.url,
+						terminal.key,
+						[path.replace(/\/$/, '')],
+						chatId ?? undefined
+					)
 				: await downloadFileBlob(terminal.url, terminal.key, path, chatId ?? undefined);
 			if (!result) {
 				toast.error($i18n.t('Download failed'));
@@ -1106,7 +1148,13 @@
 		if (!terminal) return;
 
 		const emptyFile = new File([''], name, { type: 'application/octet-stream' });
-		const result = await uploadToTerminal(terminal.url, terminal.key, currentPath, emptyFile);
+		const result = await uploadToTerminal(
+			terminal.url,
+			terminal.key,
+			currentPath,
+			emptyFile,
+			chatId ?? undefined
+		);
 		toast[result ? 'success' : 'error']($i18n.t(result ? 'File created' : 'Failed to create file'));
 		invalidateTreeCache(currentPath);
 		await loadDir(currentPath, { preserveTree: true });
@@ -1279,7 +1327,12 @@
 		const paths = [...selectedEntries];
 		let ok = 0;
 		for (const p of paths) {
-			const result = await deleteEntry(terminal.url, terminal.key, p.replace(/\/$/, ''));
+			const result = await deleteEntry(
+				terminal.url,
+				terminal.key,
+				p.replace(/\/$/, ''),
+				chatId ?? undefined
+			);
 			if (result) ok++;
 		}
 		toast[ok > 0 ? 'success' : 'error'](
@@ -1307,7 +1360,12 @@
 		const toastId = toast.loading($i18n.t('Preparing download...'));
 		try {
 			// Archive everything into a single ZIP
-			const result = await archiveFromTerminal(terminal.url, terminal.key, paths);
+			const result = await archiveFromTerminal(
+				terminal.url,
+				terminal.key,
+				paths,
+				chatId ?? undefined
+			);
 			if (!result) {
 				toast.error($i18n.t('Download failed'));
 				return;
@@ -1795,7 +1853,13 @@
 						const fileName = selectedFile.split('/').pop() ?? 'file';
 						const dir = selectedFile.substring(0, selectedFile.lastIndexOf('/') + 1) || '/';
 						const file = new File([content], fileName, { type: 'text/plain' });
-						const result = await uploadToTerminal(terminal.url, terminal.key, dir, file);
+						const result = await uploadToTerminal(
+							terminal.url,
+							terminal.key,
+							dir,
+							file,
+							chatId ?? undefined
+						);
 						toast[result ? 'success' : 'error'](
 							$i18n.t(result ? 'File saved' : 'Failed to save file')
 						);
@@ -2020,7 +2084,7 @@
 		</div>
 
 		<!-- Port detection -->
-		{#if selectedTerminal && !selectedFile && previewPort === null && !isSearching}
+		{#if selectedTerminal && !selectedTerminal.system && !selectedFile && previewPort === null && !isSearching}
 			<div class="shrink-0 border-t border-gray-50 dark:border-gray-850/30">
 				<PortList
 					baseUrl={selectedTerminal.url}

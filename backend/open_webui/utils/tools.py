@@ -38,6 +38,7 @@ from open_webui.env import (
     FORWARD_SESSION_INFO_HEADER_CHAT_ID,
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
     REDIS_KEY_PREFIX,
+    WEBUI_SECRET_KEY,
 )
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.config import Config
@@ -111,6 +112,7 @@ from open_webui.utils.headers import (
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import is_string_allowed
 from open_webui.utils.plugin import get_tool_contents_cache, get_tools_cache, load_tool_module_by_id
+from open_webui.utils.terminal_files import TERMINAL_FILE_DELIVERY_PROMPT, add_file_delivery_links
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
@@ -948,7 +950,7 @@ def clean_openai_tool_schema(spec: dict) -> dict:
     return cleaned_spec
 
 
-def add_terminal_display_file_inline_param(spec: dict) -> dict:
+def add_terminal_display_file_inline_param(spec: dict, file_delivery: bool = False) -> dict:
     spec = copy.deepcopy(spec)
     if spec.get('name') != 'display_file':
         return spec
@@ -957,7 +959,11 @@ def add_terminal_display_file_inline_param(spec: dict) -> dict:
         f'{spec.get("description", "")} '
         'Set inline=true when the file should be shown inline in the chat message instead of opening the file viewer. '
         'Set page for PDF, DOCX, and PPTX files when you want the preview to open at a specific 1-based page or slide. '
-        'After display_file succeeds, do not display the same file again or emit Markdown for it.'
+        + (
+            TERMINAL_FILE_DELIVERY_PROMPT
+            if file_delivery
+            else 'After display_file succeeds, do not display the same file again or emit Markdown for it.'
+        )
     ).strip()
     parameters = spec.setdefault('parameters', {'type': 'object', 'properties': {}, 'required': []})
     parameters.setdefault('type', 'object')
@@ -1459,11 +1465,12 @@ async def get_terminal_tools(
     )
     if not system_prompt:
         system_prompt = server_data.get('system_prompt')
+    system_prompt = f'{system_prompt or ""}\n\n{TERMINAL_FILE_DELIVERY_PROMPT}'.strip()
 
     tools_dict = {}
     for spec in specs:
         function_name = spec['name']
-        tool_spec = clean_openai_tool_schema(add_terminal_display_file_inline_param(spec))
+        tool_spec = clean_openai_tool_schema(add_terminal_display_file_inline_param(spec, file_delivery=True))
 
         if function_name == 'run_command' and terminal_cwd:
             tool_spec['description'] = (
@@ -1475,7 +1482,7 @@ async def get_terminal_tools(
                 params = dict(kwargs)
                 if fn_name == 'display_file':
                     params.pop('page', None)
-                return await execute_tool_server(
+                result = await execute_tool_server(
                     url=srv_data['url'],
                     headers=hdrs,
                     cookies=cks,
@@ -1483,6 +1490,18 @@ async def get_terminal_tools(
                     params=params,
                     server_data=srv_data,
                 )
+                if fn_name == 'display_file':
+                    data = result[0] if isinstance(result, tuple) else result
+                    data = add_file_delivery_links(
+                        data,
+                        server_id=terminal_id,
+                        owner_id=user.id,
+                        metadata=extra_params.get('__metadata__', {}),
+                        secret=WEBUI_SECRET_KEY,
+                        context_id=hdrs.get(TERMINAL_CONTEXT_HEADER),
+                    )
+                    return (data, *result[1:]) if isinstance(result, tuple) else data
+                return result
 
             return tool_function
 

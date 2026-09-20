@@ -287,7 +287,9 @@ def build_terminal_file_tool_result(
         **tool_result,
         'type': 'file',
         'source': 'open_terminal',
-        **({'displayed': True} if tool_function_params.get('inline') is True else {}),
+        **(
+            {'displayed': True} if tool_function_params.get('inline') is True or tool_result.get('download_url') else {}
+        ),
         'terminal_selector': terminal_selector,
         **({'terminal_id': terminal_id} if terminal_id else {}),
         **({'terminal_url': server_url} if server_url and not terminal_id else {}),
@@ -1297,6 +1299,11 @@ async def terminal_event_handler(
             except (JSONCodec.JSONDecodeError, TypeError):
                 pass
         if isinstance(parsed, dict) and parsed.get('exists') is False:
+            return
+        # Signed results render in their bound file card/Markdown links. The
+        # legacy event only carries a path and would open the current terminal
+        # and chat, potentially a different filesystem from an automation.
+        if isinstance(parsed, dict) and parsed.get('download_url'):
             return
         page = tool_function_params.get('page')
 

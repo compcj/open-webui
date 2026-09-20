@@ -8,13 +8,22 @@
 		selectedTerminalId,
 		showControls,
 		showFileNavPath,
-		terminalServers
+		terminalServers,
+		user
 	} from '$lib/stores';
-	import { downloadFileBlob, downloadFilePreview, readFile } from '$lib/apis/terminal';
+	import {
+		downloadDeliveryFile,
+		downloadFileBlob,
+		downloadFilePreview,
+		getFileDelivery,
+		readFile,
+		validateDeliveryUrl
+	} from '$lib/apis/terminal';
 	import FilePreview from '$lib/components/chat/FileNav/FilePreview.svelte';
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
 	import { fileIconName } from '$lib/components/chat/FileNav/fileIcon';
 	import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
+	import { hasPdfSignature } from '$lib/utils/terminal-files';
 
 	export let item: any;
 	export let chatId = '';
@@ -25,7 +34,9 @@
 	let loading = false;
 	let loadedKey = '';
 	let error = '';
+	let showRaw = false;
 	let objectUrls: string[] = [];
+	let terminal: { url: string; key: string } | null = null;
 
 	let fileImageUrl: string | null = null;
 	let fileVideoUrl: string | null = null;
@@ -51,9 +62,17 @@
 	$: name = String(item?.name || path.split('/').filter(Boolean).at(-1) || 'file');
 	$: targetPage = normalizeDocumentTargetPage(item?.page);
 	$: selector = item?.terminal_selector;
-	$: terminal = resolveTerminal();
-	$: unavailable = !terminal;
-	$: previewKey = terminal ? `${terminal.url}|${terminal.key}|${path}|${chatId}` : '';
+	$: signedDelivery = typeof item?.download_url === 'string';
+	$: deliveryOwner = typeof item?.owner_id === 'string' && item.owner_id === $user?.id;
+	$: {
+		(selector, signedDelivery, $terminalServers, $selectedTerminalId, $settings);
+		terminal = resolveTerminal();
+	}
+	$: unavailable = !terminal || (signedDelivery && !deliveryOwner);
+	$: previewKey =
+		terminal && !unavailable
+			? `${terminal.url}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
+			: '';
 	$: previewClass = isImage(path)
 		? 'h-[22rem]'
 		: isPdf(path) ||
@@ -63,7 +82,7 @@
 			  getExt(path) === 'svg'
 			? 'h-96'
 			: 'h-72';
-	$: if (expanded && terminal && path && previewKey !== loadedKey && !loading) {
+	$: if (expanded && terminal && !unavailable && path && previewKey !== loadedKey && !loading) {
 		void loadPreview(previewKey);
 	}
 
@@ -78,12 +97,14 @@
 	const t = (key: string, vars?: Record<string, unknown>) => $i18n?.t?.(key, vars) ?? key;
 
 	function resolveTerminal(): { url: string; key: string } | null {
-		if (!selector || $selectedTerminalId !== selector) return null;
+		if (!selector) return null;
 
 		const systemTerminal = ($terminalServers ?? []).find((server: any) => server.id === selector);
 		if (systemTerminal?.url) {
+			if (!signedDelivery && $selectedTerminalId !== selector) return null;
 			return { url: systemTerminal.url, key: localStorage.token };
 		}
+		if (signedDelivery || $selectedTerminalId !== selector) return null;
 
 		const directTerminal = (($settings as any)?.terminalServers ?? []).find(
 			(server: any) => server.url === selector && server.enabled
@@ -115,6 +136,14 @@
 
 	async function blobForPreview() {
 		if (!terminal) return null;
+		if (signedDelivery) {
+			return downloadDeliveryFile(
+				item.download_url,
+				terminal.url,
+				terminal.key,
+				item?.session_id || chatId || undefined
+			);
+		}
 		return downloadFileBlob(terminal.url, terminal.key, path, chatId || undefined);
 	}
 
@@ -128,16 +157,51 @@
 	}
 
 	async function loadPreview(key: string) {
+		const activeTerminal = terminal;
+		if (!activeTerminal) return;
 		loadedKey = key;
 		loading = true;
 		error = '';
 		clearPreview();
 
 		try {
-			if (isImage(path) || isVideo(path) || isAudio(path)) {
+			if (getExt(path) === 'svg') {
+				if (signedDelivery) {
+					fileImageUrl = item?.image_url
+						? validateDeliveryUrl(item.image_url, activeTerminal.url, 'image')
+						: null;
+					const result = await blobForPreview();
+					if (!result) throw new Error(t('Preview failed'));
+					if (key !== previewKey) return;
+					fileContent = await result.blob.text();
+				} else {
+					const isSystem = ($terminalServers ?? []).some((server) => server.id === selector);
+					const [content, delivery] = await Promise.all([
+						readFile(activeTerminal.url, activeTerminal.key, path, chatId || undefined),
+						isSystem
+							? getFileDelivery(activeTerminal.url, activeTerminal.key, path, chatId || undefined)
+							: Promise.resolve(null)
+					]);
+					if (key !== previewKey) return;
+					fileContent = content;
+					fileImageUrl = delivery?.image_url ?? null;
+				}
+				return;
+			}
+			const signedImageUrl =
+				signedDelivery && item?.image_url
+					? validateDeliveryUrl(item.image_url, activeTerminal.url, 'image')
+					: null;
+			if (signedImageUrl && isImage(path)) {
+				fileImageUrl = signedImageUrl;
+			} else if (isImage(path) || isVideo(path) || isAudio(path)) {
 				const result = await blobForPreview();
 				if (!result) throw new Error(t('Preview failed'));
 				const url = URL.createObjectURL(result.blob);
+				if (key !== previewKey) {
+					URL.revokeObjectURL(url);
+					return;
+				}
 				objectUrls = [...objectUrls, url];
 				if (isImage(path)) fileImageUrl = url;
 				else if (isVideo(path)) fileVideoUrl = url;
@@ -149,16 +213,18 @@
 					const result = await blobForPreview();
 					if (!result) throw new Error(t('Preview failed'));
 					const arrayBuffer = await result.blob.arrayBuffer();
+					if (!hasPdfSignature(arrayBuffer)) throw new Error(t('Preview failed'));
+					if (key !== previewKey) return;
 					filePdfData = arrayBuffer;
 				} else if (isSqlite(path)) {
 					const result = await blobForPreview();
 					if (!result) throw new Error(t('Preview failed'));
 					const arrayBuffer = await result.blob.arrayBuffer();
 					fileSqliteData = arrayBuffer;
-				} else if (ext === 'docx') {
+				} else if (ext === 'docx' && !signedDelivery) {
 					const preview = await downloadFilePreview(
-						terminal.url,
-						terminal.key,
+						activeTerminal.url,
+						activeTerminal.key,
 						path,
 						chatId || undefined
 					);
@@ -179,10 +245,14 @@
 					if (excelSheetNames.length > 0) {
 						await loadExcelSheet(excelSheetNames[0]);
 					}
-				} else if (ext === 'pptx') {
+				} else if (ext === 'docx') {
+					const result = await blobForPreview();
+					if (!result) throw new Error(t('Preview failed'));
+					fileDocxData = await result.blob.arrayBuffer();
+				} else if (ext === 'pptx' && !signedDelivery) {
 					const preview = await downloadFilePreview(
-						terminal.url,
-						terminal.key,
+						activeTerminal.url,
+						activeTerminal.key,
 						path,
 						chatId || undefined
 					);
@@ -196,12 +266,28 @@
 						const resultImages = await pptxToImages(arrayBuffer);
 						fileOfficeSlides = resultImages.images;
 					}
+				} else if (ext === 'pptx') {
+					const result = await blobForPreview();
+					if (!result) throw new Error(t('Preview failed'));
+					const { pptxToImages } = await import('$lib/utils/pptxToHtml');
+					const resultImages = await pptxToImages(await result.blob.arrayBuffer());
+					fileOfficeSlides = resultImages.images;
 				}
-			} else if (terminal) {
-				fileContent = await readFile(terminal.url, terminal.key, path, chatId || undefined);
+			} else {
+				if (signedDelivery) {
+					const result = await blobForPreview();
+					fileContent = result ? await result.blob.text() : null;
+				} else {
+					fileContent = await readFile(
+						activeTerminal.url,
+						activeTerminal.key,
+						path,
+						chatId || undefined
+					);
+				}
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : t('Preview failed');
+			if (key === previewKey) error = e instanceof Error ? e.message : t('Preview failed');
 		} finally {
 			loading = false;
 		}
@@ -215,7 +301,14 @@
 
 	async function downloadFile() {
 		if (!terminal || !path) return;
-		const result = await downloadFileBlob(terminal.url, terminal.key, path, chatId || undefined);
+		const result = signedDelivery
+			? await downloadDeliveryFile(
+					item.download_url,
+					terminal.url,
+					terminal.key,
+					item?.session_id || chatId || undefined
+				)
+			: await downloadFileBlob(terminal.url, terminal.key, path, chatId || undefined);
 		if (!result) {
 			toast.error(t('Download failed'));
 			return;
@@ -254,24 +347,38 @@
 			</div>
 		</button>
 
-		<button
-			type="button"
-			class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 disabled:opacity-40 disabled:hover:text-gray-400 dark:text-gray-500 dark:hover:text-gray-200 dark:disabled:hover:text-gray-500"
-			disabled={unavailable}
-			on:click|stopPropagation={downloadFile}
-			aria-label={t('Download')}
-		>
-			<Icon name="download" size={13} />
-		</button>
-		<button
-			type="button"
-			class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 disabled:opacity-40 disabled:hover:text-gray-400 dark:text-gray-500 dark:hover:text-gray-200 dark:disabled:hover:text-gray-500"
-			disabled={unavailable}
-			on:click|stopPropagation={openInFiles}
-			aria-label={t('Open')}
-		>
-			<Icon name="external-link" size={13} />
-		</button>
+		{#if !signedDelivery || deliveryOwner}
+			{#if getExt(path) === 'svg' && fileContent !== null}
+				<button
+					type="button"
+					class="mr-1 rounded px-1.5 py-1 text-[0.6875rem] text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+					on:click|stopPropagation={() => (showRaw = !showRaw)}
+					aria-label={showRaw ? t('Preview') : t('Source')}
+				>
+					{showRaw ? t('Preview') : t('Source')}
+				</button>
+			{/if}
+			<button
+				type="button"
+				class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 disabled:opacity-40 disabled:hover:text-gray-400 dark:text-gray-500 dark:hover:text-gray-200 dark:disabled:hover:text-gray-500"
+				disabled={unavailable}
+				on:click|stopPropagation={downloadFile}
+				aria-label={t('Download')}
+			>
+				<Icon name="download" size={13} />
+			</button>
+			{#if !signedDelivery}
+				<button
+					type="button"
+					class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 disabled:opacity-40 disabled:hover:text-gray-400 dark:text-gray-500 dark:hover:text-gray-200 dark:disabled:hover:text-gray-500"
+					disabled={unavailable}
+					on:click|stopPropagation={openInFiles}
+					aria-label={t('Open')}
+				>
+					<Icon name="external-link" size={13} />
+				</button>
+			{/if}
+		{/if}
 	</div>
 
 	{#if expanded}
@@ -305,6 +412,7 @@
 					{selectedExcelSheet}
 					onSheetChange={loadExcelSheet}
 					readOnly={true}
+					bind:showRaw
 				/>
 				{#if !loading && fileImageUrl === null && fileVideoUrl === null && fileAudioUrl === null && filePdfData === null && fileSqliteData === null && fileDocxData === null && fileContent === null && fileOfficeHtml === null && fileOfficeSlides === null}
 					<div

@@ -118,12 +118,7 @@
 	$: csvDelimiter = getExt(selectedFile) === 'tsv' ? '\t' : ',';
 	$: isPptx = getExt(selectedFile) === 'pptx';
 
-	// For HTML files on system terminals (proxy URL), use path-based serving
-	// so the iframe can resolve relative CSS/JS/image references via cookie auth.
-	$: serveUrl =
-		isHtml && selectedFile && baseUrl && baseUrl.includes('/api/v1/terminals/')
-			? `${baseUrl}/files/serve/${selectedFile.replace(/^\//, '')}`
-			: null;
+	$: isSystemTerminal = baseUrl.includes('/api/v1/terminals/');
 	$: renderedHtml =
 		isMarkdown && fileContent
 			? DOMPurify.sanitize(marked.parse(fileContent, { async: false }) as string)
@@ -295,7 +290,7 @@
 	<!-- File preview -->
 	{#if fileLoading}
 		<div class="flex items-center justify-center h-full"><Spinner className="size-4" /></div>
-	{:else if fileImageUrl !== null}
+	{:else if fileImageUrl !== null && !(isSvg && showRaw)}
 		<PanzoomContainer
 			bind:this={panzoomRef}
 			bind:zoomLevel={imageZoomLevel}
@@ -379,22 +374,15 @@
 					{searchTarget}
 				/>
 			</div>
-		{:else if isHtml && !showRaw && serveUrl}
-			{#if overlay}
-				<div class="absolute top-0 left-0 right-0 bottom-0 z-10"></div>
-			{/if}
-			<iframe
-				src={serveUrl}
-				sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
-					? 'allow-scripts'
-					: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-					? ' allow-downloads'
-					: ''}{($settings?.iframeSandboxAllowForms ?? true)
-					? ' allow-forms'
-					: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false) ? ' allow-same-origin' : ''}"
-				class="w-full h-full border-none bg-white"
-				title="HTML Preview"
-			/>
+		{:else if isHtml && isSystemTerminal}
+			<div class="absolute inset-0">
+				<FileCodeEditor
+					bind:this={fileCodeEditorRef}
+					value={fileContent ?? ''}
+					filePath={selectedFile}
+					onSave={readOnly ? null : onSave}
+				/>
+			</div>
 		{:else if isHtml && !showRaw}
 			{#if overlay}
 				<div class="absolute top-0 left-0 right-0 bottom-0 z-10"></div>
@@ -473,13 +461,6 @@
 				<div class="text-red-500 mb-2">JSON parse error: {jsonError}</div>
 				<pre
 					class="text-xs font-mono text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-all leading-relaxed">{fileContent}</pre>
-			</div>
-		{:else if isSvg && !showRaw && fileContent}
-			<div class="svg-preview w-full h-full flex items-center justify-center overflow-auto p-3">
-				{@html DOMPurify.sanitize(fileContent, {
-					USE_PROFILES: { svg: true, svgFilters: true },
-					ADD_TAGS: ['use']
-				})}
 			</div>
 		{:else if isCode && !showRaw}
 			<div class="absolute inset-0">

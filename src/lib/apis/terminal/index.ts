@@ -66,6 +66,105 @@ const bearerHeaders = (apiKey: string): Record<string, string> => ({
 	Authorization: `Bearer ${apiKey.trim()}`
 });
 
+export type TerminalFileDelivery = {
+	path: string;
+	exists: boolean;
+	owner_id: string;
+	download_url: string;
+	image_url?: string;
+};
+
+const browserOrigin = () =>
+	typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin;
+
+export const validateDeliveryUrl = (
+	value: unknown,
+	baseUrl: string,
+	kind: 'download' | 'image'
+): string | null => {
+	if (typeof value !== 'string' || !value) return null;
+	try {
+		const origin = browserOrigin();
+		const base = new URL(baseUrl, origin);
+		const candidate = new URL(value, origin);
+		const expectedPath = `${base.pathname.replace(/\/$/, '')}/files/${kind}`;
+		if (
+			candidate.origin !== base.origin ||
+			candidate.origin !== origin ||
+			candidate.username ||
+			candidate.password ||
+			candidate.pathname !== expectedPath ||
+			candidate.hash ||
+			[...candidate.searchParams.keys()].some((key) => key !== 'ref') ||
+			candidate.searchParams.getAll('ref').length !== 1 ||
+			!candidate.searchParams.get('ref')
+		) {
+			return null;
+		}
+		return candidate.toString();
+	} catch {
+		return null;
+	}
+};
+
+export const getFileDelivery = async (
+	baseUrl: string,
+	apiKey: string,
+	path: string,
+	sessionId?: string
+): Promise<TerminalFileDelivery | null> => {
+	const url = `${baseUrl.replace(/\/$/, '')}/files/display?path=${encodeURIComponent(path)}`;
+	const headers: Record<string, string> = bearerHeaders(apiKey);
+	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const res = await fetch(url, { headers }).catch(() => null);
+	if (!res?.ok) return null;
+	const result = await res.json().catch(() => null);
+	if (
+		!result ||
+		result.exists !== true ||
+		typeof result.path !== 'string' ||
+		typeof result.owner_id !== 'string'
+	) {
+		return null;
+	}
+	const downloadUrl = validateDeliveryUrl(result.download_url, baseUrl, 'download');
+	if (!downloadUrl) return null;
+	const imageUrl = result.image_url
+		? validateDeliveryUrl(result.image_url, baseUrl, 'image')
+		: undefined;
+	if (result.image_url && !imageUrl) return null;
+	return { ...result, download_url: downloadUrl, ...(imageUrl ? { image_url: imageUrl } : {}) };
+};
+
+const deliveryFilename = (response: Response) => {
+	const disposition = response.headers.get('content-disposition') ?? '';
+	const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+	if (encoded) {
+		try {
+			return decodeURIComponent(encoded.replace(/^"|"$/g, ''));
+		} catch {
+			// Fall through to the plain filename form.
+		}
+	}
+	return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? 'file';
+};
+
+export const downloadDeliveryFile = async (
+	url: string,
+	baseUrl: string,
+	apiKey: string,
+	sessionId?: string
+): Promise<{ blob: Blob; filename: string } | null> => {
+	const validated = validateDeliveryUrl(url, baseUrl, 'download');
+	if (!validated) return null;
+	const headers: Record<string, string> = bearerHeaders(apiKey);
+	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const res = await fetch(validated, { headers }).catch(() => null);
+	if (!res?.ok) return null;
+	const blob = await res.blob().catch(() => null);
+	return blob ? { blob, filename: deliveryFilename(res) } : null;
+};
+
 const joinTerminalPath = (base: string, child: string) => {
 	if (!child) return base;
 	if (child.startsWith('/') || /^[A-Za-z]:[\\/]/.test(child)) return child;
@@ -306,12 +405,11 @@ export const downloadFilePreview = async (
 	if (!res) return null;
 	if (!res.ok) return null;
 
-	const contentType = res.headers.get('content-type') ?? '';
 	const filename = path.split('/').pop() ?? 'file';
-	if (!contentType.includes('application/pdf')) return null;
-
 	const blob = await res.blob().catch(() => null);
 	if (!blob) return null;
+	const { hasPdfSignature } = await import('$lib/utils/terminal-files');
+	if (!hasPdfSignature(await blob.arrayBuffer())) return null;
 	return { blob, filename };
 };
 
