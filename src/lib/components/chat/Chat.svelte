@@ -76,10 +76,12 @@
 	} from '$lib/utils/reasoning-effort';
 	import {
 		enqueueChatSettingsSave,
+		getContextToolAvailability,
 		getToolFeatureModelId,
 		resolveToolFeatureState,
 		updateToolFeaturePreference,
 		type ToolFeature,
+		type ContextToolFeature,
 		type ToolFeaturePreferences
 	} from '$lib/utils/tool-feature-preferences';
 	import { applyResponseStreamEvent, getOutputText } from './Messages/structuredOutput';
@@ -336,6 +338,9 @@
 	let imageGenerationEnabled = false;
 	let webSearchEnabled = false;
 	let codeInterpreterEnabled = false;
+	let knowledgeEnabled = false;
+	let memoryEnabled = false;
+	let notesEnabled = false;
 	let webSearchActive = false;
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
@@ -353,7 +358,7 @@
 		const meta = model?.info?.meta as
 			| { capabilities?: ToolFeaturePreferences; defaultFeatureIds?: string[] }
 			| undefined;
-		const isAvailable = (feature: ToolFeature) =>
+		const isAvailable = (feature: 'web_search' | 'image_generation') =>
 			Boolean(
 				currentModels.length > 0 &&
 				currentModels.every(
@@ -372,9 +377,13 @@
 			preferences: $settings?.toolFeaturesByModel,
 			defaults: {
 				web_search: isDefault('web_search'),
-				image_generation: isDefault('image_generation')
+				image_generation: isDefault('image_generation'),
+				knowledge: true,
+				memory: true,
+				notes: true
 			},
 			available: {
+				...getContextToolAvailability(currentModels, $config?.features, $user),
 				web_search: isAvailable('web_search'),
 				image_generation: isAvailable('image_generation')
 			}
@@ -382,9 +391,18 @@
 	};
 
 	const applyToolFeatureDefaults = (overrides?: ToolFeaturePreferences) => {
-		const features = resolveToolFeatureState({ ...getToolFeatureContext(), overrides });
+		const context = getToolFeatureContext();
+		const features = resolveToolFeatureState({
+			...context,
+			// Keep the requested selection while permissions or the master switch mask it.
+			available: { ...context.available, knowledge: true, memory: true, notes: true },
+			overrides
+		});
 		webSearchEnabled = features.web_search;
 		imageGenerationEnabled = features.image_generation;
+		knowledgeEnabled = features.knowledge;
+		memoryEnabled = features.memory;
+		notesEnabled = features.notes;
 	};
 
 	const persistChatUserSettings = async (errorScope: string, notifyOnError = false) => {
@@ -474,6 +492,19 @@
 		}
 		imageGenerationEnabled = enabled;
 		return persistToolFeaturePreference(modelId, 'image_generation', enabled);
+	};
+
+	const handleContextToolToggle = (feature: ContextToolFeature, enabled: boolean) => {
+		const { modelId, available } = getToolFeatureContext();
+		if (
+			!available[feature] ||
+			(feature === 'memory' && !($settings?.memory ?? $config?.features?.enable_memories ?? false))
+		)
+			return;
+		if (feature === 'knowledge') knowledgeEnabled = enabled;
+		if (feature === 'memory') memoryEnabled = enabled;
+		if (feature === 'notes') notesEnabled = enabled;
+		return persistToolFeaturePreference(modelId, feature, enabled);
 	};
 
 	const resetWebSearchConfirmation = () => {
@@ -942,7 +973,10 @@
 				chatIdProp
 					? {
 							web_search: input.webSearchEnabled,
-							image_generation: input.imageGenerationEnabled
+							image_generation: input.imageGenerationEnabled,
+							knowledge: input.knowledgeEnabled,
+							memory: input.memoryEnabled,
+							notes: input.notesEnabled
 						}
 					: undefined
 			);
@@ -1013,6 +1047,9 @@
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		knowledgeEnabled = false;
+		memoryEnabled = false;
+		notesEnabled = false;
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
@@ -1087,6 +1124,9 @@
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		knowledgeEnabled = false;
+		memoryEnabled = false;
+		notesEnabled = false;
 		codeInterpreterEnabled = false;
 		prompt = '';
 		messageInput?.setText('');
@@ -1157,6 +1197,9 @@
 		pendingOAuthTools = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		knowledgeEnabled = false;
+		memoryEnabled = false;
+		notesEnabled = false;
 		codeInterpreterEnabled = false;
 
 		if (selectedModelIds.filter((id) => id).length > 0) {
@@ -1783,6 +1826,9 @@
 				selectedFilterIds = [];
 				webSearchEnabled = false;
 				imageGenerationEnabled = false;
+				knowledgeEnabled = false;
+				memoryEnabled = false;
+				notesEnabled = false;
 				codeInterpreterEnabled = false;
 
 				await restoreChatInput(storageChatInput);
@@ -3572,11 +3618,16 @@
 				web_search: webSearchActive
 			};
 
-		if ($settings?.memory ?? $config?.features?.enable_memories ?? false) {
-			features = { ...features, memory: true };
-		}
-
-		return features;
+		return {
+			...features,
+			knowledge: available.knowledge && knowledgeEnabled,
+			memory: Boolean(
+				available.memory &&
+				memoryEnabled &&
+				($settings?.memory ?? $config?.features?.enable_memories ?? false)
+			),
+			notes: available.notes && notesEnabled
+		};
 	};
 
 	const getStopTokens = () => {
@@ -4217,6 +4268,9 @@
 		selectedSkillIds,
 		selectedFilterIds,
 		imageGenerationEnabled,
+		knowledgeEnabled,
+		memoryEnabled,
+		notesEnabled,
 		webSearchEnabled,
 		codeInterpreterEnabled,
 		toolApprovalMode
@@ -4647,6 +4701,9 @@
 										bind:selectedSkillIds
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
+										bind:knowledgeEnabled
+										bind:memoryEnabled
+										bind:notesEnabled
 										bind:codeInterpreterEnabled
 										{pendingOAuthTools}
 										{oauthRedirectHandler}
@@ -4682,6 +4739,7 @@
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
 										onImageGenerationToggle={handleImageGenerationToggle}
+										onContextToolToggle={handleContextToolToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4742,6 +4800,9 @@
 										bind:selectedSkillIds
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
+										bind:knowledgeEnabled
+										bind:memoryEnabled
+										bind:notesEnabled
 										bind:codeInterpreterEnabled
 										{pendingOAuthTools}
 										{oauthRedirectHandler}
@@ -4777,6 +4838,7 @@
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
 										onImageGenerationToggle={handleImageGenerationToggle}
+										onContextToolToggle={handleContextToolToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4805,6 +4867,9 @@
 									bind:selectedSkillIds
 									bind:selectedFilterIds
 									bind:imageGenerationEnabled
+									bind:knowledgeEnabled
+									bind:memoryEnabled
+									bind:notesEnabled
 									bind:codeInterpreterEnabled
 									bind:webSearchEnabled
 									bind:atSelectedModel
@@ -4826,6 +4891,7 @@
 									onQueueDelete={deleteQueuedMessage}
 									onWebSearchToggle={handleWebSearchToggle}
 									onImageGenerationToggle={handleImageGenerationToggle}
+									onContextToolToggle={handleContextToolToggle}
 									on:chatVariables={() => {
 										showChatVariablesModal = true;
 									}}

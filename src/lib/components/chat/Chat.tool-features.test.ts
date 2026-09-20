@@ -18,6 +18,7 @@ const handlers = new Set([
 	'persistLastUsedReasoningEffort',
 	'handleWebSearchToggle',
 	'handleImageGenerationToggle',
+	'handleContextToolToggle',
 	'openWebSearchConfirm',
 	'resetWebSearchConfirmation',
 	'confirmWebSearch',
@@ -64,13 +65,15 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		const console = { error: () => {} };
 		let $config = { features: {
 			enable_web_search: true, enable_image_generation: true,
-			enable_code_interpreter: true, enable_web_search_confirmation: false
+			enable_code_interpreter: true, enable_web_search_confirmation: false,
+			enable_memories: true, enable_notes: true
 		} };
 		let $models = ['a', 'b'].map(id => ({ id, info: { meta: {
 			capabilities: { web_search: true, image_generation: true }, defaultFeatureIds: []
 		} } }));
 		let selectedModels = ['a'], selectedModelIds = ['a'], atSelectedModel;
 		let webSearchEnabled = false, imageGenerationEnabled = false, codeInterpreterEnabled = false;
+		let knowledgeEnabled = false, memoryEnabled = false, notesEnabled = false;
 		let webSearchActive = false, webSearchConfirmed = false, showWebSearchConfirm = false;
 		let pendingWebSearchPrompt = null, pendingWebSearchToggleModelId;
 		let webSearchConfirmTimeout;
@@ -89,6 +92,7 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		return {
 			resetInput, setDefaults, restoreChatInput, handleWebSearchToggle, confirmWebSearch, getFeatures,
 			imageToggle: enabled => handleImageGenerationToggle(enabled),
+			contextToggle: (feature, enabled) => handleContextToolToggle(feature, enabled),
 			reasoning: (modelId, value) => persistLastUsedReasoningEffort(modelId, value),
 			cancel: () => cancelWebSearch(),
 			state: () => ({ webSearchEnabled, imageGenerationEnabled, webSearchConfirmed, showWebSearchConfirm, settings: $settings }),
@@ -109,6 +113,136 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 
 afterEach(() => {
 	vi.useRealTimers();
+});
+
+describe('knowledge, memory and notes controls', () => {
+	it('defaults to enabled without writing account settings', async () => {
+		const chat = createChat();
+		await chat.resetInput();
+		expect(chat.getFeatures()).toMatchObject({ knowledge: true, memory: true, notes: true });
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+	});
+
+	it.each(['knowledge', 'memory', 'notes'] as const)(
+		'remembers an explicit %s change independently for each model',
+		async (feature) => {
+			const chat = createChat({ textScale: 1.2 });
+			await chat.resetInput();
+			await chat.contextToggle(feature, false);
+			expect(chat.getFeatures()[feature]).toBe(false);
+			expect(chat.updateUserSettings).toHaveBeenLastCalledWith('synthetic-token', {
+				ui: { textScale: 1.2, toolFeaturesByModel: { a: { [feature]: false } } }
+			});
+			chat.select(['b']);
+			await chat.resetInput();
+			expect(chat.getFeatures()[feature]).toBe(true);
+			chat.select(['b'], 'a');
+			await chat.resetInput();
+			expect(chat.getFeatures()[feature]).toBe(false);
+			await chat.newChat();
+			expect(chat.getFeatures()[feature]).toBe(false);
+		}
+	);
+
+	it('keeps the memory master switch authoritative without erasing model choices', async () => {
+		const remembered = { a: { memory: true }, b: { memory: false } };
+		const chat = createChat({ memory: false, toolFeaturesByModel: remembered });
+		await chat.resetInput();
+		expect(chat.getFeatures().memory).toBe(false);
+		await chat.contextToggle('memory', true);
+		expect(chat.getFeatures().memory).toBe(false);
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+		chat.settings.update((settings) => ({ ...settings, memory: true }));
+		expect(chat.getFeatures().memory).toBe(true);
+		chat.select(['b']);
+		await chat.resetInput();
+		expect(chat.getFeatures().memory).toBe(false);
+		expect(chat.state().settings.toolFeaturesByModel).toEqual(remembered);
+	});
+
+	it('honors old-chat drafts, but starts new chats from account preferences', async () => {
+		const chat = createChat({
+			toolFeaturesByModel: { a: { knowledge: true, memory: false, notes: true } }
+		});
+		await chat.restoreChatInput(JSON.stringify({ knowledgeEnabled: false, memoryEnabled: true }));
+		expect(chat.getFeatures()).toMatchObject({ knowledge: false, memory: true, notes: true });
+		await chat.newChat();
+		await chat.restoreChatInput(JSON.stringify({ knowledgeEnabled: false, memoryEnabled: true }));
+		expect(chat.getFeatures()).toMatchObject({ knowledge: true, memory: false, notes: true });
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+	});
+
+	it('keeps multi-model changes local', async () => {
+		const chat = createChat({ toolFeaturesByModel: { a: { knowledge: false } } });
+		chat.select(['a', 'b']);
+		await chat.resetInput();
+		expect(chat.getFeatures().knowledge).toBe(true);
+		await chat.contextToggle('knowledge', false);
+		expect(chat.getFeatures().knowledge).toBe(false);
+		expect(chat.state().settings.toolFeaturesByModel).toEqual({ a: { knowledge: false } });
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+	});
+
+	it.each(['config', 'permission', 'category', 'capability'])(
+		'masks unavailable context features by %s without erasing preferences',
+		async (gate) => {
+			const remembered = { a: { knowledge: true, memory: true, notes: true } };
+			const chat = createChat({ toolFeaturesByModel: remembered });
+			await chat.resetInput();
+			if (gate === 'config') {
+				chat.config.features.enable_memories = false;
+				chat.config.features.enable_notes = false;
+			}
+			if (gate === 'permission') {
+				chat.user.set({ id: 'user-a', role: 'user', permissions: { features: {} } });
+			}
+			if (gate === 'category') {
+				chat.models[0].info.meta.builtinTools = { knowledge: false, memory: false, notes: false };
+			}
+			if (gate === 'capability') {
+				chat.models[0].info.meta.capabilities.builtin_tools = false;
+			}
+			expect(chat.getFeatures()).toMatchObject({
+				knowledge: gate === 'config' || gate === 'permission',
+				memory: false,
+				notes: false
+			});
+			expect(chat.state().settings.toolFeaturesByModel).toEqual(remembered);
+			expect(chat.updateUserSettings).not.toHaveBeenCalled();
+		}
+	);
+
+	it('preserves concurrent toggles and cancels saves belonging to a previous account', async () => {
+		const chat = createChat();
+		await chat.resetInput();
+		await Promise.all([
+			chat.contextToggle('knowledge', false),
+			chat.contextToggle('notes', false),
+			chat.contextToggle('memory', false)
+		]);
+		expect(chat.updateUserSettings).toHaveBeenLastCalledWith('synthetic-token', {
+			ui: { toolFeaturesByModel: { a: { knowledge: false, notes: false, memory: false } } }
+		});
+		chat.updateUserSettings.mockClear();
+		const saving = chat.contextToggle('notes', true);
+		chat.user.set({ id: 'user-b', role: 'admin' });
+		chat.settings.set({});
+		await saving;
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+		await chat.resetInput();
+		expect(chat.getFeatures()).toMatchObject({ knowledge: true, memory: true, notes: true });
+	});
+
+	it('keeps the selected feature and reports a failed save', async () => {
+		const chat = createChat();
+		await chat.resetInput();
+		chat.updateUserSettings.mockRejectedValueOnce(new Error('network failure'));
+		await chat.contextToggle('notes', false);
+		expect(chat.getFeatures().notes).toBe(false);
+		expect(chat.toast.error).toHaveBeenCalledWith('Failed to update settings');
+		await chat.contextToggle('memory', false);
+		expect(chat.updateUserSettings).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe('chat tool feature memory', () => {

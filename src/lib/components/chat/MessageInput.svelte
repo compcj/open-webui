@@ -104,6 +104,11 @@
 	import Voice from '../icons/Voice.svelte';
 	import Terminal from '../icons/Terminal.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
+	import ContextToolFeatures from './MessageInput/ContextToolFeatures.svelte';
+	import {
+		getContextToolAvailability,
+		type ContextToolFeature
+	} from '$lib/utils/tool-feature-preferences';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
@@ -136,6 +141,10 @@
 	export let onChange: Function = () => {};
 	export let onWebSearchToggle: Function = () => {};
 	export let onImageGenerationToggle: Function = () => {};
+	export let onContextToolToggle: (
+		feature: ContextToolFeature,
+		enabled: boolean
+	) => void = () => {};
 
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
@@ -203,6 +212,9 @@
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
+	export let knowledgeEnabled = false;
+	export let memoryEnabled = false;
+	export let notesEnabled = false;
 	export let toolApprovalMode = 'full';
 	export let onToolApprovalModeChange: Function = () => {};
 
@@ -257,6 +269,9 @@
 		selectedSkillIds,
 		selectedFilterIds,
 		imageGenerationEnabled,
+		knowledgeEnabled,
+		memoryEnabled,
+		notesEnabled,
 		webSearchEnabled,
 		codeInterpreterEnabled,
 		toolApprovalMode
@@ -817,6 +832,14 @@
 	$: showSkillsButton = ($skills ?? []).some((skill) => skill.is_active);
 
 	let showWebSearchButton = false;
+	$: contextToolAvailability = getContextToolAvailability(
+		selectedModelIds.filter(Boolean).map((id) => $models.find((model) => model.id === id)),
+		$config?.features,
+		$_user
+	);
+	$: memoryDisabled = !($settings?.memory ?? $config?.features?.enable_memories ?? false);
+	$: contextToolState = { knowledge: knowledgeEnabled, memory: memoryEnabled, notes: notesEnabled };
+	$: showContextTools = Object.values(contextToolAvailability).some(Boolean);
 	$: showWebSearchButton =
 		selectedModelIds.length === webSearchCapableModels.length &&
 		$config?.features?.enable_web_search &&
@@ -2137,6 +2160,9 @@
 
 															webSearchEnabled = false;
 															imageGenerationEnabled = false;
+															knowledgeEnabled = false;
+															memoryEnabled = false;
+															notesEnabled = false;
 															codeInterpreterEnabled = false;
 														}
 													}}
@@ -2255,18 +2281,22 @@
 										</button>
 									</InputMenu>
 
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+									{#if showContextTools || showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
 										<div
 											class="flex self-center w-[0.0625rem] h-4 mx-1 bg-gray-200/50 dark:bg-gray-800/50 shrink-0"
 										/>
 									{/if}
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+									{#if showContextTools || showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
 										<IntegrationsMenu
 											selectedModels={selectedModelIds}
 											{toggleFilters}
 											{showWebSearchButton}
 											{showImageGenerationButton}
 											{showCodeInterpreterButton}
+											{contextToolState}
+											{contextToolAvailability}
+											{memoryDisabled}
+											{onContextToolToggle}
 											bind:selectedToolIds
 											bind:selectedSkillIds
 											bind:selectedFilterIds
@@ -2473,6 +2503,14 @@
 													</button>
 												</Tooltip>
 											{/if}
+
+											<ContextToolFeatures
+												state={contextToolState}
+												available={contextToolAvailability}
+												{memoryDisabled}
+												compact
+												onToggle={onContextToolToggle}
+											/>
 
 											{#if codeInterpreterEnabled && showCodeInterpreterButton}
 												<Tooltip content={$i18n.t('Code Interpreter')} placement="top">

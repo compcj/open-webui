@@ -10,6 +10,7 @@ from open_webui.models.config import Config
 from open_webui.models.memories import Memories
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import add_or_update_system_message, get_content_from_message
+from open_webui.utils.tool_features import memory_enabled
 
 log = logging.getLogger(__name__)
 
@@ -286,8 +287,8 @@ def model_allows_memory(model: dict | None) -> bool:
     return ((model or {}).get('info', {}).get('meta', {}).get('capabilities') or {}).get('memory', True)
 
 
-async def add_memory_context(request, form_data: dict, user, model: dict | None = None):
-    if not model_allows_memory(model):
+async def add_memory_context(request, form_data: dict, user, model: dict | None = None, features: dict | None = None):
+    if not await memory_enabled(features or {}, model or {}, user):
         return form_data
 
     user_messages = []
@@ -416,11 +417,8 @@ async def review_memory_after_turn(
     assistant_message: dict,
     messages: list[dict],
 ) -> None:
-    if not model_allows_memory(model):
-        return
-
     features = metadata.get('features') or {}
-    if not features.get('memory'):
+    if not await memory_enabled(features, model or {}, user):
         return
 
     assistant_content = get_content_from_message(assistant_message)

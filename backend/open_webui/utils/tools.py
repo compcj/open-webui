@@ -120,6 +120,7 @@ from open_webui.utils.terminals import (
     terminal_context_config,
     terminal_context_id,
 )
+from open_webui.utils.tool_features import memory_enabled, scope_attachment_tool
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
@@ -607,7 +608,15 @@ async def get_builtin_tools(
     # If model has attached knowledge (any type), only provide query_knowledge_files
     # Otherwise, provide all KB browsing tools
     model_knowledge = get_attached_knowledge(model, metadata)
-    if is_builtin_tool_enabled('knowledge'):
+    attachment_knowledge = model_knowledge
+    if metadata.get('note_id'):
+        attachment_knowledge = [*model_knowledge, {'type': 'note', 'id': metadata['note_id'], 'source': 'chat'}]
+    knowledge_enabled = (
+        features.get('knowledge', True)
+        and is_builtin_tool_enabled('knowledge')
+        and get_model_capability('builtin_tools')
+    )
+    if knowledge_enabled:
         from open_webui.env import ENABLE_KB_EXEC
 
         if ENABLE_KB_EXEC:
@@ -644,6 +653,15 @@ async def get_builtin_tools(
                 ]
             )
 
+    elif is_builtin_tool_enabled('knowledge') and attachment_knowledge:
+        # Explicit attachments remain readable without enabling discovery across the workspace.
+        model_knowledge = attachment_knowledge
+        builtin_functions.extend([list_knowledge, query_knowledge_files])
+        if any(item.get('type') in ('file', 'collection') for item in model_knowledge):
+            builtin_functions.append(view_file)
+        if any(item.get('type') == 'note' for item in model_knowledge):
+            builtin_functions.append(view_note)
+
     # Chats tools - search and fetch user's chat history
     if is_builtin_tool_enabled('chats'):
         builtin_functions.extend([search_chats, view_chat])
@@ -657,12 +675,7 @@ async def get_builtin_tools(
         builtin_functions.extend([delegate_task, timer])
 
     # Add memory tools when memory is enabled and the model allows this builtin category.
-    if (
-        is_builtin_tool_enabled('memory')
-        and features.get('memory')
-        and get_model_capability('memory')
-        and await has_user_permission('memories')
-    ):
+    if await memory_enabled(features, model, user):
         builtin_functions.extend(
             [
                 search_memories,
@@ -717,10 +730,17 @@ async def get_builtin_tools(
         builtin_functions.append(execute_code)
 
     # Notes tools - search, view, create, and update user's notes
-    if is_note_chat or (
-        is_builtin_tool_enabled('notes') and config.get('notes.enable') and await has_user_permission('notes')
-    ):
+    notes_enabled = (is_note_chat and 'notes' not in features) or (
+        features.get('notes', True)
+        and get_model_capability('builtin_tools')
+        and is_builtin_tool_enabled('notes')
+        and config.get('notes.enable')
+        and await has_user_permission('notes')
+    )
+    if notes_enabled:
         builtin_functions.extend([search_notes, view_note, write_note, replace_note_content])
+    elif metadata.get('note_id'):
+        builtin_functions.append(view_note)
 
     # Channels tools - search channels and messages
     if is_builtin_tool_enabled('channels') and config.get('channels.enable') and await has_user_permission('channels'):
@@ -771,8 +791,15 @@ async def get_builtin_tools(
         builtin_functions = [func for func in builtin_functions if func.__name__ not in MUTATING_MEMORY_TOOLS]
 
     for func in builtin_functions:
+        function = func
+        if (func.__name__ == 'view_note' and not notes_enabled) or (
+            not knowledge_enabled
+            and func.__name__ in ('list_knowledge', 'query_knowledge_files', 'view_file', 'view_knowledge_file')
+        ):
+            # Bind the scoped function so execution-time context updates keep the restriction.
+            function = scope_attachment_tool(func.__name__, func, attachment_knowledge, chat_files, user)
         callable = await get_async_tool_function_and_apply_extra_params(
-            func,
+            function,
             {
                 '__request__': request,
                 '__user__': extra_params.get('__user__', {}),

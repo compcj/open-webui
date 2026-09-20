@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
+	import type { ContextToolFeature } from '$lib/utils/tool-feature-preferences';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
 
@@ -54,6 +55,9 @@
 	export let showCommands = false;
 
 	export let imageGenerationEnabled = false;
+	export let knowledgeEnabled = false;
+	export let memoryEnabled = false;
+	export let notesEnabled = false;
 	export let codeInterpreterEnabled = false;
 	export let webSearchEnabled = false;
 	export let toolApprovalMode = 'full';
@@ -66,6 +70,10 @@
 	export let onChange = (e) => {};
 	export let onWebSearchToggle: Function = () => {};
 	export let onImageGenerationToggle: Function = () => {};
+	export let onContextToolToggle: (
+		feature: ContextToolFeature,
+		enabled: boolean
+	) => void = () => {};
 	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
@@ -246,6 +254,9 @@
 						bind:selectedSkillIds
 						bind:selectedFilterIds
 						bind:imageGenerationEnabled
+						bind:knowledgeEnabled
+						bind:memoryEnabled
+						bind:notesEnabled
 						bind:codeInterpreterEnabled
 						bind:webSearchEnabled
 						bind:atSelectedModel
@@ -268,6 +279,7 @@
 						{askUser}
 						{onWebSearchToggle}
 						{onImageGenerationToggle}
+						{onContextToolToggle}
 						on:chatVariables
 						on:submit={(e) => {
 							dispatch('submit', e.detail);

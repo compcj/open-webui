@@ -17,6 +17,8 @@
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import SearchInput from './InputMenu/SearchInput.svelte';
+	import ContextToolFeatures from './ContextToolFeatures.svelte';
+	import type { ContextToolFeature, ContextToolState } from '$lib/utils/tool-feature-preferences';
 	import Wrench from '$lib/components/icons/Wrench.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
@@ -62,6 +64,17 @@
 	export let imageGenerationEnabled = false;
 	export let showCodeInterpreterButton = false;
 	export let codeInterpreterEnabled = false;
+	export let contextToolState: ContextToolState = { knowledge: false, memory: false, notes: false };
+	export let contextToolAvailability: ContextToolState = {
+		knowledge: false,
+		memory: false,
+		notes: false
+	};
+	export let memoryDisabled = false;
+	export let onContextToolToggle: (
+		feature: ContextToolFeature,
+		enabled: boolean
+	) => void = () => {};
 
 	export let onShowValves: Function;
 	export let onClose: Function;
@@ -449,6 +462,13 @@
 							</button>
 						</Tooltip>
 					{/if}
+
+					<ContextToolFeatures
+						state={contextToolState}
+						available={contextToolAvailability}
+						{memoryDisabled}
+						onToggle={onContextToolToggle}
+					/>
 
 					{#if showCodeInterpreterButton}
 						<Tooltip content={$i18n.t('Execute code for analysis')} placement="top-start">

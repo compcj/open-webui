@@ -1,10 +1,63 @@
-export type ToolFeature = 'web_search' | 'image_generation';
+export type ContextToolFeature = 'knowledge' | 'memory' | 'notes';
+
+export type ContextToolState = Record<ContextToolFeature, boolean>;
+
+export type ToolFeature = 'web_search' | 'image_generation' | ContextToolFeature;
 
 export type ToolFeaturePreferences = Partial<Record<ToolFeature, boolean>>;
 
 export type ToolFeaturesByModel = Record<string, ToolFeaturePreferences>;
 
-const TOOL_FEATURES: ToolFeature[] = ['web_search', 'image_generation'];
+const TOOL_FEATURES: ToolFeature[] = [
+	'web_search',
+	'image_generation',
+	'knowledge',
+	'memory',
+	'notes'
+];
+
+type ContextToolModel = {
+	info?: {
+		meta?: {
+			capabilities?: { builtin_tools?: boolean; memory?: boolean };
+			builtinTools?: Partial<ContextToolState>;
+		};
+	};
+};
+
+// Shared by the request builder and composer so hidden tools cannot remain active.
+// The personal memory master switch is applied separately, preserving the selection.
+export function getContextToolAvailability(
+	models: (ContextToolModel | null | undefined)[],
+	features?: { enable_memories?: boolean; enable_notes?: boolean },
+	user?: {
+		role?: string;
+		permissions?: { features?: { memories?: boolean; notes?: boolean } };
+	} | null
+): ContextToolState {
+	const modelAllows = (feature: ContextToolFeature) =>
+		models.length > 0 &&
+		models.every(
+			(model) =>
+				model &&
+				model.info?.meta?.capabilities?.builtin_tools !== false &&
+				model.info?.meta?.builtinTools?.[feature] !== false &&
+				(feature !== 'memory' || model.info?.meta?.capabilities?.memory !== false)
+		);
+	return {
+		knowledge: modelAllows('knowledge'),
+		memory: Boolean(
+			modelAllows('memory') &&
+			features?.enable_memories &&
+			(user?.role === 'admin' || user?.permissions?.features?.memories)
+		),
+		notes: Boolean(
+			modelAllows('notes') &&
+			features?.enable_notes &&
+			(user?.role === 'admin' || user?.permissions?.features?.notes)
+		)
+	};
+}
 
 export function getToolFeatureModelId(
 	modelIds: string[],

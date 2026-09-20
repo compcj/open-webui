@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	createToolFeatureSaveQueue,
+	getContextToolAvailability,
 	getToolFeatureModelId,
 	resolveToolFeatureState,
 	updateToolFeaturePreference
@@ -24,8 +25,15 @@ describe('getToolFeatureModelId', () => {
 });
 
 describe('resolveToolFeatureState', () => {
-	const defaults = { web_search: true, image_generation: false };
-	const available = { web_search: true, image_generation: true };
+	const contextDefaults = { knowledge: false, memory: false, notes: false };
+	const defaults = { ...contextDefaults, web_search: true, image_generation: false };
+	const available = {
+		knowledge: true,
+		memory: true,
+		notes: true,
+		web_search: true,
+		image_generation: true
+	};
 
 	it('keeps model preferences and features independent', () => {
 		const preferences = {
@@ -35,10 +43,10 @@ describe('resolveToolFeatureState', () => {
 
 		expect(
 			resolveToolFeatureState({ modelId: 'model-a', preferences, defaults, available })
-		).toEqual({ web_search: false, image_generation: true });
+		).toEqual({ ...contextDefaults, web_search: false, image_generation: true });
 		expect(
 			resolveToolFeatureState({ modelId: 'model-b', preferences, defaults, available })
-		).toEqual({ web_search: true, image_generation: false });
+		).toEqual({ ...contextDefaults, web_search: true, image_generation: false });
 	});
 
 	it('distinguishes explicit false from missing and ignores malformed values', () => {
@@ -50,7 +58,7 @@ describe('resolveToolFeatureState', () => {
 
 		expect(
 			resolveToolFeatureState({ modelId: 'explicit', preferences, defaults, available })
-		).toEqual({ web_search: false, image_generation: false });
+		).toEqual({ ...contextDefaults, web_search: false, image_generation: false });
 		expect(
 			resolveToolFeatureState({ modelId: 'missing', preferences, defaults, available })
 		).toEqual(defaults);
@@ -73,7 +81,7 @@ describe('resolveToolFeatureState', () => {
 				available,
 				overrides: { web_search: true, image_generation: true }
 			})
-		).toEqual({ web_search: true, image_generation: true });
+		).toEqual({ ...contextDefaults, web_search: true, image_generation: true });
 	});
 
 	it('disables unavailable capabilities without changing remembered preferences', () => {
@@ -84,10 +92,54 @@ describe('resolveToolFeatureState', () => {
 				modelId: 'model-a',
 				preferences,
 				defaults,
-				available: { web_search: false, image_generation: true }
+				available: { ...available, web_search: false }
 			})
-		).toEqual({ web_search: false, image_generation: true });
+		).toEqual({ ...contextDefaults, web_search: false, image_generation: true });
 		expect(preferences).toEqual({ 'model-a': { web_search: true, image_generation: true } });
+	});
+});
+
+describe('context tool availability', () => {
+	const models = [{ info: { meta: {} } }];
+	const features = { enable_memories: true, enable_notes: true };
+	const admin = { role: 'admin' };
+
+	it('uses existing category and feature gates without a knowledge management permission', () => {
+		expect(getContextToolAvailability(models, features, admin)).toEqual({
+			knowledge: true,
+			memory: true,
+			notes: true
+		});
+		expect(getContextToolAvailability(models, features, { role: 'user' })).toEqual({
+			knowledge: true,
+			memory: false,
+			notes: false
+		});
+		expect(getContextToolAvailability(models, {}, admin)).toEqual({
+			knowledge: true,
+			memory: false,
+			notes: false
+		});
+	});
+
+	it('requires a resolved model and intersects capabilities across selected models', () => {
+		for (const selected of [[], [undefined], [...models, undefined]]) {
+			expect(getContextToolAvailability(selected, features, admin)).toEqual({
+				knowledge: false,
+				memory: false,
+				notes: false
+			});
+		}
+		expect(
+			getContextToolAvailability(
+				[
+					...models,
+					{ info: { meta: { capabilities: { memory: false }, builtinTools: { notes: false } } } }
+				],
+				features,
+				admin
+			)
+		).toEqual({ knowledge: true, memory: false, notes: false });
 	});
 });
 

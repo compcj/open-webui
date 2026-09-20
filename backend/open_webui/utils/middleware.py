@@ -2716,13 +2716,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 )
 
         if 'memory' in features and features['memory'] and await Config.get('memories.system_context.enable'):
-            # features is client-supplied; re-check the permission the native FC path enforces.
-            if getattr(user, 'role', None) == 'admin' or await has_permission(
-                getattr(user, 'id', ''),
-                'features.memories',
-                await Config.get('user.permissions'),
-            ):
-                form_data = await add_memory_context(request, form_data, user, model)
+            form_data = await add_memory_context(request, form_data, user, model, features)
 
         if 'web_search' in features and features['web_search'] and await Config.get('web.search.enable'):
             # features is client-supplied; re-check the permission the native FC path enforces.
@@ -2814,6 +2808,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 permission='read',
             )
         ):
+            metadata['note_id'] = note.id
             note_files = [
                 file
                 for file in ((note.data or {}).get('files') or [])
