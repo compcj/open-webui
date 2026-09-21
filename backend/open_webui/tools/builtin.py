@@ -381,6 +381,7 @@ async def generate_image(
     __event_emitter__: callable = None,
     __chat_id__: str = None,
     __message_id__: str = None,
+    __metadata__: dict = None,
 ) -> str:
     """
     Generate an image based on a text prompt.
@@ -396,7 +397,7 @@ async def generate_image(
 
         images = await image_generations(
             request=__request__,
-            form_data=CreateImageForm(prompt=prompt),
+            form_data=CreateImageForm(prompt=prompt, engine_id=(__metadata__ or {}).get('image_generation_engine_id')),
             metadata=(
                 {'channel_id': __chat_id__.removeprefix('channel:'), 'message_id': __message_id__}
                 if isinstance(__chat_id__, str) and __chat_id__.startswith('channel:')

@@ -271,6 +271,7 @@ type Settings = {
 	models?: string[];
 	reasoningEffortByModel?: Record<string, string>;
 	toolFeaturesByModel?: ToolFeaturesByModel;
+	imageGenerationEngineId?: string;
 	conversationMode?: boolean;
 	speechAutoSend?: boolean;
 	responseAutoPlayback?: boolean;

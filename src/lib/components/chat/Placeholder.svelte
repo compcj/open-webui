@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { ImageGenerationEngineOption } from '$lib/apis/images';
 	import { toast } from 'svelte-sonner';
 	import type { ContextToolFeature } from '$lib/utils/tool-feature-preferences';
 	import { marked } from 'marked';
@@ -70,6 +71,10 @@
 	export let onChange = (e) => {};
 	export let onWebSearchToggle: Function = () => {};
 	export let onImageGenerationToggle: Function = () => {};
+	export let imageGenerationEngines: ImageGenerationEngineOption[] | null = null;
+	export let imageGenerationEngineId = '';
+	export let imageGenerationEnginesLoading = false;
+	export let onImageGenerationEngineChange: (id: string) => void = () => {};
 	export let onContextToolToggle: (
 		feature: ContextToolFeature,
 		enabled: boolean
@@ -279,6 +284,10 @@
 						{askUser}
 						{onWebSearchToggle}
 						{onImageGenerationToggle}
+						{imageGenerationEngines}
+						{imageGenerationEngineId}
+						{imageGenerationEnginesLoading}
+						{onImageGenerationEngineChange}
 						{onContextToolToggle}
 						on:chatVariables
 						on:submit={(e) => {

@@ -1341,6 +1341,16 @@ IMAGE_GENERATION_ENGINE = os.getenv('IMAGE_GENERATION_ENGINE', 'openai')
 
 IMAGE_GENERATION_MODEL = os.getenv('IMAGE_GENERATION_MODEL', '')
 
+image_generation_engines = os.getenv('IMAGE_GENERATION_ENGINES', '[]')
+try:
+    image_generation_engines = JSONCodec.loads(image_generation_engines)
+    if not isinstance(image_generation_engines, list):
+        image_generation_engines = []
+except JSONCodec.JSONDecodeError:
+    image_generation_engines = []
+
+IMAGE_GENERATION_ENGINES = image_generation_engines
+
 # Regex pattern for models that support IMAGE_SIZE = "auto".
 IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN = os.getenv('IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN', '^gpt-image')
 
@@ -3033,6 +3043,7 @@ DEFAULT_CONFIG = {
     'image_generation.enable': ENABLE_IMAGE_GENERATION,
     'image_generation.engine': IMAGE_GENERATION_ENGINE,
     'image_generation.model': IMAGE_GENERATION_MODEL,
+    'image_generation.engines': IMAGE_GENERATION_ENGINES,
     'image_generation.size': IMAGE_SIZE,
     'image_generation.steps': IMAGE_STEPS,
     'image_generation.prompt.enable': ENABLE_IMAGE_PROMPT_GENERATION,

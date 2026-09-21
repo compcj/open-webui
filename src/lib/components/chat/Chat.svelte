@@ -117,6 +117,8 @@
 	} from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { getSkills } from '$lib/apis/skills';
+	import { getImageGenerationEngines, type ImageGenerationEngineOption } from '$lib/apis/images';
+	import { resolveImageGenerationEngineId } from '$lib/utils/image-generation';
 	import { uploadFile } from '$lib/apis/files';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
 	import { getFunctions } from '$lib/apis/functions';
@@ -336,6 +338,57 @@
 	let pendingOAuthTools = [];
 
 	let imageGenerationEnabled = false;
+	let imageGenerationEngines: ImageGenerationEngineOption[] | null = null;
+	let imageGenerationEnginesLoading = false;
+	let imageGenerationEngineId = '';
+	let imageEngineAccountId: string | null = null;
+	let imageEngineRequestVersion = 0;
+
+	const refreshImageGenerationEngines = async (userId: string | undefined, enabled: boolean) => {
+		const version = ++imageEngineRequestVersion;
+		if (!userId || imageEngineAccountId !== userId) {
+			imageGenerationEngines = null;
+			imageEngineAccountId = userId ?? null;
+		}
+		if (!userId || !enabled) {
+			imageGenerationEnginesLoading = false;
+			return;
+		}
+		imageGenerationEnginesLoading = true;
+		const token = localStorage.token;
+		const isCurrent = () =>
+			version === imageEngineRequestVersion &&
+			get(user)?.id === userId &&
+			localStorage.token === token;
+		try {
+			const engines = await getImageGenerationEngines(token);
+			if (isCurrent()) imageGenerationEngines = engines;
+		} catch (error) {
+			if (isCurrent()) {
+				toast.error($i18n.t('Failed to load image generation engines'));
+			}
+		} finally {
+			if (isCurrent()) imageGenerationEnginesLoading = false;
+		}
+	};
+
+	$: refreshImageGenerationEngines(
+		$user?.id,
+		Boolean(
+			imageGenerationEnabled &&
+			$config?.features?.enable_image_generation &&
+			($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
+		)
+	);
+	$: imageGenerationEngineId = resolveImageGenerationEngineId(
+		$settings?.imageGenerationEngineId,
+		imageGenerationEngines
+	);
+
+	onDestroy(() => {
+		imageEngineRequestVersion += 1;
+	});
+
 	let webSearchEnabled = false;
 	let codeInterpreterEnabled = false;
 	let knowledgeEnabled = false;
@@ -492,6 +545,15 @@
 		}
 		imageGenerationEnabled = enabled;
 		return persistToolFeaturePreference(modelId, 'image_generation', enabled);
+	};
+
+	const handleImageGenerationEngineChange = async (id: string) => {
+		if (!$user?.id || imageGenerationEngines === null) return;
+		settings.update((current) => ({
+			...current,
+			imageGenerationEngineId: resolveImageGenerationEngineId(id, imageGenerationEngines)
+		}));
+		await persistChatUserSettings('image generation engine settings', true);
 	};
 
 	const handleContextToolToggle = (feature: ContextToolFeature, enabled: boolean) => {
@@ -3602,7 +3664,7 @@
 		}
 	};
 
-	const getFeatures = () => {
+	const getFeatures = (): Record<string, boolean> => {
 		let features = {};
 		const { available } = getToolFeatureContext();
 
@@ -3824,6 +3886,9 @@
 					...($terminalServers ?? []).filter((t) => !t.id)
 				],
 				features: getFeatures(),
+				image_generation_engine_id: getFeatures().image_generation
+					? imageGenerationEngineId
+					: undefined,
 				variables: {
 					...getPromptVariables(
 						$user?.name,
@@ -4739,6 +4804,10 @@
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
 										onImageGenerationToggle={handleImageGenerationToggle}
+										{imageGenerationEngines}
+										{imageGenerationEngineId}
+										{imageGenerationEnginesLoading}
+										onImageGenerationEngineChange={handleImageGenerationEngineChange}
 										onContextToolToggle={handleContextToolToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
@@ -4838,6 +4907,10 @@
 										}}
 										onWebSearchToggle={handleWebSearchToggle}
 										onImageGenerationToggle={handleImageGenerationToggle}
+										{imageGenerationEngines}
+										{imageGenerationEngineId}
+										{imageGenerationEnginesLoading}
+										onImageGenerationEngineChange={handleImageGenerationEngineChange}
 										onContextToolToggle={handleContextToolToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
@@ -4891,6 +4964,10 @@
 									onQueueDelete={deleteQueuedMessage}
 									onWebSearchToggle={handleWebSearchToggle}
 									onImageGenerationToggle={handleImageGenerationToggle}
+									{imageGenerationEngines}
+									{imageGenerationEngineId}
+									{imageGenerationEnginesLoading}
+									onImageGenerationEngineChange={handleImageGenerationEngineChange}
 									onContextToolToggle={handleContextToolToggle}
 									on:chatVariables={() => {
 										showChatVariablesModal = true;

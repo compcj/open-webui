@@ -1,5 +1,37 @@
 import { IMAGES_API_BASE_URL } from '$lib/constants';
 
+export type ImageGenerationEngineOption = { id: string; name: string };
+
+export type ImageGenerationEngine = ImageGenerationEngineOption & {
+	engine: 'openai' | 'gemini' | 'grok' | 'comfyui';
+	model: string;
+	base_url: string;
+	api_key: string;
+	api_version: string;
+	params: Record<string, unknown>;
+	size: string;
+	steps: number | null;
+	gemini_endpoint_method: 'predict' | 'generateContent';
+	comfyui_workflow: string;
+	comfyui_workflow_nodes: { type: string; key: string; node_ids: string[] }[];
+};
+
+export const getImageGenerationEngines = async (
+	token: string = ''
+): Promise<ImageGenerationEngineOption[]> => {
+	const res = await fetch(`${IMAGES_API_BASE_URL}/engines`, {
+		headers: {
+			Accept: 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => null);
+		throw error?.detail ?? 'Failed to load image generation engines';
+	}
+	return res.json();
+};
+
 export const getConfig = async (token: string = '') => {
 	let error = null;
 
@@ -51,9 +83,12 @@ export const updateConfig = async (token: string = '', config: object) => {
 			return res.json();
 		})
 		.catch((err) => {
-			console.error(err);
 			if ('detail' in err) {
-				error = err.detail;
+				error = Array.isArray(err.detail)
+					? err.detail
+							.map((item: { msg?: string }) => item.msg ?? 'Invalid configuration')
+							.join('\n')
+					: err.detail;
 			} else {
 				error = 'Server connection failed';
 			}

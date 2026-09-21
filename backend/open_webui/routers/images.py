@@ -9,7 +9,7 @@ import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote, urlparse
 
 import aiofiles
@@ -41,6 +41,16 @@ from open_webui.utils.images.comfyui import (
     comfyui_edit_image,
     comfyui_upload_image,
 )
+from open_webui.utils.images.engines import (
+    build_comfyui_payload,
+    build_gemini_request,
+    build_grok_payload,
+    build_openai_payload,
+    describe_profile_validation_error,
+    normalize_engine_profiles,
+    redact_image_metadata,
+    resolve_image_generation_config,
+)
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.session_pool import get_session
 from PIL import Image, ImageOps
@@ -69,6 +79,7 @@ IMAGE_CONFIG_KEYS = {
     'ENABLE_IMAGE_PROMPT_GENERATION': 'image_generation.prompt.enable',
     'IMAGE_GENERATION_ENGINE': 'image_generation.engine',
     'IMAGE_GENERATION_MODEL': 'image_generation.model',
+    'IMAGE_GENERATION_ENGINES': 'image_generation.engines',
     'IMAGE_SIZE': 'image_generation.size',
     'IMAGE_STEPS': 'image_generation.steps',
     'IMAGES_OPENAI_API_BASE_URL': 'image_generation.openai.api_base_url',
@@ -113,6 +124,20 @@ async def get_image_config() -> SimpleNamespace:
 
 def config_updates(data: dict, key_map: dict[str, str]) -> dict:
     return {key_map[field]: value for field, value in data.items() if field in key_map}
+
+
+def canonicalize_image_generation_engines(values: dict) -> dict:
+    canonical = values.copy()
+    try:
+        profiles = normalize_engine_profiles(canonical.get('IMAGE_GENERATION_ENGINES', []))
+    except ValueError as error:
+        detail = describe_profile_validation_error(error)
+        raise HTTPException(
+            status_code=400,
+            detail=f'Invalid image generation engine profiles: {detail}',
+        ) from None
+    canonical['IMAGE_GENERATION_ENGINES'] = [profile.model_dump(mode='json') for profile in profiles]
+    return canonical
 
 
 def normalize_openai_edit_image_data_url(data_url: str) -> str:
@@ -199,12 +224,14 @@ async def set_image_model(request: Request, model: str):
     return image_config.IMAGE_GENERATION_MODEL
 
 
-async def get_image_model(request):
-    image_config = await get_image_config()
+async def get_image_model(request, image_config=None):
+    image_config = image_config or await get_image_config()
     if image_config.IMAGE_GENERATION_ENGINE == 'openai':
         return image_config.IMAGE_GENERATION_MODEL if image_config.IMAGE_GENERATION_MODEL else 'dall-e-2'
     elif image_config.IMAGE_GENERATION_ENGINE == 'gemini':
         return image_config.IMAGE_GENERATION_MODEL if image_config.IMAGE_GENERATION_MODEL else 'imagen-3.0-generate-002'
+    elif image_config.IMAGE_GENERATION_ENGINE == 'grok':
+        return image_config.IMAGE_GENERATION_MODEL if image_config.IMAGE_GENERATION_MODEL else 'grok-imagine-image'
     elif image_config.IMAGE_GENERATION_ENGINE == 'comfyui':
         return image_config.IMAGE_GENERATION_MODEL if image_config.IMAGE_GENERATION_MODEL else ''
     elif image_config.IMAGE_GENERATION_ENGINE == 'automatic1111' or image_config.IMAGE_GENERATION_ENGINE == '':
@@ -231,6 +258,7 @@ class ImagesConfig(BaseModel):
 
     IMAGE_GENERATION_ENGINE: str
     IMAGE_GENERATION_MODEL: str
+    IMAGE_GENERATION_ENGINES: list[dict[str, Any]] | None = None
     IMAGE_SIZE: str | None
     IMAGE_STEPS: int | None
 
@@ -270,7 +298,8 @@ class ImagesConfig(BaseModel):
 
 @router.get('/config', response_model=ImagesConfig)
 async def get_config(request: Request, user=Depends(get_admin_user)):
-    return await get_config_values(IMAGE_CONFIG_KEYS)
+    values = await get_config_values(IMAGE_CONFIG_KEYS)
+    return canonicalize_image_generation_engines(values)
 
 
 @router.post('/config/update')
@@ -292,18 +321,30 @@ async def update_config(request: Request, form_data: ImagesConfig, user=Depends(
             detail=ERROR_MESSAGES.INCORRECT_FORMAT('  (e.g., 512x512).'),
         )
 
-    if form_data.IMAGE_STEPS < 0:
+    if form_data.IMAGE_STEPS is not None and form_data.IMAGE_STEPS < 0:
         raise HTTPException(
             status_code=400,
             detail=ERROR_MESSAGES.INCORRECT_FORMAT('  (e.g., 50).'),
         )
 
-    updates = config_updates(form_data.model_dump(), IMAGE_CONFIG_KEYS)
+    form_values = form_data.model_dump(exclude_unset=True, mode='json')
+    if 'IMAGE_GENERATION_ENGINES' in form_data.model_fields_set:
+        try:
+            profiles = normalize_engine_profiles(form_data.IMAGE_GENERATION_ENGINES)
+        except ValueError as error:
+            detail = describe_profile_validation_error(error)
+            raise HTTPException(
+                status_code=400,
+                detail=f'Invalid image generation engine profiles: {detail}',
+            ) from None
+        form_values['IMAGE_GENERATION_ENGINES'] = [profile.model_dump(mode='json') for profile in profiles]
+
+    updates = config_updates(form_values, IMAGE_CONFIG_KEYS)
     updates['image_generation.comfyui.base_url'] = form_data.COMFYUI_BASE_URL.strip('/')
     updates['images.edit.comfyui.base_url'] = form_data.IMAGES_EDIT_COMFYUI_BASE_URL.strip('/')
     await Config.upsert(updates)
     await set_image_model(request, form_data.IMAGE_GENERATION_MODEL)
-    values = await get_config_values(IMAGE_CONFIG_KEYS)
+    values = canonicalize_image_generation_engines(await get_config_values(IMAGE_CONFIG_KEYS))
     await publish_event(
         request,
         EVENTS.CONFIG_UPDATED,
@@ -443,6 +484,20 @@ async def get_models(request: Request, user=Depends(get_verified_user)):
         )
 
 
+@router.get('/engines')
+async def get_image_generation_engines(request: Request, user=Depends(get_verified_user)):
+    image_config = await get_image_config()
+    if not image_config.ENABLE_IMAGE_GENERATION:
+        return []
+    if user.role != 'admin' and not await has_permission(
+        user.id, 'features.image_generation', image_config.USER_PERMISSIONS
+    ):
+        raise HTTPException(status_code=403, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+
+    profiles = normalize_engine_profiles(getattr(image_config, 'IMAGE_GENERATION_ENGINES', []))
+    return [{'id': profile.id, 'name': profile.name} for profile in profiles]
+
+
 class CreateImageForm(BaseModel):
     model: str | None = None
     prompt: str
@@ -450,6 +505,7 @@ class CreateImageForm(BaseModel):
     n: int = 1
     steps: int | None = None
     negative_prompt: str | None = None
+    engine_id: str | None = None
 
 
 GenerateImageForm = CreateImageForm  # Alias for backward compatibility
@@ -600,7 +656,12 @@ async def image_generations(
     metadata: dict | None = None,
     user=None,
 ):
-    image_config = await get_image_config()
+    default_image_config = await get_image_config()
+    image_config = resolve_image_generation_config(
+        default_image_config,
+        getattr(default_image_config, 'IMAGE_GENERATION_ENGINES', []),
+        form_data.engine_id,
+    )
     # if IMAGE_SIZE = 'auto', default WidthxHeight to the 512x512 default
     # This is only relevant when the user has set IMAGE_SIZE to 'auto' with an
     # image model other than gpt-image-1, which is warned about on settings save
@@ -616,10 +677,10 @@ async def image_generations(
 
     metadata = metadata or {}
 
-    model = await get_image_model(request)
+    model = await get_image_model(request, image_config)
 
     try:
-        if image_config.IMAGE_GENERATION_ENGINE == 'openai':
+        if image_config.IMAGE_GENERATION_ENGINE in {'openai', 'grok'}:
             headers = {
                 'Authorization': f'Bearer {image_config.IMAGES_OPENAI_API_KEY}',
                 'Content-Type': 'application/json',
@@ -629,28 +690,18 @@ async def image_generations(
                 headers = include_user_info_headers(headers, user)
 
             url = f'{image_config.IMAGES_OPENAI_API_BASE_URL}/images/generations'
-            if image_config.IMAGES_OPENAI_API_VERSION:
+            if image_config.IMAGE_GENERATION_ENGINE == 'openai' and image_config.IMAGES_OPENAI_API_VERSION:
                 url = f'{url}?api-version={image_config.IMAGES_OPENAI_API_VERSION}'
 
-            data = {
-                'model': model,
-                'prompt': form_data.prompt,
-                'n': form_data.n,
-                **(
-                    {'size': form_data.size or image_config.IMAGE_SIZE}
-                    if (form_data.size or image_config.IMAGE_SIZE)
-                    else {}
-                ),
-                **(
-                    {}
-                    if re.match(
-                        IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN,
-                        image_config.IMAGE_GENERATION_MODEL,
-                    )
-                    else {'response_format': 'b64_json'}
-                ),
-                **({} if not image_config.IMAGES_OPENAI_API_PARAMS else image_config.IMAGES_OPENAI_API_PARAMS),
-            }
+            if image_config.IMAGE_GENERATION_ENGINE == 'grok':
+                data = build_grok_payload(image_config, form_data, model)
+            else:
+                data = build_openai_payload(
+                    image_config,
+                    form_data,
+                    model,
+                    url_response=bool(re.match(IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN, model)),
+                )
 
             session = await get_session()
             async with session.post(
@@ -666,14 +717,20 @@ async def image_generations(
 
             for image in res['data']:
                 if image_url := image.get('url', None):
-                    image_data, content_type = await get_image_data(
-                        image_url,
-                        {k: v for k, v in headers.items() if k != 'Content-Type'},
-                    )
+                    download_headers = None
+                    if _is_same_origin(image_url, image_config.IMAGES_OPENAI_API_BASE_URL):
+                        download_headers = {key: value for key, value in headers.items() if key != 'Content-Type'}
+                    image_data, content_type = await get_image_data(image_url, download_headers)
                 else:
                     image_data, content_type = await get_image_data(image['b64_json'])
 
-                _, image_file = await upload_image(request, image_data, content_type, {**data, **metadata}, user)
+                _, image_file = await upload_image(
+                    request,
+                    image_data,
+                    content_type,
+                    {**redact_image_metadata(data), **metadata},
+                    user,
+                )
                 images.append(image_file)
             return images
 
@@ -683,24 +740,7 @@ async def image_generations(
                 'x-goog-api-key': image_config.IMAGES_GEMINI_API_KEY,
             }
 
-            data = {}
-
-            if (
-                image_config.IMAGES_GEMINI_ENDPOINT_METHOD == ''
-                or image_config.IMAGES_GEMINI_ENDPOINT_METHOD == 'predict'
-            ):
-                model = f'{model}:predict'
-                data = {
-                    'instances': {'prompt': form_data.prompt},
-                    'parameters': {
-                        'sampleCount': form_data.n,
-                        'outputOptions': {'mimeType': 'image/png'},
-                    },
-                }
-
-            elif image_config.IMAGES_GEMINI_ENDPOINT_METHOD == 'generateContent':
-                model = f'{model}:generateContent'
-                data = {'contents': [{'parts': [{'text': form_data.prompt}]}]}
+            model, data = build_gemini_request(image_config, form_data, model)
 
             session = await get_session()
             async with session.post(
@@ -717,7 +757,13 @@ async def image_generations(
             if model.endswith(':predict'):
                 for image in res['predictions']:
                     image_data, content_type = await get_image_data(image['bytesBase64Encoded'])
-                    _, image_file = await upload_image(request, image_data, content_type, {**data, **metadata}, user)
+                    _, image_file = await upload_image(
+                        request,
+                        image_data,
+                        content_type,
+                        {**redact_image_metadata(data), **metadata},
+                        user,
+                    )
                     images.append(image_file)
             elif model.endswith(':generateContent'):
                 for image in res['candidates']:
@@ -728,7 +774,7 @@ async def image_generations(
                                 request,
                                 image_data,
                                 content_type,
-                                {**data, **metadata},
+                                {**redact_image_metadata(data), **metadata},
                                 user,
                             )
                             images.append(image_file)
@@ -736,18 +782,7 @@ async def image_generations(
             return images
 
         elif image_config.IMAGE_GENERATION_ENGINE == 'comfyui':
-            data = {
-                'prompt': form_data.prompt,
-                'width': width,
-                'height': height,
-                'n': form_data.n,
-            }
-
-            if image_config.IMAGE_STEPS is not None or form_data.steps is not None:
-                data['steps'] = form_data.steps if form_data.steps is not None else image_config.IMAGE_STEPS
-
-            if form_data.negative_prompt is not None:
-                data['negative_prompt'] = form_data.negative_prompt
+            data = build_comfyui_payload(image_config, form_data, width=width, height=height)
 
             form_data = ComfyUICreateImageForm(
                 **{
@@ -773,7 +808,7 @@ async def image_generations(
 
             for image in res['data']:
                 headers = None
-                if image_config.COMFYUI_API_KEY:
+                if image_config.COMFYUI_API_KEY and _is_same_origin(image['url'], image_config.COMFYUI_BASE_URL):
                     headers = {'Authorization': f'Bearer {image_config.COMFYUI_API_KEY}'}
 
                 image_data, content_type = await get_image_data(
@@ -785,7 +820,7 @@ async def image_generations(
                     request,
                     image_data,
                     content_type,
-                    {**form_data.model_dump(exclude_none=True), **metadata},
+                    {**redact_image_metadata(form_data.model_dump(exclude_none=True)), **metadata},
                     user,
                 )
                 images.append(image_file)
@@ -832,7 +867,7 @@ async def image_generations(
                     request,
                     image_data,
                     content_type,
-                    {**data, 'info': res['info'], **metadata},
+                    {**redact_image_metadata(data), 'info': res['info'], **metadata},
                     user,
                 )
                 images.append(image_file)

@@ -1988,7 +1988,7 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
         try:
             images = await image_generations(
                 request=request,
-                form_data=CreateImageForm(**{'prompt': prompt}),
+                form_data=CreateImageForm(prompt=prompt, engine_id=metadata.get('image_generation_engine_id')),
                 metadata=image_metadata,
                 user=user,
             )
@@ -3564,6 +3564,7 @@ async def pause_for_tool_approval(chat_id: str, message_id: str, output: list[di
                 'tool_servers': metadata.get('tool_servers'),
                 'filter_ids': metadata.get('filter_ids') or [],
                 'features': metadata.get('features') or {},
+                'image_generation_engine_id': metadata.get('image_generation_engine_id'),
                 'variables': metadata.get('variables') or {},
                 'files': metadata.get('files') or [],
                 'params': metadata.get('params') or {},

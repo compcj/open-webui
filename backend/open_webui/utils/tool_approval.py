@@ -175,6 +175,7 @@ async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat
         'terminal_id': message_meta.get('terminal_id') or None,
         'tool_servers': message_meta.get('tool_servers') or None,
         'features': message_meta.get('features') or {},
+        'image_generation_engine_id': message_meta.get('image_generation_engine_id'),
         'variables': message_meta.get('variables') or {},
         'chat_variables': chat.variables,
         'session_id': message_meta.get('session_id'),

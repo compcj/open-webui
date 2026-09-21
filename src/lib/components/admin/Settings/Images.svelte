@@ -23,12 +23,14 @@
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
+	import ImageGenerationEngines from './ImageGenerationEngines.svelte';
 
 	const dispatch = createEventDispatcher();
 
 	const i18n: any = getContext('i18n');
 
 	let loading = false;
+	let imageGenerationEnginesEditor: ImageGenerationEngines;
 
 	let models = null;
 	let config = null;
@@ -107,7 +109,25 @@
 		});
 	};
 
-	const updateConfigHandler = async () => {
+	const parseJSONObject = (value: unknown, errorMessage: string) => {
+		if (value && typeof value === 'object' && !Array.isArray(value)) {
+			return value;
+		}
+
+		try {
+			const parsed = JSON.parse(typeof value === 'string' && value.trim() !== '' ? value : '{}');
+
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				return parsed;
+			}
+		} catch (error) {
+			// The localized validation message below is more useful than the parser error.
+		}
+
+		throw new Error(errorMessage);
+	};
+
+	const updateConfigHandler = async (configToSave = config) => {
 		if (
 			config.IMAGE_GENERATION_ENGINE === 'automatic1111' &&
 			config.AUTOMATIC1111_BASE_URL === ''
@@ -133,18 +153,29 @@
 			return null;
 		}
 
-		const res = await updateConfig(localStorage.token, {
-			...config,
-			AUTOMATIC1111_PARAMS:
-				typeof config.AUTOMATIC1111_PARAMS === 'string' && config.AUTOMATIC1111_PARAMS.trim() !== ''
-					? JSON.parse(config.AUTOMATIC1111_PARAMS)
-					: {},
-			IMAGES_OPENAI_API_PARAMS:
-				typeof config.IMAGES_OPENAI_API_PARAMS === 'string' &&
-				config.IMAGES_OPENAI_API_PARAMS.trim() !== ''
-					? JSON.parse(config.IMAGES_OPENAI_API_PARAMS)
-					: {}
-		}).catch((error) => {
+		let payload;
+		try {
+			payload = {
+				...configToSave,
+				IMAGE_GENERATION_ENGINES:
+					imageGenerationEnginesEditor?.getValidatedEngines() ??
+					configToSave.IMAGE_GENERATION_ENGINES ??
+					[],
+				AUTOMATIC1111_PARAMS: parseJSONObject(
+					configToSave.AUTOMATIC1111_PARAMS,
+					$i18n.t('AUTOMATIC1111 additional parameters must be a valid JSON object.')
+				),
+				IMAGES_OPENAI_API_PARAMS: parseJSONObject(
+					configToSave.IMAGES_OPENAI_API_PARAMS,
+					$i18n.t('OpenAI additional parameters must be a valid JSON object.')
+				)
+			};
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : `${error}`);
+			return null;
+		}
+
+		const res = await updateConfig(localStorage.token, payload).catch((error) => {
 			toast.error(`${error}`);
 			return null;
 		});
@@ -176,46 +207,57 @@
 	const saveHandler = async () => {
 		loading = true;
 
-		if (config?.COMFYUI_WORKFLOW) {
-			if (!validateJSON(config?.COMFYUI_WORKFLOW)) {
-				toast.error($i18n.t('Invalid JSON format for ComfyUI Workflow.'));
-				loading = false;
-				return;
+		try {
+			let comfyUIWorkflowNodes = config.COMFYUI_WORKFLOW_NODES;
+			let comfyUIEditWorkflowNodes = config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES;
+
+			if (config?.COMFYUI_WORKFLOW) {
+				if (!validateJSON(config?.COMFYUI_WORKFLOW)) {
+					throw new Error($i18n.t('Invalid JSON format for ComfyUI Workflow.'));
+				}
+
+				comfyUIWorkflowNodes = REQUIRED_WORKFLOW_NODES.map((node) => {
+					return {
+						type: node.type,
+						key: node.key,
+						node_ids:
+							node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
+					};
+				});
 			}
 
-			config.COMFYUI_WORKFLOW_NODES = REQUIRED_WORKFLOW_NODES.map((node) => {
-				return {
-					type: node.type,
-					key: node.key,
-					node_ids:
-						node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
-				};
-			});
-		}
+			if (config?.IMAGES_EDIT_COMFYUI_WORKFLOW) {
+				if (!validateJSON(config?.IMAGES_EDIT_COMFYUI_WORKFLOW)) {
+					throw new Error($i18n.t('Invalid JSON format for ComfyUI Edit Workflow.'));
+				}
 
-		if (config?.IMAGES_EDIT_COMFYUI_WORKFLOW) {
-			if (!validateJSON(config?.IMAGES_EDIT_COMFYUI_WORKFLOW)) {
-				toast.error($i18n.t('Invalid JSON format for ComfyUI Edit Workflow.'));
-				loading = false;
-				return;
+				comfyUIEditWorkflowNodes = REQUIRED_EDIT_WORKFLOW_NODES.map((node) => {
+					return {
+						type: node.type,
+						key: node.key,
+						node_ids:
+							node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
+					};
+				});
 			}
 
-			config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = REQUIRED_EDIT_WORKFLOW_NODES.map((node) => {
-				return {
-					type: node.type,
-					key: node.key,
-					node_ids:
-						node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
-				};
+			const res = await updateConfigHandler({
+				...config,
+				COMFYUI_WORKFLOW_NODES: comfyUIWorkflowNodes,
+				IMAGES_EDIT_COMFYUI_WORKFLOW_NODES: comfyUIEditWorkflowNodes
 			});
-		}
 
-		const res = await updateConfigHandler();
-		if (res) {
-			dispatch('save');
+			if (res) {
+				config.COMFYUI_WORKFLOW_NODES = comfyUIWorkflowNodes;
+				config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = comfyUIEditWorkflowNodes;
+				config.IMAGE_GENERATION_ENGINES = res.IMAGE_GENERATION_ENGINES;
+				dispatch('save');
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : `${error}`);
+		} finally {
+			loading = false;
 		}
-
-		loading = false;
 	};
 
 	onMount(async () => {
@@ -227,6 +269,7 @@
 
 			if (res) {
 				config = res;
+				config.IMAGE_GENERATION_ENGINES ??= [];
 			}
 
 			if (!config) {
@@ -439,7 +482,7 @@
 									type="button"
 									aria-label="verify connection"
 									on:click={async () => {
-										await updateConfigHandler();
+										if (!(await updateConfigHandler())) return;
 										const res = await verifyConfigUrl(localStorage.token).catch((error) => {
 											toast.error(`${error}`);
 											return null;
@@ -505,7 +548,7 @@
 									type="button"
 									aria-label="verify connection"
 									on:click={async () => {
-										await updateConfigHandler();
+										if (!(await updateConfigHandler())) return;
 										const res = await verifyConfigUrl(localStorage.token).catch((error) => {
 											toast.error(`${error}`);
 											return null;
@@ -710,6 +753,13 @@
 					{/if}
 				</AdminSettingSection>
 
+				<AdminSettingSection title={$i18n.t('Additional Image Generation Engines')}>
+					<ImageGenerationEngines
+						bind:this={imageGenerationEnginesEditor}
+						bind:engines={config.IMAGE_GENERATION_ENGINES}
+					/>
+				</AdminSettingSection>
+
 				<AdminSettingSection title={$i18n.t('Edit Image')}>
 					<AdminSettingRow
 						label={$i18n.t('Image Edit')}
@@ -803,7 +853,7 @@
 									type="button"
 									aria-label="verify connection"
 									on:click={async () => {
-										await updateConfigHandler();
+										if (!(await updateConfigHandler())) return;
 										const res = await verifyConfigUrl(localStorage.token).catch((error) => {
 											toast.error(`${error}`);
 											return null;

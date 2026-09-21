@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { ImageGenerationEngineOption } from '$lib/apis/images';
+	import ImageGenerationEngineSelect from './MessageInput/ImageGenerationEngineSelect.svelte';
 	import DOMPurify from 'dompurify';
 	import { toast } from 'svelte-sonner';
 
@@ -104,7 +106,6 @@
 	import Voice from '../icons/Voice.svelte';
 	import Terminal from '../icons/Terminal.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
-	import ContextToolFeatures from './MessageInput/ContextToolFeatures.svelte';
 	import {
 		getContextToolAvailability,
 		type ContextToolFeature
@@ -141,6 +142,10 @@
 	export let onChange: Function = () => {};
 	export let onWebSearchToggle: Function = () => {};
 	export let onImageGenerationToggle: Function = () => {};
+	export let imageGenerationEngines: ImageGenerationEngineOption[] | null = null;
+	export let imageGenerationEngineId = '';
+	export let imageGenerationEnginesLoading = false;
+	export let onImageGenerationEngineChange: (id: string) => void = () => {};
 	export let onContextToolToggle: (
 		feature: ContextToolFeature,
 		enabled: boolean
@@ -2485,32 +2490,32 @@
 											{/if}
 
 											{#if imageGenerationEnabled && showImageGenerationButton}
-												<Tooltip content={$i18n.t('Image')} placement="top">
-													<button
-														on:click|preventDefault={() => {
-															imageGenerationEnabled = !imageGenerationEnabled;
-															onImageGenerationToggle(imageGenerationEnabled);
-														}}
-														type="button"
-														class="group p-[0.375rem] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {imageGenerationEnabled
-															? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
-															: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
-													>
-														<Photo className="size-4" strokeWidth="1.75" />
-														<div class="hidden group-hover:block">
-															<XMark className="size-4" strokeWidth="1.75" />
-														</div>
-													</button>
-												</Tooltip>
+												<div class="flex shrink-0 items-center gap-1">
+													<Tooltip content={$i18n.t('Image')} placement="top">
+														<button
+															on:click|preventDefault={() => {
+																imageGenerationEnabled = !imageGenerationEnabled;
+																onImageGenerationToggle(imageGenerationEnabled);
+															}}
+															type="button"
+															class="group p-[0.375rem] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {imageGenerationEnabled
+																? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
+																: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
+														>
+															<Photo className="size-4" strokeWidth="1.75" />
+															<div class="hidden group-hover:block">
+																<XMark className="size-4" strokeWidth="1.75" />
+															</div>
+														</button>
+													</Tooltip>
+													<ImageGenerationEngineSelect
+														engines={imageGenerationEngines}
+														value={imageGenerationEngineId}
+														loading={imageGenerationEnginesLoading}
+														onChange={onImageGenerationEngineChange}
+													/>
+												</div>
 											{/if}
-
-											<ContextToolFeatures
-												state={contextToolState}
-												available={contextToolAvailability}
-												{memoryDisabled}
-												compact
-												onToggle={onContextToolToggle}
-											/>
 
 											{#if codeInterpreterEnabled && showCodeInterpreterButton}
 												<Tooltip content={$i18n.t('Code Interpreter')} placement="top">

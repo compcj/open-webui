@@ -1259,6 +1259,7 @@ async def chat_completion(
             'tool_servers': tool_servers,
             'files': form_data.get('files', None),
             'features': form_data.get('features', {}),
+            'image_generation_engine_id': form_data.pop('image_generation_engine_id', None),
             'variables': form_data.get('variables', {}),
             'chat_variables': chat_variables,
             'model': model,
