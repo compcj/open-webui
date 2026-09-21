@@ -14,8 +14,9 @@
 		showEmbeds
 	} from '$lib/stores';
 	import FloatingButtons from '../ContentRenderer/FloatingButtons.svelte';
-	import { createMessagesList, replaceOutsideCode } from '$lib/utils';
+	import { createMessagesList } from '$lib/utils';
 	import { getCitationSourceTitles } from '$lib/utils/citations';
+	import { formatMessageContent as formatContent } from './markdownRendering';
 
 	/**
 	 * Extracts all top-level <details>...</details> blocks from content,
@@ -108,11 +109,7 @@
 
 	/** @param {string} messageContent */
 	const formatMessageContent = (messageContent) =>
-		model?.info?.meta?.capabilities?.citations == false
-			? replaceOutsideCode(messageContent, (segment) =>
-					segment.replace(/\s*(\[(?:\d+(?:#[^,\]\s]+)?(?:,\s*\d+(?:#[^,\]\s]+)?)*)\])+/g, '')
-				)
-			: messageContent;
+		formatContent(messageContent, model?.info?.meta?.capabilities?.citations !== false);
 
 	let autoOpenedArtifactIds = new Set();
 

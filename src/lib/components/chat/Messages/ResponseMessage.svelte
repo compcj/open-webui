@@ -62,7 +62,13 @@
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
 	import OutputEditView from './OutputEditView.svelte';
-	import { getOutputText, replaceOutputMessageText, type OutputItem } from './structuredOutput';
+	import {
+		buildOutputDisplayItems,
+		getOutputText,
+		replaceOutputMessageText,
+		type OutputItem
+	} from './structuredOutput';
+	import { getUnrenderedMessageFiles } from './messageAttachments';
 
 	interface MessageType {
 		id: string;
@@ -196,6 +202,23 @@
 	let editedContent = '';
 	let editedOutput: any[] | null = null;
 	let editTextAreaElement: HTMLTextAreaElement;
+	$: attachmentFiles = message.files?.length
+		? getUnrenderedMessageFiles(
+				message.files,
+				message.output?.length
+					? buildOutputDisplayItems(message.output)
+							.filter((item) => item.type === 'message')
+							.map((item) => item.text)
+					: removeAllDetails(message.content ?? ''),
+				($settings?.renderMarkdownInAssistantMessages ?? true) && message.error !== true && !edit,
+				{
+					citationsEnabled:
+						(model?.info?.meta?.capabilities as { citations?: boolean })?.citations !== false,
+					modelName: model?.name,
+					userName: $user?.name
+				}
+			)
+		: [];
 
 	let messageIndexEdit = false;
 
@@ -687,30 +710,6 @@
 							<StatusHistory statusHistory={message?.statusHistory} />
 						{/if}
 
-						{#if message?.files && message.files?.filter( (f) => ['image', 'file'].includes(f.type) ).length > 0}
-							<div
-								class="my-1 w-full flex overflow-x-auto gap-2 flex-wrap"
-								dir={$settings?.chatDirection ?? 'auto'}
-							>
-								{#each message.files.filter((f) => ['image', 'file'].includes(f.type)) as file}
-									<div>
-										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-											<Image src={file.url} alt={file.name || $i18n.t('Generated Image')} />
-										{:else}
-											<FileItem
-												item={file}
-												url={file.url}
-												name={file.name}
-												type={file.type}
-												size={file?.size}
-												small={true}
-											/>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						{/if}
-
 						{#if message?.embeds && message.embeds.length > 0}
 							<div
 								class="my-1 w-full flex overflow-x-auto gap-2 flex-wrap"
@@ -908,6 +907,30 @@
 								<CodeExecutions codeExecutions={message.code_executions} />
 							{/if}
 						</div>
+
+						{#if attachmentFiles.length > 0}
+							<div
+								class="my-1 w-full flex overflow-x-auto gap-2 flex-wrap"
+								dir={$settings?.chatDirection ?? 'auto'}
+							>
+								{#each attachmentFiles as file}
+									<div>
+										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
+											<Image src={file.url} alt={file.name || $i18n.t('Generated Image')} />
+										{:else}
+											<FileItem
+												item={file}
+												url={file.url}
+												name={file.name}
+												type={file.type}
+												size={file?.size}
+												small={true}
+											/>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
 					</div>
 				</div>
 
