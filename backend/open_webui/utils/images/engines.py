@@ -25,6 +25,7 @@ class ComfyUIWorkflowNode(BaseModel):
 class ImageEngineConfig(BaseModel):
     engine: Literal['openai', 'gemini', 'grok', 'comfyui']
     model: str = ''
+    tool_description_suffix: str = ''
     base_url: str = ''
     api_key: str = ''
     api_version: str = ''
@@ -35,7 +36,9 @@ class ImageEngineConfig(BaseModel):
     comfyui_workflow: str = ''
     comfyui_workflow_nodes: list[ComfyUIWorkflowNode] = Field(default_factory=list)
 
-    @field_validator('model', 'api_key', 'api_version', 'size', 'comfyui_workflow', mode='before')
+    @field_validator(
+        'model', 'tool_description_suffix', 'api_key', 'api_version', 'size', 'comfyui_workflow', mode='before'
+    )
     @classmethod
     def normalize_optional_text(cls, value: Any) -> str:
         return '' if value is None else str(value).strip()
@@ -195,6 +198,7 @@ def resolve_image_generation_config(
 
     snapshot.IMAGE_GENERATION_ENGINE = selected.engine
     snapshot.IMAGE_GENERATION_MODEL = selected.model
+    snapshot.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX = selected.tool_description_suffix
     snapshot.IMAGE_SIZE = selected.size
     snapshot.IMAGE_STEPS = selected.steps
     snapshot.IMAGE_GENERATION_PARAMS = copy.deepcopy(selected.params)
@@ -244,6 +248,7 @@ def resolve_image_edit_config(
 
     snapshot.IMAGE_EDIT_ENGINE = edit.engine
     snapshot.IMAGE_EDIT_MODEL = edit.model
+    snapshot.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = edit.tool_description_suffix
     snapshot.IMAGE_EDIT_SIZE = edit.size
     snapshot.IMAGE_EDIT_STEPS = edit.steps
     if edit.engine in {'openai', 'grok'}:

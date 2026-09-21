@@ -17,7 +17,9 @@ const setup = () => {
 		IMAGES_OPENAI_API_KEY: 'synthetic-key',
 		IMAGES_OPENAI_API_PARAMS: {},
 		AUTOMATIC1111_PARAMS: {},
-		IMAGE_GENERATION_ENGINES: [{ id: 'studio', params: { quality: 'low' } }]
+		IMAGE_GENERATION_ENGINES: [{ id: 'studio', params: { quality: 'low' } }],
+		IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: '  Generate\ncarefully  ',
+		IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: '\nEdit\ncarefully  '
 	};
 	const edited = [{ id: 'studio', params: { quality: 'high' } }];
 	const imageGenerationEnginesEditor = { getValidatedEngines: vi.fn(() => edited) };
@@ -59,5 +61,17 @@ describe('image settings update paths', () => {
 		expect(await context.update()).toBeNull();
 		expect(context.updateConfig).not.toHaveBeenCalled();
 		expect(context.toast.error).toHaveBeenCalledWith('Invalid JSON');
+	});
+
+	it('saves independent trimmed default tool descriptions', async () => {
+		const context = setup();
+		await context.update();
+		expect(context.updateConfig).toHaveBeenCalledWith(
+			'synthetic-token',
+			expect.objectContaining({
+				IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: 'Generate\ncarefully',
+				IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: 'Edit\ncarefully'
+			})
+		);
 	});
 });

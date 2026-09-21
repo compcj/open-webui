@@ -157,6 +157,12 @@
 		try {
 			payload = {
 				...configToSave,
+				IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: (
+					configToSave.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX ?? ''
+				).trim(),
+				IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: (
+					configToSave.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX ?? ''
+				).trim(),
 				IMAGE_GENERATION_ENGINES:
 					imageGenerationEnginesEditor?.getValidatedEngines() ??
 					configToSave.IMAGE_GENERATION_ENGINES ??
@@ -270,6 +276,8 @@
 			if (res) {
 				config = res;
 				config.IMAGE_GENERATION_ENGINES ??= [];
+				config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX ??= '';
+				config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX ??= '';
 			}
 
 			if (!config) {
@@ -374,6 +382,19 @@
 					</AdminSettingRow>
 
 					{#if config.ENABLE_IMAGE_GENERATION}
+						<AdminSettingField
+							label={$i18n.t('Tool Description Suffix')}
+							description={$i18n.t(
+								'Append to the image generation tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+							)}
+						>
+							<Textarea
+								className={textareaClass}
+								bind:value={config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX}
+								ariaLabel={$i18n.t('Tool Description Suffix')}
+								minSize={96}
+							/>
+						</AdminSettingField>
 						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 							<AdminSettingField label={$i18n.t('Model')}>
 								<input
@@ -784,6 +805,19 @@
 					</AdminSettingRow>
 
 					{#if config?.ENABLE_IMAGE_GENERATION && config?.ENABLE_IMAGE_EDIT}
+						<AdminSettingField
+							label={$i18n.t('Tool Description Suffix')}
+							description={$i18n.t(
+								'Append to the image editing tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+							)}
+						>
+							<Textarea
+								className={textareaClass}
+								bind:value={config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX}
+								ariaLabel={$i18n.t('Tool Description Suffix')}
+								minSize={96}
+							/>
+						</AdminSettingField>
 						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 							<AdminSettingField label={$i18n.t('Model')}>
 								<input

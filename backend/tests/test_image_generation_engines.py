@@ -42,6 +42,7 @@ def image_router(monkeypatch, tmp_path):
         'image_generation.size': '512x512',
         'image_generation.steps': 20,
         'image_generation.engines': [],
+        'image_generation.tool_description_suffix': '',
         'image_generation.openai.api_base_url': 'https://default.example.test/v1',
         'image_generation.openai.api_key': 'default-key',
         'image_generation.openai.api_version': '',
@@ -57,6 +58,7 @@ def image_router(monkeypatch, tmp_path):
         'image_generation.gemini.api_key': 'gemini-key',
         'image_generation.gemini.endpoint_method': 'predict',
         'images.edit.enable': False,
+        'images.edit.tool_description_suffix': '',
         'images.edit.engine': 'openai',
         'images.edit.model': '',
         'images.edit.size': '',
@@ -308,6 +310,69 @@ def default_config():
         IMAGES_EDIT_COMFYUI_WORKFLOW_NODES=[],
         USER_PERMISSIONS={'features': {'image_generation': True}},
     )
+
+
+def test_tool_description_suffixes_roundtrip_and_follow_engine_resolution():
+    engines = load_engines_module()
+    source = profile(
+        tool_description_suffix='  Describe the final scene.\n保留构图。  ',
+        edit={
+            'engine': 'grok',
+            'tool_description_suffix': '\nDescribe only the requested change.\n',
+        },
+    )
+    profiles = engines.normalize_engine_profiles([source])
+    saved = profiles[0].model_dump(mode='json')
+    assert saved.get('tool_description_suffix') == 'Describe the final scene.\n保留构图。'
+    assert saved['edit'].get('tool_description_suffix') == 'Describe only the requested change.'
+    assert engines.normalize_engine_profiles([saved])[0].model_dump(mode='json') == saved
+    assert source['tool_description_suffix'].startswith('  ')
+
+    default = default_config()
+    default.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX = 'Default generation'
+    default.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = 'Default edit'
+    generation = engines.resolve_image_generation_config(default, profiles, 'studio')
+    edit = engines.resolve_image_edit_config(default, profiles, 'studio')
+    assert generation.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX == saved['tool_description_suffix']
+    assert edit.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX == saved['edit']['tool_description_suffix']
+    assert default.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX == 'Default generation'
+
+
+@pytest.mark.parametrize('suffix', [None, '', ' \n '])
+def test_independent_empty_tool_description_suffixes_do_not_inherit(suffix):
+    engines = load_engines_module()
+    profiles = engines.normalize_engine_profiles(
+        [profile(tool_description_suffix=suffix, edit={'engine': 'grok', 'tool_description_suffix': suffix})]
+    )
+    default = default_config()
+    default.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX = 'Default generation'
+    default.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = 'Default edit'
+    assert (
+        engines.resolve_image_generation_config(default, profiles, 'studio').IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX
+        == ''
+    )
+    assert engines.resolve_image_edit_config(default, profiles, 'studio').IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX == ''
+
+
+def test_old_profiles_have_empty_suffixes_and_default_editor_fallback():
+    engines = load_engines_module()
+    profiles = engines.normalize_engine_profiles([profile()])
+    assert profiles[0].model_dump().get('tool_description_suffix') == ''
+    default = default_config()
+    default.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX = 'Default generation'
+    default.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = 'Default edit'
+    for selected in (None, '', 'deleted'):
+        assert (
+            engines.resolve_image_generation_config(
+                default, profiles, selected
+            ).IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX
+            == 'Default generation'
+        )
+    for selected in (None, '', 'deleted', 'studio'):
+        assert (
+            engines.resolve_image_edit_config(default, profiles, selected).IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX
+            == 'Default edit'
+        )
 
 
 def test_paired_profile_roundtrip_and_independent_edit_resolution():
@@ -666,6 +731,41 @@ def test_admin_config_validates_profiles_and_old_clients_do_not_clear_them(image
     assert len(state.upserts) == prior_upserts
 
 
+def test_admin_config_roundtrips_tool_description_suffixes(image_router):
+    router, state = image_router.module, image_router.state
+    payload = images_config_payload(router, state)
+    payload.update(
+        IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX='  Default generation\n第二行  ',
+        IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX='  Default edit  ',
+        IMAGE_GENERATION_ENGINES=[
+            profile(
+                tool_description_suffix='  Named generation  ',
+                edit={'engine': 'grok', 'tool_description_suffix': 'Named edit'},
+            )
+        ],
+    )
+    response = asyncio.run(
+        router.update_config(SimpleNamespace(), router.ImagesConfig(**payload), SimpleNamespace(id='admin'))
+    )
+    assert response.get('IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX') == 'Default generation\n第二行'
+    assert response.get('IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX') == 'Default edit'
+    assert state.values['image_generation.tool_description_suffix'] == 'Default generation\n第二行'
+    assert state.values['images.edit.tool_description_suffix'] == 'Default edit'
+    readback = asyncio.run(router.get_config(SimpleNamespace(), SimpleNamespace(id='admin')))
+    assert readback == response
+    assert readback['IMAGE_GENERATION_ENGINES'][0]['tool_description_suffix'] == 'Named generation'
+    assert readback['IMAGE_GENERATION_ENGINES'][0]['edit']['tool_description_suffix'] == 'Named edit'
+
+    old_payload = images_config_payload(router, state)
+    old_payload.pop('IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX', None)
+    old_payload.pop('IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX', None)
+    asyncio.run(
+        router.update_config(SimpleNamespace(), router.ImagesConfig(**old_payload), SimpleNamespace(id='admin'))
+    )
+    assert state.values['image_generation.tool_description_suffix'] == 'Default generation\n第二行'
+    assert state.values['images.edit.tool_description_suffix'] == 'Default edit'
+
+
 def test_admin_config_responses_canonicalize_minimal_profiles(image_router):
     router = image_router.module
     state = image_router.state
@@ -679,6 +779,7 @@ def test_admin_config_responses_canonicalize_minimal_profiles(image_router):
             'name': 'XAI',
             'engine': 'grok',
             'model': 'grok-imagine-image',
+            'tool_description_suffix': '',
             'base_url': 'https://api.x.ai/v1',
             'api_key': '',
             'api_version': '',

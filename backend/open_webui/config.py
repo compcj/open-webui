@@ -1340,6 +1340,7 @@ ENABLE_IMAGE_GENERATION = os.getenv('ENABLE_IMAGE_GENERATION', '').lower() == 't
 IMAGE_GENERATION_ENGINE = os.getenv('IMAGE_GENERATION_ENGINE', 'openai')
 
 IMAGE_GENERATION_MODEL = os.getenv('IMAGE_GENERATION_MODEL', '')
+IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX = os.getenv('IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX', '').strip()
 
 image_generation_engines = os.getenv('IMAGE_GENERATION_ENGINES', '[]')
 try:
@@ -1524,6 +1525,7 @@ ENABLE_IMAGE_EDIT = os.getenv('ENABLE_IMAGE_EDIT', '').lower() == 'true'
 IMAGE_EDIT_ENGINE = os.getenv('IMAGE_EDIT_ENGINE', 'openai')
 
 IMAGE_EDIT_MODEL = os.getenv('IMAGE_EDIT_MODEL', '')
+IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = os.getenv('IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX', '').strip()
 
 IMAGE_EDIT_SIZE = os.getenv('IMAGE_EDIT_SIZE', '')
 
@@ -3043,6 +3045,7 @@ DEFAULT_CONFIG = {
     'image_generation.enable': ENABLE_IMAGE_GENERATION,
     'image_generation.engine': IMAGE_GENERATION_ENGINE,
     'image_generation.model': IMAGE_GENERATION_MODEL,
+    'image_generation.tool_description_suffix': IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX,
     'image_generation.engines': IMAGE_GENERATION_ENGINES,
     'image_generation.size': IMAGE_SIZE,
     'image_generation.steps': IMAGE_STEPS,
@@ -3064,6 +3067,7 @@ DEFAULT_CONFIG = {
     'images.edit.enable': ENABLE_IMAGE_EDIT,
     'images.edit.engine': IMAGE_EDIT_ENGINE,
     'images.edit.model': IMAGE_EDIT_MODEL,
+    'images.edit.tool_description_suffix': IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX,
     'images.edit.size': IMAGE_EDIT_SIZE,
     'images.edit.openai.api_base_url': IMAGES_EDIT_OPENAI_API_BASE_URL,
     'images.edit.openai.api_version': IMAGES_EDIT_OPENAI_API_VERSION,

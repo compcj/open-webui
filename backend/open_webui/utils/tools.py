@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from functools import cache, partial, update_wrapper
+from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
@@ -110,6 +111,7 @@ from open_webui.utils.headers import (
     normalize_bearer_token,
 )
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.images.engines import resolve_image_generation_config, resolve_image_edit_config
 from open_webui.utils.misc import is_string_allowed
 from open_webui.utils.plugin import get_tool_contents_cache, get_tools_cache, load_tool_module_by_id
 from open_webui.utils.terminal_files import TERMINAL_FILE_DELIVERY_PROMPT, add_file_delivery_links
@@ -718,6 +720,30 @@ async def get_builtin_tools(
     ):
         builtin_functions.append(edit_image)
 
+    image_tool_suffixes = {}
+    if generate_image in builtin_functions or edit_image in builtin_functions:
+        image_config = await Config.get_many(
+            'image_generation.engines',
+            'image_generation.tool_description_suffix',
+            'images.edit.tool_description_suffix',
+        )
+        defaults = SimpleNamespace(
+            IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX=image_config.get('image_generation.tool_description_suffix') or '',
+            IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX=image_config.get('images.edit.tool_description_suffix') or '',
+        )
+        profiles = image_config.get('image_generation.engines') or []
+        engine_id = metadata.get('image_generation_engine_id')
+        try:
+            generation_config = resolve_image_generation_config(defaults, profiles, engine_id)
+            edit_config = resolve_image_edit_config(defaults, profiles, engine_id)
+            image_tool_suffixes = {
+                'generate_image': generation_config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX.strip(),
+                'edit_image': edit_config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX.strip(),
+            }
+        except ValueError:
+            # Invalid stored profiles must not prevent a chat from reaching the model.
+            log.warning('Unable to resolve image tool descriptions from configured engines')
+
     # Add code interpreter tool if builtin category enabled,
     # globally enabled, and allowed by model capability.
     if (
@@ -815,6 +841,8 @@ async def get_builtin_tools(
         )
 
         spec = get_builtin_tool_spec(func)
+        if suffix := image_tool_suffixes.get(func.__name__):
+            spec['description'] = f'{spec.get("description", "")}\n\n{suffix}'
         if func.__name__ == 'delegate_task' and not config.get('subagents.background_enabled'):
             parameters = spec.get('parameters', {})
             parameters.get('properties', {}).pop('background', None)

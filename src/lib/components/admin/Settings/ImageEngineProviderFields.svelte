@@ -107,6 +107,24 @@
 		</AdminSettingField>
 	</div>
 
+	<AdminSettingField
+		label={$i18n.t('Tool Description Suffix')}
+		description={editing
+			? $i18n.t(
+					'Append to the image editing tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+				)
+			: $i18n.t(
+					'Append to the image generation tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+				)}
+	>
+		<Textarea
+			className={textareaClass}
+			bind:value={config.tool_description_suffix}
+			ariaLabel={$i18n.t('Tool Description Suffix')}
+			minSize={96}
+		/>
+	</AdminSettingField>
+
 	<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 		<AdminSettingField label={$i18n.t('API Base URL')} forId={`${idPrefix}-base-url`}>
 			<input

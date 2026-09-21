@@ -58,7 +58,7 @@ from open_webui.utils.images.engines import (
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.session_pool import get_session
 from PIL import Image, ImageOps
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ IMAGE_CONFIG_KEYS = {
     'ENABLE_IMAGE_PROMPT_GENERATION': 'image_generation.prompt.enable',
     'IMAGE_GENERATION_ENGINE': 'image_generation.engine',
     'IMAGE_GENERATION_MODEL': 'image_generation.model',
+    'IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX': 'image_generation.tool_description_suffix',
     'IMAGE_GENERATION_ENGINES': 'image_generation.engines',
     'IMAGE_SIZE': 'image_generation.size',
     'IMAGE_STEPS': 'image_generation.steps',
@@ -103,6 +104,7 @@ IMAGE_CONFIG_KEYS = {
     'ENABLE_IMAGE_EDIT': 'images.edit.enable',
     'IMAGE_EDIT_ENGINE': 'images.edit.engine',
     'IMAGE_EDIT_MODEL': 'images.edit.model',
+    'IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX': 'images.edit.tool_description_suffix',
     'IMAGE_EDIT_SIZE': 'images.edit.size',
     'IMAGES_EDIT_OPENAI_API_BASE_URL': 'images.edit.openai.api_base_url',
     'IMAGES_EDIT_OPENAI_API_KEY': 'images.edit.openai.api_key',
@@ -262,6 +264,7 @@ class ImagesConfig(BaseModel):
 
     IMAGE_GENERATION_ENGINE: str
     IMAGE_GENERATION_MODEL: str
+    IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: str = ''
     IMAGE_GENERATION_ENGINES: list[dict[str, Any]] | None = None
     IMAGE_SIZE: str | None
     IMAGE_STEPS: int | None
@@ -287,6 +290,7 @@ class ImagesConfig(BaseModel):
     ENABLE_IMAGE_EDIT: bool
     IMAGE_EDIT_ENGINE: str
     IMAGE_EDIT_MODEL: str
+    IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: str = ''
     IMAGE_EDIT_SIZE: str | None
 
     IMAGES_EDIT_OPENAI_API_BASE_URL: str
@@ -298,6 +302,11 @@ class ImagesConfig(BaseModel):
     IMAGES_EDIT_COMFYUI_API_KEY: str
     IMAGES_EDIT_COMFYUI_WORKFLOW: str
     IMAGES_EDIT_COMFYUI_WORKFLOW_NODES: list[dict]
+
+    @field_validator('IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX', 'IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX', mode='before')
+    @classmethod
+    def normalize_tool_description_suffix(cls, value):
+        return '' if value is None else str(value).strip()
 
 
 @router.get('/config', response_model=ImagesConfig)

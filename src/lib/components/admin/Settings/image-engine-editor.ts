@@ -4,6 +4,7 @@ export function createImageEngineConfig(): ImageEngineConfig {
 	return {
 		engine: 'openai',
 		model: '',
+		tool_description_suffix: '',
 		base_url: '',
 		api_key: '',
 		api_version: '',
@@ -79,6 +80,7 @@ function prepareConfig(
 	return {
 		engine: config.engine,
 		model: config.model ?? '',
+		tool_description_suffix: (config.tool_description_suffix ?? '').trim(),
 		base_url: config.base_url ?? '',
 		api_key: config.api_key ?? '',
 		api_version: config.api_version ?? '',

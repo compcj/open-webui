@@ -5,6 +5,7 @@ export type ImageGenerationEngineOption = { id: string; name: string };
 export type ImageEngineConfig = {
 	engine: 'openai' | 'gemini' | 'grok' | 'comfyui';
 	model: string;
+	tool_description_suffix: string;
 	base_url: string;
 	api_key: string;
 	api_version: string;

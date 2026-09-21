@@ -24,6 +24,26 @@ describe('paired image engine editor', () => {
 
 		expect(edit.params).toEqual({});
 		expect(edit.comfyui_workflow_nodes).toEqual([]);
+		expect(generation.tool_description_suffix).toBe('');
+		expect(edit.tool_description_suffix).toBe('');
+	});
+
+	it('trims separate multiline tool descriptions through profile serialization', () => {
+		const source = profile();
+		source.tool_description_suffix = '  Generate\nwith care  ';
+		if (source.edit) source.edit.tool_description_suffix = '\n Edit\nwith reference \n';
+		const result = prepareImageEngineProfiles([source], {});
+		expect(result[0].tool_description_suffix).toBe('Generate\nwith care');
+		expect(result[0].edit?.tool_description_suffix).toBe('Edit\nwith reference');
+		expect(source.tool_description_suffix).toBe('  Generate\nwith care  ');
+	});
+
+	it('loads missing legacy suffixes as empty and preserves default edit selection', () => {
+		const source = { ...profile(), edit: null };
+		delete (source as Partial<ImageGenerationEngine>).tool_description_suffix;
+		const result = prepareImageEngineProfiles([source as ImageGenerationEngine], {});
+		expect(result[0].tool_description_suffix).toBe('');
+		expect(result[0].edit).toBeNull();
 	});
 
 	it('normalizes both provider settings without mutating the editor drafts', () => {
