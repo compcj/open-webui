@@ -5,6 +5,7 @@
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
+	import Plus from '$lib/components/icons/Plus.svelte';
 
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
@@ -259,10 +260,11 @@
 					</div>
 				{/each}
 				<button
-					class="w-fit text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
+					class="inline-flex w-fit items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-blue-400/30 dark:bg-blue-400/10 dark:text-blue-300 dark:hover:bg-blue-400/20"
 					type="button"
 					on:click={addWorkflowNode}
 				>
+					<Plus className="size-3.5" />
 					{$i18n.t('Add Node Mapping')}
 				</button>
 			</div>
