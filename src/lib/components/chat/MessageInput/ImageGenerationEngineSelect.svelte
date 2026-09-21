@@ -10,9 +10,9 @@
 </script>
 
 <select
-	aria-label={$i18n.t('Image Generation Engine')}
-	title={$i18n.t('Image Generation Engine')}
-	class="h-7 min-w-0 max-w-36 truncate rounded-full border border-sky-200/40 bg-sky-50 px-2 text-xs text-sky-600 outline-hidden focus:ring-2 focus:ring-sky-400 disabled:opacity-60 dark:border-sky-500/20 dark:bg-sky-400/10 dark:text-sky-300"
+	aria-label={$i18n.t('Image Engine Configuration')}
+	title={$i18n.t('Image Engine Configuration')}
+	class="h-7 min-w-0 max-w-36 truncate rounded-full border border-sky-200/40 bg-sky-50 pl-2 pr-6 text-xs text-sky-600 outline-hidden focus:ring-2 focus:ring-sky-400 disabled:opacity-60 dark:border-sky-500/20 dark:bg-sky-400/10 dark:text-sky-300"
 	{value}
 	disabled={loading || engines === null}
 	on:change={(event) => onChange(event.currentTarget.value)}

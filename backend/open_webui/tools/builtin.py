@@ -453,6 +453,7 @@ async def edit_image(
     __event_emitter__: callable = None,
     __chat_id__: str = None,
     __message_id__: str = None,
+    __metadata__: dict = None,
 ) -> str:
     """
     Transform one or more existing images according to a text prompt.
@@ -470,7 +471,11 @@ async def edit_image(
 
         images = await image_edits(
             request=__request__,
-            form_data=EditImageForm(prompt=prompt, image=image_urls),
+            form_data=EditImageForm(
+                prompt=prompt,
+                image=image_urls,
+                engine_id=(__metadata__ or {}).get('image_generation_engine_id'),
+            ),
             metadata=(
                 {'channel_id': __chat_id__.removeprefix('channel:'), 'message_id': __message_id__}
                 if isinstance(__chat_id__, str) and __chat_id__.startswith('channel:')

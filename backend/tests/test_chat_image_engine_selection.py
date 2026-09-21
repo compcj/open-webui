@@ -50,6 +50,36 @@ def test_native_image_tool_forwards_the_selected_engine(engine_id):
 
 
 @pytest.mark.parametrize('engine_id', [None, '', 'studio'])
+def test_native_edit_tool_forwards_the_same_selected_pair(engine_id):
+    edit = AsyncMock(return_value=[{'id': 'image-1', 'url': '/files/image-1'}])
+    namespace = {
+        'Request': object,
+        'UserModel': SimpleNamespace,
+        'EditImageForm': SimpleNamespace,
+        'image_edits': edit,
+        'JSONCodec': json,
+        'is_saved_chat_id': lambda value: False,
+        'log': logging.getLogger(__name__),
+    }
+    handler = extract('tools/builtin.py', 'edit_image', namespace)
+    sources = ['data:image/png;base64,aW1hZ2U=']
+    result = asyncio.run(
+        handler(
+            'Add a blue sky',
+            sources,
+            __request__=object(),
+            __user__={'id': 'account-1', 'role': 'user'},
+            __metadata__={'image_generation_engine_id': engine_id},
+        )
+    )
+    assert json.loads(result)['status'] == 'success'
+    form = edit.await_args.kwargs['form_data']
+    assert form.engine_id == engine_id
+    assert form.prompt == 'Add a blue sky'
+    assert form.image == sources
+
+
+@pytest.mark.parametrize('engine_id', [None, '', 'studio'])
 def test_legacy_image_generation_forwards_the_selected_engine(engine_id):
     generate = AsyncMock(return_value=[])
     namespace = {
@@ -79,6 +109,41 @@ def test_legacy_image_generation_forwards_the_selected_engine(engine_id):
     )
     assert result is form
     assert generate.await_args.kwargs['form_data'].engine_id == engine_id
+
+
+@pytest.mark.parametrize('engine_id', [None, '', 'studio'])
+def test_legacy_image_editing_forwards_the_same_selected_pair(engine_id):
+    edit = AsyncMock(return_value=[])
+    sources = ['data:image/png;base64,aW1hZ2U=']
+    namespace = {
+        'Request': object,
+        'HTTPException': HTTPException,
+        'EditImageForm': SimpleNamespace,
+        'image_edits': edit,
+        'Config': SimpleNamespace(get=AsyncMock(return_value=True)),
+        'is_saved_chat_id': lambda value: False,
+        'get_last_user_message': lambda messages: messages[-1]['content'],
+        'get_images_from_messages': lambda messages: [sources],
+        'add_or_update_system_message': lambda content, messages: messages,
+        'log': logging.getLogger(__name__),
+    }
+    handler = extract('utils/middleware.py', 'chat_image_generation_handler', namespace)
+    form = {'messages': [{'role': 'user', 'content': 'Add a blue sky'}]}
+    result = asyncio.run(
+        handler(
+            object(),
+            form,
+            {
+                '__metadata__': {'chat_id': 'temporary:chat-1', 'image_generation_engine_id': engine_id},
+                '__event_emitter__': AsyncMock(),
+            },
+            SimpleNamespace(id='account-1'),
+        )
+    )
+    assert result is form
+    edit_form = edit.await_args.kwargs['form_data']
+    assert edit_form.engine_id == engine_id
+    assert edit_form.image == sources
 
 
 def test_chat_metadata_consumes_engine_id_before_calling_text_provider():
@@ -114,7 +179,8 @@ def test_chat_metadata_consumes_engine_id_before_calling_text_provider():
     assert 'image_generation_engine_id' not in form
 
 
-def test_tool_approval_round_trip_preserves_the_original_engine_selection():
+@pytest.mark.parametrize('tool_name', ['generate_image', 'edit_image'])
+def test_tool_approval_round_trip_preserves_the_original_engine_selection(tool_name):
     assistant = {'id': 'assistant-1', 'parentId': 'user-1', 'model': 'text-model'}
     user_message = {'id': 'user-1', 'content': 'Draw a tree'}
 
@@ -135,7 +201,7 @@ def test_tool_approval_round_trip_preserves_the_original_engine_selection():
         pause(
             'chat-1',
             'assistant-1',
-            [{'type': 'function_call', 'call_id': 'call-1', 'name': 'generate_image'}],
+            [{'type': 'function_call', 'call_id': 'call-1', 'name': tool_name}],
             {},
             {'image_generation_engine_id': 'studio', 'features': {'image_generation': True}},
         )

@@ -294,8 +294,101 @@ def default_config():
         COMFYUI_API_KEY='comfy-default-secret',
         COMFYUI_WORKFLOW='{}',
         COMFYUI_WORKFLOW_NODES=[],
+        IMAGE_EDIT_ENGINE='openai',
+        IMAGE_EDIT_MODEL='default-edit-model',
+        IMAGE_EDIT_SIZE='256x256',
+        IMAGES_EDIT_OPENAI_API_BASE_URL='https://default-edit.example.test/v1',
+        IMAGES_EDIT_OPENAI_API_KEY='default-edit-secret',
+        IMAGES_EDIT_OPENAI_API_VERSION='',
+        IMAGES_EDIT_GEMINI_API_BASE_URL='https://default-edit-gemini.example.test/v1beta',
+        IMAGES_EDIT_GEMINI_API_KEY='default-edit-gemini-secret',
+        IMAGES_EDIT_COMFYUI_BASE_URL='https://default-edit-comfy.example.test',
+        IMAGES_EDIT_COMFYUI_API_KEY='default-edit-comfy-secret',
+        IMAGES_EDIT_COMFYUI_WORKFLOW='{}',
+        IMAGES_EDIT_COMFYUI_WORKFLOW_NODES=[],
         USER_PERMISSIONS={'features': {'image_generation': True}},
     )
+
+
+def test_paired_profile_roundtrip_and_independent_edit_resolution():
+    engines = load_engines_module()
+    source = profile(
+        id='pair-a',
+        api_key='generation-a-secret',
+        edit={
+            'engine': 'gemini',
+            'model': 'gemini-edit-a',
+            'base_url': 'https://gemini-edit-a.example.test/v1beta/',
+            'api_key': 'edit-a-secret',
+            'params': {'generationConfig': {'temperature': 0.4}},
+        },
+    )
+    pair_b = profile(
+        id='pair-b',
+        name='Pair B',
+        api_key='generation-b-secret',
+        edit={
+            'engine': 'openai',
+            'model': 'openai-edit-b',
+            'base_url': 'https://openai-edit-b.example.test/v1',
+            'api_key': 'edit-b-secret',
+            'params': {'quality': 'high'},
+        },
+    )
+    profiles = engines.normalize_engine_profiles([source, pair_b])
+    serialized = [item.model_dump(mode='json') for item in profiles]
+    assert serialized[0]['edit']['base_url'] == 'https://gemini-edit-a.example.test/v1beta'
+    assert serialized[0]['edit']['comfyui_workflow_nodes'] == []
+    assert [item.model_dump(mode='json') for item in engines.normalize_engine_profiles(serialized)] == serialized
+
+    default = default_config()
+    edit_a = engines.resolve_image_edit_config(default, profiles, 'pair-a')
+    edit_b = engines.resolve_image_edit_config(default, profiles, 'pair-b')
+    generation_a = engines.resolve_image_generation_config(default, profiles, 'pair-a')
+
+    assert (edit_a.IMAGE_EDIT_ENGINE, edit_a.IMAGE_EDIT_MODEL) == ('gemini', 'gemini-edit-a')
+    assert edit_a.IMAGES_EDIT_GEMINI_API_KEY == 'edit-a-secret'
+    assert edit_a.IMAGES_EDIT_OPENAI_API_KEY == ''
+    assert edit_a.IMAGES_EDIT_COMFYUI_API_KEY == ''
+    assert edit_a.IMAGE_EDIT_PARAMS == {'generationConfig': {'temperature': 0.4}}
+    assert edit_b.IMAGES_EDIT_OPENAI_API_KEY == 'edit-b-secret'
+    assert edit_b.IMAGES_EDIT_GEMINI_API_KEY == ''
+    assert generation_a.IMAGES_OPENAI_API_KEY == 'generation-a-secret'
+    assert generation_a.IMAGES_EDIT_GEMINI_API_KEY == 'default-edit-gemini-secret'
+    edit_a.IMAGE_EDIT_MODEL = 'mutated'
+    assert default.IMAGE_EDIT_MODEL == 'default-edit-model'
+    assert edit_b.IMAGE_EDIT_MODEL == 'openai-edit-b'
+
+
+@pytest.mark.parametrize('selected', [None, '', 'deleted', 'legacy', 'null-edit'])
+def test_missing_or_null_edit_uses_default_edit_settings(selected):
+    engines = load_engines_module()
+    profiles = engines.normalize_engine_profiles(
+        [profile(id='legacy'), profile(id='null-edit', name='Null Edit', edit=None)]
+    )
+    default = default_config()
+
+    resolved = engines.resolve_image_edit_config(default, profiles, selected)
+
+    assert resolved is not default
+    assert vars(resolved) == vars(default)
+
+
+@pytest.mark.parametrize(
+    'edit',
+    [
+        {'engine': 'openai', 'model': '', 'base_url': ''},
+        {'engine': 'nope'},
+        {'engine': 'comfyui', 'base_url': 'https://edit.example.test', 'comfyui_workflow': '[]'},
+        {'engine': 'gemini', 'model': 'gemini-edit', 'base_url': 'https://edit.example.test', 'params': []},
+    ],
+)
+def test_invalid_nested_edit_is_rejected_without_echoing_credentials(edit):
+    engines = load_engines_module()
+    edit['api_key'] = 'nested-secret'
+    with pytest.raises((ValueError, ValidationError)) as exc:
+        engines.normalize_engine_profiles([profile(edit=edit)])
+    assert 'nested-secret' not in engines.describe_profile_validation_error(exc.value)
 
 
 def test_profiles_are_normalized_without_exposing_mutable_input():
@@ -595,6 +688,7 @@ def test_admin_config_responses_canonicalize_minimal_profiles(image_router):
             'gemini_endpoint_method': 'generateContent',
             'comfyui_workflow': '',
             'comfyui_workflow_nodes': [],
+            'edit': None,
         }
     ]
     assert response['IMAGE_GENERATION_ENGINES'] == expected_profiles
@@ -774,3 +868,329 @@ def test_openai_profile_and_legacy_default_use_their_own_settings(image_router, 
     assert default_call['headers']['Authorization'] == 'Bearer default-key'
     assert default_call['json']['model'] == 'default-model'
     assert default_call['json']['quality'] == 'standard'
+
+
+def multipart_fields(form):
+    return {options['name']: value for options, _, value in form._fields}
+
+
+def test_selected_pair_routes_generation_and_openai_edit_to_independent_credentials(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['images.edit.enable'] = True
+    state.values['images.edit.model'] = 'global-edit'
+    state.values['images.edit.openai.api_key'] = 'global-edit-key'
+    state.values['image_generation.engines'] = [
+        profile(
+            id='paired',
+            name='Paired',
+            api_key='generation-secret',
+            edit={
+                'engine': 'openai',
+                'model': 'edit-model',
+                'base_url': 'https://edit.example.test/v1',
+                'api_key': 'edit-secret',
+                'api_version': '2026-09-21',
+                'params': {'quality': 'high', 'model': 'wrong-model', 'prompt': 'wrong-prompt'},
+            },
+        )
+    ]
+    uploads = []
+
+    async def upload(request, image_data, content_type, metadata, user):
+        uploads.append(metadata)
+        return object(), {'id': 'file-1'}
+
+    monkeypatch.setattr(router, 'upload_image', upload)
+    monkeypatch.setattr(router, 'get_image_data', AsyncMock(return_value=(b'image', 'image/png')))
+    source = 'data:image/png;base64,aW1hZ2U='
+
+    asyncio.run(
+        router.image_generations(
+            SimpleNamespace(),
+            router.CreateImageForm(prompt='generate', engine_id='paired'),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+    generation_call = state.posts[-1]
+    asyncio.run(
+        router.image_edits(
+            SimpleNamespace(),
+            router.EditImageForm(prompt='edit', image=source, engine_id='paired'),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+    edit_call = state.posts[-1]
+
+    assert generation_call['headers']['Authorization'] == 'Bearer generation-secret'
+    assert edit_call['url'] == 'https://edit.example.test/v1/images/edits?api-version=2026-09-21'
+    assert edit_call['headers']['Authorization'] == 'Bearer edit-secret'
+    fields = multipart_fields(edit_call['data'])
+    assert fields['model'] == 'edit-model'
+    assert fields['prompt'] == 'edit'
+    assert fields['quality'] == 'high'
+    assert 'image' in fields
+    assert all('secret' not in repr(metadata) for metadata in uploads)
+
+
+def test_old_alias_or_deleted_edit_id_keeps_global_editor(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['images.edit.model'] = 'global-edit'
+    state.values['images.edit.openai.api_base_url'] = 'https://global-edit.example.test/v1'
+    state.values['images.edit.openai.api_key'] = 'global-edit-key'
+    state.values['image_generation.engines'] = [profile(id='legacy')]
+    monkeypatch.setattr(router, 'upload_image', AsyncMock(return_value=(object(), {'id': 'file-1'})))
+    monkeypatch.setattr(router, 'get_image_data', AsyncMock(return_value=(b'image', 'image/png')))
+    source = 'data:image/png;base64,aW1hZ2U='
+
+    for engine_id in ('legacy', 'deleted', None):
+        asyncio.run(
+            router.image_edits(
+                SimpleNamespace(),
+                router.EditImageForm(prompt='edit', image=source, engine_id=engine_id),
+                user=SimpleNamespace(role='user'),
+            )
+        )
+        call = state.posts[-1]
+        assert call['url'] == 'https://global-edit.example.test/v1/images/edits'
+        assert call['headers']['Authorization'] == 'Bearer global-edit-key'
+        assert multipart_fields(call['data'])['model'] == 'global-edit'
+
+
+def test_gemini_edit_profile_deep_merges_params_without_replacing_images(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='gemini-edit',
+            edit={
+                'engine': 'gemini',
+                'model': 'gemini-edit-model',
+                'base_url': 'https://gemini-edit.example.test/v1beta',
+                'api_key': 'gemini-edit-secret',
+                'params': {
+                    'generationConfig': {'temperature': 0.4, 'imageConfig': {'aspectRatio': '16:9'}},
+                    'contents': [{'parts': [{'text': 'wrong prompt'}]}],
+                },
+            },
+        )
+    ]
+    state.response_json = {'candidates': [{'content': {'parts': [{'inlineData': {'data': 'aW1hZ2U='}}]}}]}
+    upload = AsyncMock(return_value=(object(), {'id': 'file-1'}))
+    monkeypatch.setattr(router, 'upload_image', upload)
+    monkeypatch.setattr(router, 'get_image_data', AsyncMock(return_value=(b'image', 'image/png')))
+    source = 'data:image/jpeg;base64,aW1hZ2U='
+
+    asyncio.run(
+        router.image_edits(
+            SimpleNamespace(),
+            router.EditImageForm(prompt='edit lake', image=[source, source], engine_id='gemini-edit'),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+
+    call = state.posts[-1]
+    assert call['url'] == 'https://gemini-edit.example.test/v1beta/models/gemini-edit-model:generateContent'
+    assert call['headers']['x-goog-api-key'] == 'gemini-edit-secret'
+    assert call['json']['generationConfig']['imageConfig']['aspectRatio'] == '16:9'
+    parts = call['json']['contents'][0]['parts']
+    assert parts[0] == {'text': 'edit lake'}
+    assert len(parts) == 3
+    assert all(part['inline_data']['data'] == 'aW1hZ2U=' for part in parts[1:])
+    assert 'gemini-edit-secret' not in repr(upload.await_args.args[3])
+
+
+def test_default_gemini_editor_keeps_legacy_png_inline_mime():
+    engines = load_engines_module()
+    config = SimpleNamespace()
+    source = 'data:image/jpeg;base64,aW1hZ2U='
+    form = SimpleNamespace(prompt='edit', image=source)
+
+    payload = engines.build_gemini_edit_payload(config, form)
+
+    assert payload['contents'][0]['parts'][1]['inline_data']['mime_type'] == 'image/png'
+
+
+def test_comfyui_edit_profile_uses_own_workflow_key_and_options(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='comfy-edit',
+            edit={
+                'engine': 'comfyui',
+                'model': 'checkpoint-edit',
+                'base_url': 'https://comfy-edit.example.test',
+                'api_key': 'comfy-edit-secret',
+                'size': '640x480',
+                'steps': 25,
+                'params': {'seed': 1234},
+                'comfyui_workflow': '{"6":{"inputs":{"text":"original"}}}',
+                'comfyui_workflow_nodes': [{'type': 'prompt', 'key': 'text', 'node_ids': ['6']}],
+            },
+        )
+    ]
+    upload_source = AsyncMock(return_value={'name': 'source.png'})
+    edit_transport = AsyncMock(return_value={'data': [{'url': 'https://comfy-edit.example.test/view?type=output'}]})
+    image_fetch = AsyncMock(return_value=(b'image', 'image/png'))
+    monkeypatch.setattr(router, 'comfyui_upload_image', upload_source)
+    monkeypatch.setattr(router, 'comfyui_edit_image', edit_transport)
+    monkeypatch.setattr(router, 'get_image_data', image_fetch)
+    monkeypatch.setattr(router, 'upload_image', AsyncMock(return_value=(object(), {'id': 'file-1'})))
+
+    asyncio.run(
+        router.image_edits(
+            SimpleNamespace(),
+            router.EditImageForm(prompt='edit forest', image='data:image/png;base64,aW1hZ2U=', engine_id='comfy-edit'),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+
+    assert upload_source.await_args.args[1:] == ('https://comfy-edit.example.test', 'comfy-edit-secret')
+    assert edit_transport.await_args.args[0] == 'checkpoint-edit'
+    payload = edit_transport.await_args.args[1]
+    assert payload.seed == 1234
+    assert payload.steps == 25
+    assert payload.width == 640 and payload.height == 480
+    assert payload.workflow.nodes[0].node_ids == ['6']
+    assert edit_transport.await_args.args[3:] == ('https://comfy-edit.example.test', 'comfy-edit-secret')
+    assert image_fetch.await_args.args[1] == {'Authorization': 'Bearer comfy-edit-secret'}
+
+
+@pytest.mark.parametrize('multiple', [False, True])
+def test_grok_edit_json_uses_image_or_images_and_keeps_auth_on_origin(image_router, monkeypatch, multiple):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='grok-edit',
+            edit={
+                'engine': 'grok',
+                'model': 'grok-imagine-image',
+                'base_url': 'https://api.x.ai/v1',
+                'api_key': 'grok-edit-secret',
+                'size': '1536x1024',
+                'params': {'response_format': 'url', 'resolution': '2k', 'model': 'wrong-model'},
+            },
+        )
+    ]
+    state.response_json = {'data': [{'url': 'https://outside.example.test/output.png'}]}
+    image_fetch = AsyncMock(return_value=(b'image', 'image/png'))
+    upload = AsyncMock(return_value=(object(), {'id': 'file-1'}))
+    monkeypatch.setattr(router, 'get_image_data', image_fetch)
+    monkeypatch.setattr(router, 'upload_image', upload)
+    source = 'data:image/png;base64,aW1hZ2U='
+    form = router.EditImageForm(
+        prompt='paint mountains', image=[source, source] if multiple else source, engine_id='grok-edit'
+    )
+
+    asyncio.run(router.image_edits(SimpleNamespace(), form, user=SimpleNamespace(role='user')))
+
+    call = state.posts[-1]
+    assert call['url'] == 'https://api.x.ai/v1/images/edits'
+    assert call['headers']['Authorization'] == 'Bearer grok-edit-secret'
+    assert call['json']['model'] == 'grok-imagine-image'
+    assert call['json']['prompt'] == 'paint mountains'
+    assert call['json']['aspect_ratio'] == '3:2'
+    assert call['json']['resolution'] == '2k'
+    assert 'size' not in call['json']
+    if multiple:
+        assert call['json']['images'] == [{'url': source, 'type': 'image_url'}] * 2
+        assert 'image' not in call['json']
+    else:
+        assert call['json']['image'] == {'url': source, 'type': 'image_url'}
+        assert 'images' not in call['json']
+    assert image_fetch.await_args.args[1] is None
+    assert 'grok-edit-secret' not in repr(upload.await_args.args[3])
+
+
+def test_grok_edit_rejects_more_than_five_sources_before_provider_post(image_router):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='grok-edit',
+            edit={
+                'engine': 'grok',
+                'model': 'grok-imagine-image',
+                'base_url': 'https://api.x.ai/v1',
+                'api_key': 'grok-edit-secret',
+            },
+        )
+    ]
+    source = 'data:image/png;base64,aW1hZ2U='
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            router.image_edits(
+                SimpleNamespace(),
+                router.EditImageForm(prompt='edit', image=[source] * 6, engine_id='grok-edit'),
+                user=SimpleNamespace(role='user'),
+            )
+        )
+    assert exc.value.status_code == 400
+    assert not state.posts
+
+
+def test_grok_edit_ratio_override_skips_configured_dimensions(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='grok-edit',
+            edit={
+                'engine': 'grok',
+                'model': 'grok-imagine-image',
+                'base_url': 'https://api.x.ai/v1',
+                'api_key': 'grok-edit-secret',
+                'size': '1536x1024',
+            },
+        )
+    ]
+    monkeypatch.setattr(router, 'get_image_data', AsyncMock(return_value=(b'image', 'image/png')))
+    monkeypatch.setattr(router, 'upload_image', AsyncMock(return_value=(object(), {'id': 'file-1'})))
+
+    asyncio.run(
+        router.image_edits(
+            SimpleNamespace(),
+            router.EditImageForm(
+                prompt='edit',
+                image='data:image/png;base64,aW1hZ2U=',
+                size='16:9',
+                engine_id='grok-edit',
+            ),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+
+    assert state.posts[-1]['json']['aspect_ratio'] == '16:9'
+
+
+def test_grok_edit_singleton_list_uses_image_field(image_router, monkeypatch):
+    router = image_router.module
+    state = image_router.state
+    state.values['image_generation.engines'] = [
+        profile(
+            id='grok-edit',
+            edit={
+                'engine': 'grok',
+                'model': 'grok-imagine-image',
+                'base_url': 'https://api.x.ai/v1',
+                'api_key': 'grok-edit-secret',
+            },
+        )
+    ]
+    monkeypatch.setattr(router, 'get_image_data', AsyncMock(return_value=(b'image', 'image/png')))
+    monkeypatch.setattr(router, 'upload_image', AsyncMock(return_value=(object(), {'id': 'file-1'})))
+    source = 'data:image/png;base64,aW1hZ2U='
+
+    asyncio.run(
+        router.image_edits(
+            SimpleNamespace(),
+            router.EditImageForm(prompt='edit', image=[source], engine_id='grok-edit'),
+            user=SimpleNamespace(role='user'),
+        )
+    )
+
+    assert state.posts[-1]['json']['image'] == {'url': source, 'type': 'image_url'}
+    assert 'images' not in state.posts[-1]['json']

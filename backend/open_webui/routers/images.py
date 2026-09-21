@@ -43,12 +43,16 @@ from open_webui.utils.images.comfyui import (
 )
 from open_webui.utils.images.engines import (
     build_comfyui_payload,
+    build_comfyui_edit_options,
+    build_gemini_edit_payload,
     build_gemini_request,
+    build_grok_edit_payload,
     build_grok_payload,
     build_openai_payload,
     describe_profile_validation_error,
     normalize_engine_profiles,
     redact_image_metadata,
+    resolve_image_edit_config,
     resolve_image_generation_config,
 )
 from open_webui.utils.json_codec import JSONCodec
@@ -887,6 +891,7 @@ class EditImageForm(BaseModel):
     n: int | None = None
     negative_prompt: str | None = None
     background: str | None = None
+    engine_id: str | None = None
 
 
 @router.post('/edit')
@@ -933,15 +938,19 @@ async def image_edits(
     metadata: dict | None = None,
     user=Depends(get_verified_user),
 ):
-    image_config = await get_image_config()
+    default_image_config = await get_image_config()
+    image_config = resolve_image_edit_config(
+        default_image_config,
+        getattr(default_image_config, 'IMAGE_GENERATION_ENGINES', []),
+        form_data.engine_id,
+    )
     size = None
     width, height = None, None
     metadata = metadata or {}
 
-    if (image_config.IMAGE_EDIT_SIZE and 'x' in image_config.IMAGE_EDIT_SIZE) or (
-        form_data.size and 'x' in form_data.size
-    ):
-        size = form_data.size if form_data.size else image_config.IMAGE_EDIT_SIZE
+    effective_size = form_data.size or image_config.IMAGE_EDIT_SIZE
+    if effective_size and 'x' in effective_size:
+        size = effective_size
         width, height = tuple(map(int, size.split('x')))
 
     model = image_config.IMAGE_EDIT_MODEL if form_data.model is None else form_data.model
@@ -1036,6 +1045,14 @@ async def image_edits(
                 ),
             }
 
+            if hasattr(image_config, 'IMAGE_EDIT_PARAMS'):
+                edit_params = image_config.IMAGE_EDIT_PARAMS.copy()
+                for reserved in ('model', 'prompt', 'image', 'images', 'api_key', 'base_url', 'api_version'):
+                    edit_params.pop(reserved, None)
+                data.update(edit_params)
+                data['model'] = model
+                data['prompt'] = form_data.prompt
+
             files = []
             if isinstance(form_data.image, str):
                 image = form_data.image
@@ -1080,14 +1097,19 @@ async def image_edits(
             images = []
             for image in res['data']:
                 if image_url := image.get('url', None):
+                    download_headers = None
+                    if _is_same_origin(image_url, image_config.IMAGES_EDIT_OPENAI_API_BASE_URL):
+                        download_headers = {k: v for k, v in headers.items() if k != 'Content-Type'}
                     image_data, content_type = await get_image_data(
                         image_url,
-                        {k: v for k, v in headers.items() if k != 'Content-Type'},
+                        download_headers,
                     )
                 else:
                     image_data, content_type = await get_image_data(image['b64_json'])
 
-                _, image_file = await upload_image(request, image_data, content_type, {**data, **metadata}, user)
+                _, image_file = await upload_image(
+                    request, image_data, content_type, {**redact_image_metadata(data), **metadata}, user
+                )
                 images.append(image_file)
             return images
 
@@ -1098,29 +1120,7 @@ async def image_edits(
             }
 
             model = f'{model}:generateContent'
-            data = {'contents': [{'parts': [{'text': form_data.prompt}]}]}
-
-            if isinstance(form_data.image, str):
-                data['contents'][0]['parts'].append(
-                    {
-                        'inline_data': {
-                            'mime_type': 'image/png',
-                            'data': form_data.image.split(',', 1)[1],
-                        }
-                    }
-                )
-            elif isinstance(form_data.image, list):
-                data['contents'][0]['parts'].extend(
-                    [
-                        {
-                            'inline_data': {
-                                'mime_type': 'image/png',
-                                'data': image.split(',', 1)[1],
-                            }
-                        }
-                        for image in form_data.image
-                    ]
-                )
+            data = build_gemini_edit_payload(image_config, form_data)
 
             session = await get_session()
             async with session.post(
@@ -1141,11 +1141,45 @@ async def image_edits(
                             request,
                             image_data,
                             content_type,
-                            {**data, **metadata},
+                            {**redact_image_metadata(data), **metadata},
                             user,
                         )
                         images.append(image_file)
 
+            return images
+
+        elif image_config.IMAGE_EDIT_ENGINE == 'grok':
+            headers = {
+                'Authorization': f'Bearer {image_config.IMAGES_EDIT_OPENAI_API_KEY}',
+                'Content-Type': 'application/json',
+            }
+            if ENABLE_FORWARD_USER_INFO_HEADERS:
+                headers = include_user_info_headers(headers, user)
+            data = build_grok_edit_payload(image_config, form_data, model)
+
+            session = await get_session()
+            async with session.post(
+                url=f'{image_config.IMAGES_EDIT_OPENAI_API_BASE_URL}/images/edits',
+                json=data,
+                headers=headers,
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            ) as r:
+                r.raise_for_status()
+                res = await r.json(content_type=None)
+
+            images = []
+            for image in res['data']:
+                if image_url := image.get('url'):
+                    download_headers = None
+                    if _is_same_origin(image_url, image_config.IMAGES_EDIT_OPENAI_API_BASE_URL):
+                        download_headers = {key: value for key, value in headers.items() if key != 'Content-Type'}
+                    image_data, content_type = await get_image_data(image_url, download_headers)
+                else:
+                    image_data, content_type = await get_image_data(image['b64_json'])
+                _, image_file = await upload_image(
+                    request, image_data, content_type, {**redact_image_metadata(data), **metadata}, user
+                )
+                images.append(image_file)
             return images
 
         elif image_config.IMAGE_EDIT_ENGINE == 'comfyui':
@@ -1176,6 +1210,7 @@ async def image_edits(
                 **({'width': width} if width is not None else {}),
                 **({'height': height} if height is not None else {}),
                 **({'n': form_data.n} if form_data.n else {}),
+                **build_comfyui_edit_options(image_config, form_data),
             }
 
             form_data = ComfyUIEditImageForm(
@@ -1213,7 +1248,9 @@ async def image_edits(
 
             for image_url in image_urls:
                 headers = None
-                if image_config.IMAGES_EDIT_COMFYUI_API_KEY:
+                if image_config.IMAGES_EDIT_COMFYUI_API_KEY and _is_same_origin(
+                    image_url, image_config.IMAGES_EDIT_COMFYUI_BASE_URL
+                ):
                     headers = {'Authorization': f'Bearer {image_config.IMAGES_EDIT_COMFYUI_API_KEY}'}
 
                 image_data, content_type = await get_image_data(
@@ -1225,7 +1262,7 @@ async def image_edits(
                     request,
                     image_data,
                     content_type,
-                    {**form_data.model_dump(exclude_none=True), **metadata},
+                    {**redact_image_metadata(form_data.model_dump(exclude_none=True)), **metadata},
                     user,
                 )
                 images.append(image_file)

@@ -1880,7 +1880,11 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
         try:
             images = await image_edits(
                 request=request,
-                form_data=EditImageForm(**{'prompt': prompt, 'image': input_images}),
+                form_data=EditImageForm(
+                    prompt=prompt,
+                    image=input_images,
+                    engine_id=metadata.get('image_generation_engine_id'),
+                ),
                 metadata=image_metadata,
                 user=user,
             )

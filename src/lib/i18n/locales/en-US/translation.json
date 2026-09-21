@@ -3165,5 +3165,21 @@
 	"Example: https://generativelanguage.googleapis.com/v1beta": "",
 	"Example: https://api.x.ai/v1": "",
 	"Example: http://127.0.0.1:8188": "",
-	"Example: https://api.openai.com/v1": ""
+	"Example: https://api.openai.com/v1": "",
+	"Image Engine Configuration": "Image Engine Configuration",
+	"Additional Image Engine Configurations": "Additional Image Engine Configurations",
+	"Each configuration pairs separate generation and editing providers under one name.": "Each configuration pairs separate generation and editing providers under one name.",
+	"Add Configuration": "Add Configuration",
+	"No additional image engine configurations configured.": "No additional image engine configurations configured.",
+	"Configuration {{number}}": "Configuration {{number}}",
+	"Remove Configuration": "Remove Configuration",
+	"Generation settings": "Generation settings",
+	"Editing settings": "Editing settings",
+	"Use system default editor": "Use system default editor",
+	"This configuration uses the system default image editor.": "This configuration uses the system default image editor.",
+	"Configure separate editor": "Configure separate editor",
+	"Edit additional parameters must be a valid JSON object.": "Edit additional parameters must be a valid JSON object.",
+	"Edit ComfyUI workflow must be a valid JSON object.": "Edit ComfyUI workflow must be a valid JSON object.",
+	"Merge optional JSON values into each image editing request.": "Merge optional JSON values into each image editing request.",
+	"Map workflow node inputs used for image editing.": "Map workflow node inputs used for image editing."
 }

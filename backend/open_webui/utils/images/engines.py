@@ -22,9 +22,7 @@ class ComfyUIWorkflowNode(BaseModel):
         return '' if value is None else str(value).strip()
 
 
-class ImageGenerationEngineProfile(BaseModel):
-    id: str
-    name: str
+class ImageEngineConfig(BaseModel):
     engine: Literal['openai', 'gemini', 'grok', 'comfyui']
     model: str = ''
     base_url: str = ''
@@ -37,13 +35,6 @@ class ImageGenerationEngineProfile(BaseModel):
     comfyui_workflow: str = ''
     comfyui_workflow_nodes: list[ComfyUIWorkflowNode] = Field(default_factory=list)
 
-    @field_validator('id', 'name', mode='before')
-    @classmethod
-    def normalize_required_text(cls, value: Any) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError('must be a non-empty string')
-        return value.strip()
-
     @field_validator('model', 'api_key', 'api_version', 'size', 'comfyui_workflow', mode='before')
     @classmethod
     def normalize_optional_text(cls, value: Any) -> str:
@@ -55,10 +46,7 @@ class ImageGenerationEngineProfile(BaseModel):
         return ('' if value is None else str(value).strip()).rstrip('/')
 
     @model_validator(mode='after')
-    def validate_profile(self):
-        if self.id.casefold() == 'default':
-            raise ValueError('engine id "default" is reserved')
-
+    def validate_provider_config(self):
         if self.engine == 'comfyui' and self.comfyui_workflow:
             try:
                 workflow = json.loads(self.comfyui_workflow)
@@ -93,6 +81,25 @@ class ImageGenerationEngineProfile(BaseModel):
             else:
                 raise ValueError(f'invalid size for {self.engine} profile')
 
+        return self
+
+
+class ImageGenerationEngineProfile(ImageEngineConfig):
+    id: str
+    name: str
+    edit: ImageEngineConfig | None = None
+
+    @field_validator('id', 'name', mode='before')
+    @classmethod
+    def normalize_required_text(cls, value: Any) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError('must be a non-empty string')
+        return value.strip()
+
+    @model_validator(mode='after')
+    def validate_identity(self):
+        if self.id.casefold() == 'default':
+            raise ValueError('engine id "default" is reserved')
         return self
 
 
@@ -210,6 +217,50 @@ def resolve_image_generation_config(
     return snapshot
 
 
+def resolve_image_edit_config(
+    default_config: SimpleNamespace,
+    profiles: list[ImageGenerationEngineProfile] | list[dict[str, Any]] | None,
+    engine_id: str | None,
+) -> SimpleNamespace:
+    snapshot = SimpleNamespace(**copy.deepcopy(vars(default_config)))
+    if not engine_id:
+        return snapshot
+
+    selected = next((profile for profile in normalize_engine_profiles(profiles) if profile.id == engine_id), None)
+    if selected is None or selected.edit is None:
+        return snapshot
+
+    edit = selected.edit
+    snapshot.IMAGE_EDIT_PARAMS = copy.deepcopy(edit.params)
+    snapshot.IMAGES_EDIT_OPENAI_API_BASE_URL = ''
+    snapshot.IMAGES_EDIT_OPENAI_API_KEY = ''
+    snapshot.IMAGES_EDIT_OPENAI_API_VERSION = ''
+    snapshot.IMAGES_EDIT_GEMINI_API_BASE_URL = ''
+    snapshot.IMAGES_EDIT_GEMINI_API_KEY = ''
+    snapshot.IMAGES_EDIT_COMFYUI_BASE_URL = ''
+    snapshot.IMAGES_EDIT_COMFYUI_API_KEY = ''
+    snapshot.IMAGES_EDIT_COMFYUI_WORKFLOW = ''
+    snapshot.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = []
+
+    snapshot.IMAGE_EDIT_ENGINE = edit.engine
+    snapshot.IMAGE_EDIT_MODEL = edit.model
+    snapshot.IMAGE_EDIT_SIZE = edit.size
+    snapshot.IMAGE_EDIT_STEPS = edit.steps
+    if edit.engine in {'openai', 'grok'}:
+        snapshot.IMAGES_EDIT_OPENAI_API_BASE_URL = edit.base_url
+        snapshot.IMAGES_EDIT_OPENAI_API_KEY = edit.api_key
+        snapshot.IMAGES_EDIT_OPENAI_API_VERSION = edit.api_version
+    elif edit.engine == 'gemini':
+        snapshot.IMAGES_EDIT_GEMINI_API_BASE_URL = edit.base_url
+        snapshot.IMAGES_EDIT_GEMINI_API_KEY = edit.api_key
+    elif edit.engine == 'comfyui':
+        snapshot.IMAGES_EDIT_COMFYUI_BASE_URL = edit.base_url
+        snapshot.IMAGES_EDIT_COMFYUI_API_KEY = edit.api_key
+        snapshot.IMAGES_EDIT_COMFYUI_WORKFLOW = edit.comfyui_workflow
+        snapshot.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = [node.model_dump() for node in edit.comfyui_workflow_nodes]
+    return snapshot
+
+
 def _profile_params(config: SimpleNamespace, provider_field: str | None = None) -> dict[str, Any]:
     params = getattr(config, 'IMAGE_GENERATION_PARAMS', None)
     if params is None and provider_field:
@@ -316,4 +367,59 @@ def build_comfyui_payload(
         payload['steps'] = steps
     if form_data.negative_prompt is not None:
         payload['negative_prompt'] = form_data.negative_prompt
+    return payload
+
+
+def build_gemini_edit_payload(config: SimpleNamespace, form_data: Any) -> dict[str, Any]:
+    parts = [{'text': form_data.prompt}]
+    sources = [form_data.image] if isinstance(form_data.image, str) else form_data.image
+    for source in sources:
+        header, encoded = source.split(',', 1)
+        mime_type = 'image/png'
+        if hasattr(config, 'IMAGE_EDIT_PARAMS'):
+            mime_type = header.split(';', 1)[0].removeprefix('data:') or 'image/png'
+        parts.append({'inline_data': {'mime_type': mime_type, 'data': encoded}})
+    payload = {'contents': [{'parts': parts}]}
+    params = getattr(config, 'IMAGE_EDIT_PARAMS', None)
+    if isinstance(params, dict):
+        payload = deep_merge(payload, params)
+        payload['contents'] = [{'parts': parts}]
+    for reserved in ('model', 'api_key', 'base_url', 'api_version', 'Authorization'):
+        payload.pop(reserved, None)
+    return payload
+
+
+def build_comfyui_edit_options(config: SimpleNamespace, form_data: Any) -> dict[str, Any]:
+    params = getattr(config, 'IMAGE_EDIT_PARAMS', None)
+    options = {
+        key: copy.deepcopy(value)
+        for key, value in (params.items() if isinstance(params, dict) else [])
+        if key in {'seed', 'steps'} and value is not None
+    }
+    if getattr(config, 'IMAGE_EDIT_STEPS', None) is not None:
+        options['steps'] = config.IMAGE_EDIT_STEPS
+    return options
+
+
+def build_grok_edit_payload(config: SimpleNamespace, form_data: Any, model: str) -> dict[str, Any]:
+    sources = [form_data.image] if isinstance(form_data.image, str) else form_data.image
+    if len(sources) > 5:
+        raise ValueError('Grok image editing accepts up to five source images')
+    payload: dict[str, Any] = {'model': model, 'prompt': form_data.prompt}
+    if form_data.n:
+        payload['n'] = form_data.n
+    if aspect_ratio := _aspect_ratio(form_data.size or config.IMAGE_EDIT_SIZE):
+        payload['aspect_ratio'] = aspect_ratio
+    params = getattr(config, 'IMAGE_EDIT_PARAMS', None)
+    if isinstance(params, dict):
+        payload = deep_merge(payload, params)
+    for reserved in ('size', 'base_url', 'api_key', 'api_version', 'Authorization', 'image', 'images'):
+        payload.pop(reserved, None)
+    payload['model'] = model
+    payload['prompt'] = form_data.prompt
+    images = [{'url': source, 'type': 'image_url'} for source in sources]
+    if len(sources) == 1:
+        payload['image'] = images[0]
+    else:
+        payload['images'] = images
     return payload

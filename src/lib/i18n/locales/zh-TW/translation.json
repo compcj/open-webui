@@ -3150,5 +3150,21 @@
 	"Example: https://generativelanguage.googleapis.com/v1beta": "範例：https://generativelanguage.googleapis.com/v1beta",
 	"Example: https://api.x.ai/v1": "範例：https://api.x.ai/v1",
 	"Example: http://127.0.0.1:8188": "範例：http://127.0.0.1:8188",
-	"Example: https://api.openai.com/v1": "範例：https://api.openai.com/v1"
+	"Example: https://api.openai.com/v1": "範例：https://api.openai.com/v1",
+	"Image Engine Configuration": "圖像引擎設定",
+	"Additional Image Engine Configurations": "額外圖像引擎設定",
+	"Each configuration pairs separate generation and editing providers under one name.": "同一別名下分別設定圖像生成和圖片編輯服務。",
+	"Add Configuration": "新增設定",
+	"No additional image engine configurations configured.": "尚未新增額外圖像引擎設定。",
+	"Configuration {{number}}": "設定 {{number}}",
+	"Remove Configuration": "刪除設定",
+	"Generation settings": "圖像生成設定",
+	"Editing settings": "圖片編輯設定",
+	"Use system default editor": "使用系統預設圖片編輯引擎",
+	"This configuration uses the system default image editor.": "此設定使用系統預設的圖片編輯引擎。",
+	"Configure separate editor": "設定獨立的圖片編輯引擎",
+	"Edit additional parameters must be a valid JSON object.": "圖片編輯附加參數必須是有效的 JSON 物件。",
+	"Edit ComfyUI workflow must be a valid JSON object.": "圖片編輯 ComfyUI 工作流程必須是有效的 JSON 物件。",
+	"Merge optional JSON values into each image editing request.": "將附加 JSON 參數合併至每次圖片編輯請求中。",
+	"Map workflow node inputs used for image editing.": "對應用於圖片編輯的工作流程節點輸入。"
 }

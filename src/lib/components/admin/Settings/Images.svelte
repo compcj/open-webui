@@ -171,7 +171,7 @@
 				)
 			};
 		} catch (error) {
-			toast.error(error instanceof Error ? error.message : `${error}`);
+			toast.error(error instanceof Error ? $i18n.t(error.message) : `${error}`);
 			return null;
 		}
 
@@ -753,7 +753,7 @@
 					{/if}
 				</AdminSettingSection>
 
-				<AdminSettingSection title={$i18n.t('Additional Image Generation Engines')}>
+				<AdminSettingSection title={$i18n.t('Additional Image Engine Configurations')}>
 					<ImageGenerationEngines
 						bind:this={imageGenerationEnginesEditor}
 						bind:engines={config.IMAGE_GENERATION_ENGINES}
