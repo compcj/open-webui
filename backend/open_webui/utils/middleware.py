@@ -14,6 +14,7 @@ import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
 from html import escape
+from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -93,6 +94,8 @@ from open_webui.utils.files import (
     get_image_base64_from_url,
     get_image_url_from_base64,
 )
+from open_webui.utils.images.context import build_tool_result_parts, get_image_tool_result_files
+from open_webui.utils.images.engines import resolve_image_edit_config
 from open_webui.utils.filter import (
     FilterContext,
     get_filter_context,
@@ -189,6 +192,8 @@ def _is_tool_result_error(value: Any) -> bool:
 
 
 def normalize_messages_for_model(form_data: dict) -> dict:
+    for message in form_data.get('messages', []):
+        message.pop('_tool_image_context', None)
     form_data['messages'] = strip_empty_content_blocks(form_data.get('messages', []))
     form_data['messages'] = merge_system_messages(form_data.get('messages', []))
     return form_data
@@ -1172,7 +1177,7 @@ async def process_tool_result(
                             'message': f'{tool_function_name}: Embedded UI result is active and visible to the user.',
                         }
 
-    tool_result_files = []
+    tool_result_files = get_image_tool_result_files(tool_function_name, tool_result, tool_type)
 
     # Detect base64 image data URIs from tool results (e.g. binary image
     # responses from execute_tool_server).  Move the data URI to
@@ -1487,12 +1492,13 @@ async def chat_completion_tools_handler(
                         event_emitter,
                     )
 
-                    if tool_result_files:
+                    display_files = [file for file in tool_result_files if not file.get('context_only')]
+                    if display_files:
                         await event_emitter(
                             {
                                 'type': 'files',
                                 'data': {
-                                    'files': tool_result_files,
+                                    'files': display_files,
                                 },
                             }
                         )
@@ -1791,13 +1797,14 @@ async def add_file_context(messages: list, chat_id: str, user) -> list:
             attrs += f' name="{file["name"]}"'
         return f'<file {attrs}/>'
 
-    # Pair only user-role messages from both lists to avoid misalignment.
+    # Pair only real user messages from both lists to avoid misalignment.
     # After process_messages_with_output(), assistant messages with tool calls
     # are expanded into multiple messages (assistant + tool results), making
     # the payload message list longer than the stored message list. A naive
     # positional zip() would pair user messages with wrong stored messages,
     # causing later images to lose their file context (see #21878).
-    user_messages = [m for m in messages if m.get('role') == 'user']
+    # Tool images replay as synthetic user messages and have no stored user turn.
+    user_messages = [m for m in messages if m.get('role') == 'user' and not m.get('_tool_image_context')]
     stored_user_messages = [m for m in stored_messages if m.get('role') == 'user']
 
     for message, stored_message in zip(user_messages, stored_user_messages):
@@ -1862,6 +1869,15 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
 
     # Called directly, bypassing the /images routes that enforce these switches.
     editing = len(input_images) > 0 and await Config.get('images.edit.enable')
+    if editing and metadata.get('image_generation_engine_id'):
+        try:
+            editing = resolve_image_edit_config(
+                SimpleNamespace(ENABLE_IMAGE_EDIT=True),
+                await Config.get('image_generation.engines') or [],
+                metadata['image_generation_engine_id'],
+            ).ENABLE_IMAGE_EDIT
+        except ValueError:
+            log.warning('Unable to resolve image editing availability from configured engines')
     if not editing and not await Config.get('image_generation.enable'):
         return form_data
 
@@ -2180,7 +2196,7 @@ async def convert_url_images_to_base64(form_data, user=None):
         new_content = []
 
         for item in content:
-            if not isinstance(item, dict) or item.get('type') != 'image_url':
+            if not isinstance(item, dict) or item.get('type') not in {'image_url', 'input_image'}:
                 new_content.append(item)
                 continue
 
@@ -2197,7 +2213,14 @@ async def convert_url_images_to_base64(form_data, user=None):
 
             try:
                 base64_data = await get_image_base64_from_url(image_url, user=user)
-                if base64_data:
+            except Exception as e:
+                log.debug('Error converting image URL to base64: %s', e)
+                base64_data = None
+
+            if base64_data:
+                if item['type'] == 'input_image':
+                    new_content.append({**item, 'image_url': base64_data})
+                else:
                     image_url_payload = {'url': base64_data}
                     if isinstance(image_url_data, dict) and image_url_data.get('detail'):
                         image_url_payload['detail'] = image_url_data['detail']
@@ -2207,11 +2230,10 @@ async def convert_url_images_to_base64(form_data, user=None):
                             'image_url': image_url_payload,
                         }
                     )
-                else:
-                    new_content.append(item)
-            except Exception as e:
-                log.debug('Error converting image URL to base64: %s', e)
+            elif not image_url.startswith('/api/v1/files/'):
                 new_content.append(item)
+            # An unavailable or unauthorized local file cannot be fetched by the provider.
+            # Keep the surrounding tool text/URLs, but omit that unusable visual input.
 
         message['content'] = new_content
 
@@ -2265,6 +2287,7 @@ def strip_reasoning_details(output: list) -> list:
 def process_messages_with_output(
     messages: list[dict],
     reasoning_format: str | None = None,
+    include_tool_images: bool = True,
 ) -> list[dict]:
     """
     Process messages with OR-aligned output items for LLM consumption.
@@ -2282,8 +2305,13 @@ def process_messages_with_output(
                 raw=True,
                 reasoning_format=reasoning_format,
                 flatten_tool_images=True,
+                include_tool_images=include_tool_images,
             )
             if output_messages:
+                for output_message in output_messages:
+                    if output_message.get('role') == 'user':
+                        # Preserve attachment pairing until final model normalization.
+                        output_message['_tool_image_context'] = True
                 processed.extend(output_messages)
                 continue
 
@@ -2559,6 +2587,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     form_data['messages'] = process_messages_with_output(
         form_data.get('messages', []),
         reasoning_format=get_reasoning_format(model),
+        include_tool_images=model.get('info', {}).get('meta', {}).get('capabilities', {}).get('vision', True),
     )
     form_data['messages'] = sanitize_tool_pairs(form_data['messages'])
 
@@ -3401,14 +3430,8 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
             tool_call,
         )
         item['arguments'] = tool_call.get('function', {}).get('arguments', '{}')
-        output_parts = [{'type': 'input_text', 'text': result.get('content', '')}]
+        output_parts, display_files = build_tool_result_parts(result)
         item['status'] = 'failed' if _is_tool_result_error(result.get('content', '')) else 'completed'
-        display_files = []
-        for file_item in result.get('files', []):
-            if file_item.get('type') == 'image' and file_item.get('url', '').startswith('data:'):
-                output_parts.append({'type': 'input_image', 'image_url': file_item['url']})
-            else:
-                display_files.append(file_item)
 
         output.append(
             {
@@ -3496,8 +3519,10 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
             form_data['messages'] = process_messages_with_output(
                 db_messages,
                 reasoning_format=get_reasoning_format(model),
+                include_tool_images=model.get('info', {}).get('meta', {}).get('capabilities', {}).get('vision', True),
             )
             form_data['messages'] = sanitize_tool_pairs(form_data['messages'])
+            await convert_url_images_to_base64(form_data, user=user)
 
         if not paused and ENABLE_PLUGINS:
             filter_functions = await get_filter_functions(request, model, metadata.get('filter_ids', []))
@@ -5901,22 +5926,11 @@ async def streaming_chat_response_handler(response, ctx):
 
                     result_status_by_call_id = {}
                     for result in results:
-                        output_parts = [{'type': 'input_text', 'text': result.get('content', '')}]
+                        output_parts, display_files = build_tool_result_parts(result)
                         local_output_status = (
                             'failed' if _is_tool_result_error(result.get('content', '')) else 'completed'
                         )
                         result_status_by_call_id[result.get('tool_call_id', '')] = local_output_status
-
-                        # Separate image data URIs (for LLM via input_image) from
-                        # other files (for frontend display via files attribute).
-                        display_files = []
-                        for file_item in result.get('files', []):
-                            if file_item.get('type') == 'image' and file_item.get('url', '').startswith('data:'):
-                                # LLM-only: add as input_image part, not frontend display output.
-                                output_parts.append({'type': 'input_image', 'image_url': file_item['url']})
-                            else:
-                                # Frontend display (MCP images, audio, etc.)
-                                display_files.append(file_item)
 
                         output.append(
                             {
@@ -5979,15 +5993,22 @@ async def streaming_chat_response_handler(response, ctx):
                             )
                         tool_call_sources.clear()
 
-                    # Strip input_image parts (large base64 data URIs) from the
-                    # output sent to the frontend — they're only for LLM consumption
-                    # via convert_output_to_messages.
+                    # Omit large inline image bytes from streaming UI updates. Keep compact
+                    # references for temporary-chat replay; the renderer does not display input_image parts.
                     frontend_output = []
                     for item in full_output():
                         if item.get('type') == 'function_call_output':
                             parts = item.get('output', [])
                             if any(p.get('type') == 'input_image' for p in parts):
-                                item = {**item, 'output': [p for p in parts if p.get('type') != 'input_image']}
+                                item = {
+                                    **item,
+                                    'output': [
+                                        p
+                                        for p in parts
+                                        if p.get('type') != 'input_image'
+                                        or not p.get('image_url', '').startswith('data:')
+                                    ],
+                                }
                         frontend_output.append(item)
 
                     await event_emitter(
@@ -6012,7 +6033,13 @@ async def streaming_chat_response_handler(response, ctx):
                             new_form_data['messages'] = (
                                 [system_message] if system_message else []
                             ) + convert_output_to_messages(
-                                output, raw=True, reasoning_format=get_reasoning_format(model)
+                                output,
+                                raw=True,
+                                reasoning_format=get_reasoning_format(model),
+                                include_tool_images=model.get('info', {})
+                                .get('meta', {})
+                                .get('capabilities', {})
+                                .get('vision', True),
                             )
                             new_form_data['previous_response_id'] = last_response_id
                         else:
@@ -6021,6 +6048,10 @@ async def streaming_chat_response_handler(response, ctx):
                                 raw=True,
                                 reasoning_format=get_reasoning_format(model),
                                 flatten_tool_images=True,
+                                include_tool_images=model.get('info', {})
+                                .get('meta', {})
+                                .get('capabilities', {})
+                                .get('vision', True),
                             )
 
                             # Chat Completions providers don't support multimodal
@@ -6054,6 +6085,8 @@ async def streaming_chat_response_handler(response, ctx):
                                         ],
                                     }
                                 )
+
+                        new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                         if filter_functions:
                             new_form_data, _ = await process_filter_functions(
@@ -6271,9 +6304,15 @@ async def streaming_chat_response_handler(response, ctx):
                                         raw=True,
                                         reasoning_format=get_reasoning_format(model),
                                         flatten_tool_images=True,
+                                        include_tool_images=model.get('info', {})
+                                        .get('meta', {})
+                                        .get('capabilities', {})
+                                        .get('vision', True),
                                     ),
                                 ],
                             }
+
+                            new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                             if filter_functions:
                                 new_form_data, _ = await process_filter_functions(

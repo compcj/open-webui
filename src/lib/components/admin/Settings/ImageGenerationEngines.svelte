@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 
-	import type { ImageEngineConfig, ImageGenerationEngine } from '$lib/apis/images';
+	import type { ImageEditEngineConfig, ImageGenerationEngine } from '$lib/apis/images';
 	import ImageEngineProviderFields from './ImageEngineProviderFields.svelte';
 	import { createImageEngineConfig, prepareImageEngineProfiles } from './image-engine-editor';
 	import AdminSettingField from './AdminSettingField.svelte';
@@ -13,7 +13,7 @@
 		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 
 	let paramsDrafts: Record<string, { generation: string; edit: string }> = {};
-	let editStash: Record<string, ImageEngineConfig> = {};
+	let editStash: Record<string, ImageEditEngineConfig> = {};
 
 	$: {
 		for (const engine of engines) {

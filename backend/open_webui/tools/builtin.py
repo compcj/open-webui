@@ -385,6 +385,8 @@ async def generate_image(
 ) -> str:
     """
     Generate an image based on a text prompt.
+    Images are displayed automatically and retained as visual context for vision-capable models.
+    Use that context for follow-up requests; do not embed the same images again in Markdown.
 
     :param prompt: A detailed description of the image to generate
     :return: Confirmation that the image was generated, or an error message
@@ -433,7 +435,7 @@ async def generate_image(
             return JSONCodec.dumps(
                 {
                     'status': 'success',
-                    'message': 'The image has been successfully generated and is already visible to the user in the chat. You do not need to display or embed the image again - just acknowledge that it has been created.',
+                    'message': 'The image is already visible in the chat. Its reference is retained in the conversation and supplied as visual context to vision-capable models for this response and later turns. Use the available image context for follow-up requests. Do not display or embed the image again.',
                     'images': images,
                 },
                 ensure_ascii=False,
@@ -458,6 +460,8 @@ async def edit_image(
     """
     Transform one or more existing images according to a text prompt.
     Supports targeted edits such as adding, removing, replacing, inpainting, extending, or compositing image content.
+    Edited images are displayed automatically and retained as visual context for vision-capable models.
+    Use that context for follow-up requests; do not embed the same images again in Markdown.
 
     :param prompt: A description of the transformation to apply to the provided images
     :param image_urls: Source image URLs to modify or use as composition inputs
@@ -511,7 +515,7 @@ async def edit_image(
             return JSONCodec.dumps(
                 {
                     'status': 'success',
-                    'message': 'The edited image has been successfully generated and is already visible to the user in the chat. You do not need to display or embed the image again - just acknowledge that it has been created.',
+                    'message': 'The edited image is already visible in the chat. Its reference is retained in the conversation and supplied as visual context to vision-capable models for this response and later turns. Use the available image context for follow-up requests. Do not display or embed the image again.',
                     'images': images,
                 },
                 ensure_ascii=False,

@@ -87,10 +87,20 @@ class ImageEngineConfig(BaseModel):
         return self
 
 
+class ImageEditEngineConfig(ImageEngineConfig):
+    engine: Literal['openai', 'gemini', 'grok', 'comfyui', 'disabled']
+
+    @model_validator(mode='after')
+    def validate_provider_config(self):
+        if self.engine == 'disabled':
+            return self
+        return super().validate_provider_config()
+
+
 class ImageGenerationEngineProfile(ImageEngineConfig):
     id: str
     name: str
-    edit: ImageEngineConfig | None = None
+    edit: ImageEditEngineConfig | None = None
 
     @field_validator('id', 'name', mode='before')
     @classmethod
@@ -235,6 +245,12 @@ def resolve_image_edit_config(
         return snapshot
 
     edit = selected.edit
+    if edit.engine == 'disabled':
+        snapshot.ENABLE_IMAGE_EDIT = False
+        snapshot.IMAGE_EDIT_ENGINE = 'disabled'
+        snapshot.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX = ''
+        return snapshot
+
     snapshot.IMAGE_EDIT_PARAMS = copy.deepcopy(edit.params)
     snapshot.IMAGES_EDIT_OPENAI_API_BASE_URL = ''
     snapshot.IMAGES_EDIT_OPENAI_API_KEY = ''

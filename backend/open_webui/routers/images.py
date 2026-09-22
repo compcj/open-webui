@@ -953,6 +953,9 @@ async def image_edits(
         getattr(default_image_config, 'IMAGE_GENERATION_ENGINES', []),
         form_data.engine_id,
     )
+    if image_config.IMAGE_EDIT_ENGINE == 'disabled':
+        raise HTTPException(status_code=403, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+
     size = None
     width, height = None, None
     metadata = metadata or {}

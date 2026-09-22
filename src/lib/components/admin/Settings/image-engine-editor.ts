@@ -1,4 +1,8 @@
-import type { ImageEngineConfig, ImageGenerationEngine } from '$lib/apis/images';
+import type {
+	ImageEditEngineConfig,
+	ImageEngineConfig,
+	ImageGenerationEngine
+} from '$lib/apis/images';
 
 export function createImageEngineConfig(): ImageEngineConfig {
 	return {
@@ -40,7 +44,12 @@ export function prepareImageEngineProfiles(
 		ids.add(id.toLocaleLowerCase());
 
 		const generation = prepareConfig(profile, drafts[id]?.generation, false);
-		const edit = profile.edit ? prepareConfig(profile.edit, drafts[id]?.edit, true) : null;
+		const edit =
+			profile.edit?.engine === 'disabled'
+				? { ...createImageEngineConfig(), engine: 'disabled' as const }
+				: profile.edit
+					? prepareConfig(profile.edit, drafts[id]?.edit, true)
+					: null;
 		return { id, name, ...generation, edit };
 	});
 }
@@ -57,11 +66,11 @@ function parseObject(value: string, errorKey: string): Record<string, unknown> {
 	throw new Error(errorKey);
 }
 
-function prepareConfig(
-	config: ImageEngineConfig,
+function prepareConfig<Engine extends ImageEditEngineConfig['engine']>(
+	config: ImageEngineConfig<Engine>,
 	paramsDraft: string | undefined,
 	isEdit: boolean
-): ImageEngineConfig {
+): ImageEngineConfig<Engine> {
 	const params = parseObject(
 		paramsDraft ?? JSON.stringify(config.params ?? {}),
 		isEdit

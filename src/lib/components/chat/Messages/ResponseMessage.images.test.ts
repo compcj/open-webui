@@ -126,6 +126,27 @@ describe('generated images in assistant responses', () => {
 		expect(html).toContain(`src="${image.url}"`);
 	});
 
+	it.each(['generate_image', 'edit_image'])(
+		'renders one image with retained %s visual context',
+		(name) => {
+			const html = renderMessage({
+				output: [
+					{ type: 'function_call', call_id: 'call-1', name, status: 'completed' },
+					{
+						type: 'function_call_output',
+						call_id: 'call-1',
+						output: [
+							{ type: 'input_text', text: JSON.stringify({ status: 'success', images: [image] }) },
+							{ type: 'input_image', image_url: image.url }
+						]
+					},
+					{ type: 'message', content: [{ type: 'output_text', text: 'The image is ready.' }] }
+				]
+			});
+			expect(html.split(`src="${image.url}"`)).toHaveLength(2);
+		}
+	);
+
 	it('preserves downloadable non-image attachments', () => {
 		const html = renderMessage({
 			content: 'The file is ready.',

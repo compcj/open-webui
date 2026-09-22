@@ -2,8 +2,8 @@ import { IMAGES_API_BASE_URL } from '$lib/constants';
 
 export type ImageGenerationEngineOption = { id: string; name: string };
 
-export type ImageEngineConfig = {
-	engine: 'openai' | 'gemini' | 'grok' | 'comfyui';
+export type ImageEngineConfig<Engine extends string = 'openai' | 'gemini' | 'grok' | 'comfyui'> = {
+	engine: Engine;
 	model: string;
 	tool_description_suffix: string;
 	base_url: string;
@@ -17,8 +17,10 @@ export type ImageEngineConfig = {
 	comfyui_workflow_nodes: { type: string; key: string; node_ids: string[] }[];
 };
 
+export type ImageEditEngineConfig = ImageEngineConfig<ImageEngineConfig['engine'] | 'disabled'>;
+
 export type ImageGenerationEngine = ImageGenerationEngineOption &
-	ImageEngineConfig & { edit?: ImageEngineConfig | null };
+	ImageEngineConfig & { edit?: ImageEditEngineConfig | null };
 
 export const getImageGenerationEngines = async (
 	token: string = ''

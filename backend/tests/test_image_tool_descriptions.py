@@ -197,3 +197,17 @@ def test_empty_defaults_keep_original_schema(tool_context):
     actual = tool_context.tools({'image_generation': True})
     for name in ('generate_image', 'edit_image'):
         assert actual[name]['spec'] == base_spec(tool_context, name)
+
+
+def test_selected_disabled_editor_removes_only_edit_tool(tool_context):
+    tool_context.config_values['image_generation.engines'].append(
+        profile(id='disabled', name='Generation Only', edit={'engine': 'disabled'})
+    )
+    tool_context.metadata['image_generation_engine_id'] = 'disabled'
+    actual = tool_context.tools({'image_generation': True})
+    assert 'generate_image' in actual
+    assert 'edit_image' not in actual
+
+    for engine_id in ('a', 'default-editor', None, 'deleted'):
+        tool_context.metadata['image_generation_engine_id'] = engine_id
+        assert 'edit_image' in tool_context.tools({'image_generation': True})

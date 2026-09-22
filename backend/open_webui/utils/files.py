@@ -53,6 +53,10 @@ _IMAGE_MIME_FALLBACK = {
 
 async def get_image_base64_from_url(url: str, user=None) -> Optional[str]:
     try:
+        local_file = re.fullmatch(r'/api/v1/files/([^/?#]+)/content/?(?:[?#].*)?', url)
+        if local_file:
+            return await get_image_base64_from_file_id(local_file.group(1), user=user)
+
         if url.startswith('http'):
             from open_webui.models.config import Config
 

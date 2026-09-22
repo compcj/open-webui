@@ -728,6 +728,7 @@ async def get_builtin_tools(
             'images.edit.tool_description_suffix',
         )
         defaults = SimpleNamespace(
+            ENABLE_IMAGE_EDIT=config.get('images.edit.enable'),
             IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX=image_config.get('image_generation.tool_description_suffix') or '',
             IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX=image_config.get('images.edit.tool_description_suffix') or '',
         )
@@ -736,6 +737,8 @@ async def get_builtin_tools(
         try:
             generation_config = resolve_image_generation_config(defaults, profiles, engine_id)
             edit_config = resolve_image_edit_config(defaults, profiles, engine_id)
+            if not edit_config.ENABLE_IMAGE_EDIT and edit_image in builtin_functions:
+                builtin_functions.remove(edit_image)
             image_tool_suffixes = {
                 'generate_image': generation_config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX.strip(),
                 'edit_image': edit_config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX.strip(),

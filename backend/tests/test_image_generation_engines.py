@@ -439,6 +439,61 @@ def test_missing_or_null_edit_uses_default_edit_settings(selected):
     assert vars(resolved) == vars(default)
 
 
+def test_disabled_edit_roundtrips_without_disabling_generation_or_other_profiles():
+    engines = load_engines_module()
+    profiles = engines.normalize_engine_profiles([profile(edit={'engine': 'disabled'})])
+    saved = profiles[0].model_dump(mode='json')
+    assert saved['edit']['engine'] == 'disabled'
+    assert engines.normalize_engine_profiles([saved])[0].model_dump(mode='json') == saved
+
+    default = default_config()
+    default.ENABLE_IMAGE_EDIT = True
+    resolved = engines.resolve_image_edit_config(default, profiles, 'studio')
+    assert resolved.ENABLE_IMAGE_EDIT is False
+    assert resolved.IMAGE_EDIT_ENGINE == 'disabled'
+    assert default.ENABLE_IMAGE_EDIT is True
+    assert engines.resolve_image_edit_config(default, profiles, None).ENABLE_IMAGE_EDIT is True
+    assert (
+        engines.resolve_image_generation_config(default, profiles, 'studio').IMAGE_GENERATION_MODEL == profiles[0].model
+    )
+
+
+def test_disabled_is_not_a_generation_provider():
+    with pytest.raises(ValidationError):
+        load_engines_module().normalize_engine_profiles([profile(engine='disabled')])
+
+
+def test_admin_config_roundtrips_disabled_editor(image_router):
+    router, state = image_router.module, image_router.state
+    payload = images_config_payload(router, state)
+    payload['IMAGE_GENERATION_ENGINES'] = [profile(edit={'engine': 'disabled'})]
+    response = asyncio.run(
+        router.update_config(SimpleNamespace(), router.ImagesConfig(**payload), SimpleNamespace(id='admin'))
+    )
+    assert response['IMAGE_GENERATION_ENGINES'][0]['edit']['engine'] == 'disabled'
+    assert asyncio.run(router.get_config(SimpleNamespace(), SimpleNamespace(id='admin'))) == response
+
+
+@pytest.mark.parametrize('handler', ['image_edits', 'edit_images'])
+def test_disabled_editor_rejects_requests_before_loading_images_or_calling_provider(image_router, monkeypatch, handler):
+    router, state = image_router.module, image_router.state
+    state.values['images.edit.enable'] = True
+    state.values['image_generation.engines'] = [profile(edit={'engine': 'disabled'})]
+    load_image = AsyncMock()
+    monkeypatch.setattr(router, 'get_image_data', load_image)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            getattr(router, handler)(
+                SimpleNamespace(),
+                router.EditImageForm(prompt='edit', image='data:image/png;base64,aW1hZ2U=', engine_id='studio'),
+                user=SimpleNamespace(id='user-1', role='admin'),
+            )
+        )
+    assert exc.value.status_code == 403
+    load_image.assert_not_awaited()
+    assert state.posts == []
+
+
 @pytest.mark.parametrize(
     'edit',
     [

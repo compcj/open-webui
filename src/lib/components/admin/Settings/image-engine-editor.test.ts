@@ -79,6 +79,23 @@ describe('paired image engine editor', () => {
 		expect(result[0].edit).toBeNull();
 	});
 
+	it('saves an explicitly disabled editor without validating hidden provider drafts', () => {
+		const source = profile();
+		source.edit = {
+			...createImageEngineConfig(),
+			engine: 'disabled',
+			comfyui_workflow: '{invalid'
+		};
+		const result = prepareImageEngineProfiles([source], {
+			'profile-1': { generation: '{"quality":"high"}', edit: '{invalid' }
+		});
+
+		expect(result[0].edit?.engine).toBe('disabled');
+		expect(result[0].engine).toBe('openai');
+		expect(result[0].params).toEqual({ quality: 'high' });
+		expect(prepareImageEngineProfiles(result, {})[0].edit?.engine).toBe('disabled');
+	});
+
 	it('uses generateContent for Gemini editing even when a stored profile says predict', () => {
 		const source = profile();
 		if (source.edit) source.edit.gemini_endpoint_method = 'predict';

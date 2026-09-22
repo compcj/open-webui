@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+from test_image_generation_engines import load_engines_module, profile
+
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
 
@@ -117,6 +119,8 @@ def test_legacy_image_editing_forwards_the_same_selected_pair(engine_id):
     sources = ['data:image/png;base64,aW1hZ2U=']
     namespace = {
         'Request': object,
+        'SimpleNamespace': SimpleNamespace,
+        'resolve_image_edit_config': load_engines_module().resolve_image_edit_config,
         'HTTPException': HTTPException,
         'EditImageForm': SimpleNamespace,
         'image_edits': edit,
@@ -144,6 +148,46 @@ def test_legacy_image_editing_forwards_the_same_selected_pair(engine_id):
     edit_form = edit.await_args.kwargs['form_data']
     assert edit_form.engine_id == engine_id
     assert edit_form.image == sources
+
+
+def test_legacy_image_mode_generates_instead_of_editing_when_selected_editor_is_off():
+    generate, edit = AsyncMock(return_value=[]), AsyncMock()
+    values = {
+        'images.edit.enable': True,
+        'image_generation.enable': True,
+        'image_generation.engines': [profile(edit={'engine': 'disabled'})],
+    }
+    namespace = {
+        'Request': object,
+        'HTTPException': HTTPException,
+        'SimpleNamespace': SimpleNamespace,
+        'resolve_image_edit_config': load_engines_module().resolve_image_edit_config,
+        'CreateImageForm': SimpleNamespace,
+        'EditImageForm': SimpleNamespace,
+        'image_generations': generate,
+        'image_edits': edit,
+        'Config': SimpleNamespace(get=AsyncMock(side_effect=lambda key: values.get(key))),
+        'is_saved_chat_id': lambda value: False,
+        'get_last_user_message': lambda messages: messages[-1]['content'],
+        'get_images_from_messages': lambda messages: [['data:image/png;base64,aW1hZ2U=']],
+        'add_or_update_system_message': lambda content, messages: messages,
+        'log': logging.getLogger(__name__),
+    }
+    handler = extract('utils/middleware.py', 'chat_image_generation_handler', namespace)
+    asyncio.run(
+        handler(
+            object(),
+            {'messages': [{'role': 'user', 'content': 'Draw a tree'}]},
+            {
+                '__metadata__': {'chat_id': 'temporary:chat-1', 'image_generation_engine_id': 'studio'},
+                '__event_emitter__': AsyncMock(),
+            },
+            SimpleNamespace(id='account-1'),
+        )
+    )
+    generate.assert_awaited_once()
+    assert generate.await_args.kwargs['form_data'].engine_id == 'studio'
+    edit.assert_not_awaited()
 
 
 def test_chat_metadata_consumes_engine_id_before_calling_text_provider():

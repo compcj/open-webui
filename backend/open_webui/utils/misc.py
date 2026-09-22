@@ -327,6 +327,7 @@ def convert_output_to_messages(
     raw: bool = False,
     reasoning_format: str | None = None,
     flatten_tool_images: bool = False,
+    include_tool_images: bool = True,
 ) -> list[dict]:
     """
     Convert OR-aligned output items to OpenAI Chat Completion-format messages.
@@ -349,6 +350,8 @@ def convert_output_to_messages(
               (for llama.cpp, which routes it via the chat template).
         flatten_tool_images: Move tool output images into a following user
             message for Chat Completions providers.
+        include_tool_images: Disable visual inputs for models without vision,
+            without removing image references from the stored output.
     """
     if not output or not isinstance(output, list):
         return []
@@ -431,7 +434,7 @@ def convert_output_to_messages(
                 if part.get('type') == 'input_text':
                     output_text = part.get('text', '')
                     content += str(output_text) if not isinstance(output_text, str) else output_text
-                elif part.get('type') == 'input_image':
+                elif part.get('type') == 'input_image' and include_tool_images:
                     url = part.get('image_url', '')
                     if url:
                         image_urls.append(url)
