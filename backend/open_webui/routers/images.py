@@ -36,6 +36,7 @@ from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.images.comfyui import (
     ComfyUICreateImageForm,
     ComfyUIEditImageForm,
+    ComfyUIError,
     ComfyUIWorkflow,
     comfyui_create_image,
     comfyui_edit_image,
@@ -885,6 +886,10 @@ async def image_generations(
                 )
                 images.append(image_file)
             return images
+    except ComfyUIError as e:
+        # The adapter supplies a safe message; suppress raw transport exception
+        # context so native-tool logging cannot reveal URLs or workflow inputs.
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:
         error = e
         if isinstance(e, aiohttp.ClientResponseError):
@@ -1280,6 +1285,8 @@ async def image_edits(
                 images.append(image_file)
 
             return images
+    except ComfyUIError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:
         error = e
         if isinstance(e, aiohttp.ClientResponseError):

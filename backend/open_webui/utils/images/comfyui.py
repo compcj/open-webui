@@ -14,10 +14,29 @@ log = logging.getLogger(__name__)
 default_headers = {'User-Agent': 'Mozilla/5.0'}
 
 
+class ComfyUIError(RuntimeError):
+    """A safe, stage-specific error that can be shown to image tool callers."""
+
+
+def _comfyui_error(stage, error):
+    if isinstance(error, TimeoutError):
+        message = f'ComfyUI {stage} timed out.'
+    elif isinstance(error, aiohttp.ClientResponseError):
+        message = f'ComfyUI {stage} failed (HTTP {error.status}).'
+    else:
+        # Exception messages may contain authenticated URLs or workflow inputs.
+        message = f'ComfyUI {stage} failed ({type(error).__name__}).'
+
+    if stage in {'workflow preparation', 'WebSocket connection'}:
+        message += ' The workflow has not been submitted.'
+    elif stage in {'workflow submission', 'execution', 'history retrieval'}:
+        message += ' Check the ComfyUI queue and server logs before retrying; the task may already have been submitted.'
+    return ComfyUIError(message)
+
+
 async def queue_prompt(prompt, client_id, base_url, api_key):
     log.info('queue_prompt')
     p = {'prompt': prompt, 'client_id': client_id}
-    log.debug('queue_prompt data: %s', p)
     try:
         session = await get_session()
         async with session.post(
@@ -29,8 +48,7 @@ async def queue_prompt(prompt, client_id, base_url, api_key):
             r.raise_for_status()
             return await r.json()
     except Exception as e:
-        log.exception(f'Error while queuing prompt: {e}')
-        raise
+        raise _comfyui_error('workflow submission', e) from e
 
 
 async def get_image(filename, subfolder, folder_type, base_url, api_key):
@@ -56,14 +74,17 @@ def get_image_url(filename, subfolder, folder_type, base_url):
 
 async def get_history(prompt_id, base_url, api_key):
     log.info('get_history')
-    session = await get_session()
-    async with session.get(
-        f'{base_url}/history/{prompt_id}',
-        headers={**default_headers, 'Authorization': f'Bearer {api_key}'},
-        ssl=AIOHTTP_CLIENT_SESSION_SSL,
-    ) as r:
-        r.raise_for_status()
-        return await r.json()
+    try:
+        session = await get_session()
+        async with session.get(
+            f'{base_url}/history/{prompt_id}',
+            headers={**default_headers, 'Authorization': f'Bearer {api_key}'},
+            ssl=AIOHTTP_CLIENT_SESSION_SSL,
+        ) as r:
+            r.raise_for_status()
+            return await r.json()
+    except Exception as e:
+        raise _comfyui_error('history retrieval', e) from e
 
 
 async def _ws_get_images(ws, workflow, client_id, base_url, api_key):
@@ -77,16 +98,26 @@ async def _ws_get_images(ws, workflow, client_id, base_url, api_key):
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
             message = JSONCodec.loads(msg.data)
-            if message['type'] == 'executing':
-                data = message['data']
-                if data['node'] is None and data['prompt_id'] == prompt_id:
-                    break  # Execution is done
+            if message['type'] not in {'executing', 'execution_error', 'execution_interrupted'}:
+                continue
+            data = message.get('data', {})
+            if data.get('prompt_id') != prompt_id:
+                continue
+            if message['type'] in {'execution_error', 'execution_interrupted'}:
+                outcome = 'failed' if message['type'] == 'execution_error' else 'was interrupted'
+                raise ComfyUIError(f'ComfyUI execution {outcome}. Check the ComfyUI server logs for node details.')
+            if message['type'] == 'executing' and data.get('node') is None:
+                break  # Execution is done
         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
             log.error(f'WebSocket closed unexpectedly: {msg.type}')
             break
         # binary messages (previews) are silently skipped
 
-    history = (await get_history(prompt_id, base_url, api_key))[prompt_id]
+    history = (await get_history(prompt_id, base_url, api_key)).get(prompt_id)
+    if not history:
+        raise ComfyUIError(
+            'ComfyUI task history is unavailable. The task may still be running; check the ComfyUI queue before retrying.'
+        )
     for node_id in history['outputs']:
         node_output = history['outputs'][node_id]
         if node_id in workflow and workflow[node_id].get('class_type') in [
@@ -187,29 +218,31 @@ def _apply_workflow_nodes(workflow, nodes, model, payload):
 
 
 async def comfyui_create_image(model: str, payload: ComfyUICreateImageForm, client_id, base_url, api_key):
-    ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
-    workflow = JSONCodec.loads(payload.workflow.workflow)
-    _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
-
-    headers = {'Authorization': f'Bearer {api_key}'}
-    session = await get_session()
-
+    stage = 'workflow preparation'
     try:
+        ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
+        workflow = JSONCodec.loads(payload.workflow.workflow)
+        _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
+
+        stage = 'WebSocket connection'
+        headers = {'Authorization': f'Bearer {api_key}'}
+        session = await get_session()
         async with session.ws_connect(
             f'{ws_url}/ws?clientId={client_id}',
             headers=headers,
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
         ) as ws:
+            stage = 'execution'
             log.info('WebSocket connection established.')
-            log.info('Sending workflow to WebSocket server.')
-            log.debug('Workflow: %s', workflow)
+            log.info('Submitting workflow to ComfyUI.')
             images = await _ws_get_images(ws, workflow, client_id, base_url, api_key)
-    except aiohttp.WSServerHandshakeError as e:
-        log.exception(f'Failed to connect to WebSocket server: {e}')
-        return None
+    except ComfyUIError as e:
+        log.error('%s', e)
+        raise
     except Exception as e:
-        log.exception(f'Error during image generation: {e}')
-        return None
+        error = _comfyui_error(stage, e)
+        log.error('%s', error)
+        raise error from e
 
     return images
 
@@ -228,28 +261,30 @@ class ComfyUIEditImageForm(BaseModel):
 
 
 async def comfyui_edit_image(model: str, payload: ComfyUIEditImageForm, client_id, base_url, api_key):
-    ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
-    workflow = JSONCodec.loads(payload.workflow.workflow)
-    _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
-
-    headers = {'Authorization': f'Bearer {api_key}'}
-    session = await get_session()
-
+    stage = 'workflow preparation'
     try:
+        ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
+        workflow = JSONCodec.loads(payload.workflow.workflow)
+        _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
+
+        stage = 'WebSocket connection'
+        headers = {'Authorization': f'Bearer {api_key}'}
+        session = await get_session()
         async with session.ws_connect(
             f'{ws_url}/ws?clientId={client_id}',
             headers=headers,
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
         ) as ws:
+            stage = 'execution'
             log.info('WebSocket connection established.')
-            log.info('Sending workflow to WebSocket server.')
-            log.debug('Workflow: %s', workflow)
+            log.info('Submitting workflow to ComfyUI.')
             images = await _ws_get_images(ws, workflow, client_id, base_url, api_key)
-    except aiohttp.WSServerHandshakeError as e:
-        log.exception(f'Failed to connect to WebSocket server: {e}')
-        return None
+    except ComfyUIError as e:
+        log.error('%s', e)
+        raise
     except Exception as e:
-        log.exception(f'Error during image editing: {e}')
-        return None
+        error = _comfyui_error(stage, e)
+        log.error('%s', error)
+        raise error from e
 
     return images

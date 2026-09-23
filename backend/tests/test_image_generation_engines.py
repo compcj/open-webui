@@ -32,8 +32,6 @@ def install_module(monkeypatch, name, **values):
 
 @pytest.fixture
 def image_router(monkeypatch, tmp_path):
-    from pydantic import BaseModel, ConfigDict
-
     values = {
         'image_generation.enable': True,
         'image_generation.prompt.enable': True,
@@ -105,30 +103,6 @@ def image_router(monkeypatch, tmp_path):
         @staticmethod
         def INCORRECT_FORMAT(detail):
             return f'Incorrect format{detail}'
-
-    class WorkflowNode(BaseModel):
-        type: str = ''
-        key: str = ''
-        node_ids: list[str] = []
-
-    class Workflow(BaseModel):
-        workflow: str
-        nodes: list[WorkflowNode]
-
-    class CreateForm(BaseModel):
-        model_config = ConfigDict(extra='ignore')
-        workflow: Workflow
-        prompt: str
-        negative_prompt: str | None = None
-        width: int
-        height: int
-        n: int = 1
-        steps: int | None = None
-        seed: int | None = None
-
-    class EditForm(BaseModel):
-        model_config = ConfigDict(extra='allow')
-        workflow: Workflow
 
     async def comfy_create(model, form_data, client_id, base_url, api_key):
         state.comfy_calls.append((model, form_data, base_url, api_key))
@@ -227,22 +201,19 @@ def image_router(monkeypatch, tmp_path):
         get_verified_user=user_dependency,
     )
     install_module(monkeypatch, 'open_webui.utils.headers', include_user_info_headers=lambda headers, user: headers)
-    install_module(
-        monkeypatch,
-        'open_webui.utils.images.comfyui',
-        ComfyUICreateImageForm=CreateForm,
-        ComfyUIEditImageForm=EditForm,
-        ComfyUIWorkflow=Workflow,
-        comfyui_create_image=comfy_create,
-        comfyui_edit_image=AsyncMock(),
-        comfyui_upload_image=AsyncMock(),
-    )
     install_module(monkeypatch, 'open_webui.utils.json_codec', JSONCodec=json)
     install_module(monkeypatch, 'open_webui.utils.session_pool', get_session=get_session)
     install_module(monkeypatch, 'aiofiles', open=lambda *args, **kwargs: None)
     install_module(monkeypatch, 'sqlalchemy')
     install_module(monkeypatch, 'sqlalchemy.ext')
     install_module(monkeypatch, 'sqlalchemy.ext.asyncio', AsyncSession=object)
+
+    comfyui_spec = importlib.util.spec_from_file_location(
+        'open_webui.utils.images.comfyui', BACKEND / 'utils/images/comfyui.py'
+    )
+    comfyui = importlib.util.module_from_spec(comfyui_spec)
+    monkeypatch.setitem(sys.modules, comfyui_spec.name, comfyui)
+    comfyui_spec.loader.exec_module(comfyui)
 
     engines_spec = importlib.util.spec_from_file_location(
         'open_webui.utils.images.engines', BACKEND / 'utils/images/engines.py'
@@ -255,7 +226,10 @@ def image_router(monkeypatch, tmp_path):
     router = importlib.util.module_from_spec(router_spec)
     monkeypatch.setitem(sys.modules, router_spec.name, router)
     router_spec.loader.exec_module(router)
-    return SimpleNamespace(module=router, state=state, engines=engines)
+    monkeypatch.setattr(router, 'comfyui_create_image', comfy_create)
+    monkeypatch.setattr(router, 'comfyui_edit_image', AsyncMock())
+    monkeypatch.setattr(router, 'comfyui_upload_image', AsyncMock())
+    return SimpleNamespace(module=router, state=state, engines=engines, comfyui=comfyui)
 
 
 def profile(**overrides):
