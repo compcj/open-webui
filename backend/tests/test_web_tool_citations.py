@@ -50,6 +50,8 @@ def runtime():
         'JSONCodec': json,
         'log': logging.getLogger(__name__),
         'escape': escape,
+        're': re,
+        'RAG_SOURCE_METADATA_KEYS': ['page', 'page_label', 'start_index'],
         'uuid': uuid,
         'Config': SimpleNamespace(get=get_config),
         'prompt_template': prompt_template,
@@ -69,6 +71,7 @@ def runtime():
         'all_tool_call_sources': [],
         'tool_call_sources': [],
     }
+    load_functions(ns, 'retrieval/utils.py', {'filter_source_metadata'})
     load_functions(
         ns,
         'utils/misc.py',

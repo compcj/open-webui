@@ -37,6 +37,7 @@
 		artifactContents,
 		tools,
 		skills,
+		terminalSkills,
 		toolServers,
 		terminalServers,
 		functions,
@@ -57,13 +58,15 @@
 		copyToClipboard,
 		getMessageContentParts,
 		createMessagesList,
+		getDeepestChildId,
 		sanitizeHistory,
 		getPromptVariables,
 		processDetails,
 		removeAllDetails,
 		getCodeBlockContents,
 		displayFileHandler,
-		getUsageTokenCount
+		getUsageTokenCount,
+		isRasterImageContentType
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
@@ -193,6 +196,17 @@
 	let askUserTimeoutMs: number | null = null;
 
 	let selectedModels = [''];
+	let selectedModelIdx = 0;
+	$: selectedModelIdx = Math.max(0, selectedModels.length - 1);
+	$: backgroundImage = embedded
+		? null
+		: ($selectedFolder as { meta?: { background_image_url?: string } } | null)?.meta
+				?.background_image_url ||
+			atSelectedModel?.info?.meta?.background_image_url ||
+			$models.find((model) => model.id === selectedModels[selectedModelIdx])?.info?.meta
+				?.background_image_url ||
+			($settings?.backgroundImageUrl ?? $config?.license_metadata?.background_image_url);
+
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
 	$: if (atSelectedModel !== undefined) {
@@ -458,16 +472,27 @@
 		notesEnabled = features.notes;
 	};
 
-	const persistChatUserSettings = async (errorScope: string, notifyOnError = false) => {
+	const persistChatUserSettings = async (
+		fields: (
+			| 'toolFeaturesByModel'
+			| 'imageGenerationEngineId'
+			| 'reasoningEffortByModel'
+			| 'params'
+		)[],
+		errorScope: string,
+		notifyOnError = false
+	) => {
 		if (!$user?.id) return;
 		const userId = $user.id;
 		const token = localStorage.token;
 		await enqueueChatSettingsSave(
 			async () => {
-				// Read the latest full settings, including other edits made while a save was pending.
+				// Read only changed fields, including newer edits to those fields while a save was pending.
 				// Queued work must never write one account's preferences into another account.
 				if (get(user)?.id !== userId || localStorage.token !== token) return;
-				const saved = await updateUserSettings(token, { ui: get(settings) });
+				const current = get(settings);
+				const ui = Object.fromEntries(fields.map((field) => [field, current[field] ?? null]));
+				const saved = await updateUserSettings(token, { ui });
 				if (!saved) throw new Error('Failed to update settings');
 			},
 			(error) => {
@@ -494,7 +519,7 @@
 				enabled
 			)
 		}));
-		await persistChatUserSettings('tool feature settings', true);
+		await persistChatUserSettings(['toolFeaturesByModel'], 'tool feature settings', true);
 	};
 
 	$: {
@@ -553,7 +578,11 @@
 			...current,
 			imageGenerationEngineId: resolveImageGenerationEngineId(id, imageGenerationEngines)
 		}));
-		await persistChatUserSettings('image generation engine settings', true);
+		await persistChatUserSettings(
+			['imageGenerationEngineId'],
+			'image generation engine settings',
+			true
+		);
 	};
 
 	const handleContextToolToggle = (feature: ContextToolFeature, enabled: boolean) => {
@@ -670,7 +699,7 @@
 			...$settings,
 			reasoningEffortByModel: next
 		});
-		await persistChatUserSettings('reasoning effort settings');
+		await persistChatUserSettings(['reasoningEffortByModel'], 'reasoning effort settings');
 	};
 
 	const seedReasoningEffortFromLastUsed = (modelIds = selectedModelIds, persist = true) => {
@@ -715,7 +744,7 @@
 				tool_approval_mode
 			}
 		});
-		await persistChatUserSettings('tool permissions settings');
+		await persistChatUserSettings(['params'], 'tool permissions settings');
 
 		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
 			const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
@@ -1285,6 +1314,13 @@
 		selectedTerminalId.set(null);
 	}
 
+	let lastTerminalSkillSelector: string | null = null;
+	$: if ($selectedTerminalId !== lastTerminalSkillSelector) {
+		selectedSkillIds = selectedSkillIds.filter((id) => !id.startsWith('terminal:'));
+		terminalSkills.set([]);
+		lastTerminalSkillSelector = $selectedTerminalId;
+	}
+
 	let settingDefaults = false;
 	const setDefaults = async () => {
 		// Resolve these synchronously, even if another model's tool loading is still pending.
@@ -1390,21 +1426,7 @@
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 		let _messageId = JSON.parse(JSON.stringify(message.id));
 
-		let messageChildrenIds = [];
-		if (_messageId === null) {
-			messageChildrenIds = Object.keys(history.messages).filter(
-				(id) => history.messages[id].parentId === null
-			);
-		} else {
-			messageChildrenIds = history.messages[_messageId].childrenIds;
-		}
-
-		while (messageChildrenIds.length !== 0) {
-			_messageId = messageChildrenIds.at(-1);
-			messageChildrenIds = history.messages[_messageId].childrenIds;
-		}
-
-		history.currentId = _messageId;
+		history.currentId = getDeepestChildId(history, _messageId);
 
 		await tick();
 
@@ -1521,12 +1543,18 @@
 							updateLastReadAt($chatId);
 						}
 					}
-				} else if (type === 'response:completion') {
-					responseCompletionEventHandler(data, message);
-				} else if (type === 'chat:completion') {
-					chatCompletionEventHandler(data, message, event.chat_id);
+				} else if (type === 'response:completion' || type === 'chat:completion') {
+					if (type === 'response:completion') {
+						responseCompletionEventHandler(data, message);
+					} else {
+						await chatCompletionEventHandler(data, message, event.chat_id);
+					}
+					autoScrollToBottom();
 				} else if (type === 'chat:tasks:cancel') {
 					dismissContextCompactionToast();
+					if (data?.output) {
+						message.output = data.output;
+					}
 					if (event.message_id === history.currentId) {
 						taskIds = null;
 						// Set all response messages to done
@@ -1558,6 +1586,13 @@
 					}, 100);
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
+					if (data.done === true && !message.done) {
+						message.done = true;
+						dismissContextCompactionToast();
+						if (event.message_id === history.currentId) {
+							await processNextInQueue(event.chat_id);
+						}
+					}
 				} else if (type === 'chat:message:follow_ups') {
 					message.followUps = data.follow_ups;
 
@@ -2311,6 +2346,10 @@
 			}
 		}
 
+		if ($page.url.searchParams.get('temporary-chat') === 'true' && $temporaryChatAllowed) {
+			temporaryChatEnabled.set(true);
+		}
+
 		if (!$temporaryChatAllowed) {
 			await temporaryChatEnabled.set(false);
 		}
@@ -2411,7 +2450,7 @@
 		await showArtifacts.set(false);
 
 		if (!embedded && $page.url.pathname.includes('/c/')) {
-			window.history.replaceState(history.state, '', `/`);
+			window.history.replaceState(window.history.state, '', `/`);
 		}
 
 		autoScroll = true;
@@ -2460,13 +2499,13 @@
 				.get('tools')
 				?.split(',')
 				.map((id) => id.trim())
-				.filter((id) => id);
+				.filter((id) => id && ($tools ?? []).find((t) => t.id === id));
 		} else if ($page.url.searchParams.get('tool-ids')) {
 			selectedToolIds = $page.url.searchParams
 				.get('tool-ids')
 				?.split(',')
 				.map((id) => id.trim())
-				.filter((id) => id);
+				.filter((id) => id && ($tools ?? []).find((t) => t.id === id));
 		}
 
 		// Restore tool selection after OAuth redirect
@@ -2507,23 +2546,20 @@
 					}
 				}
 
-				if (query || eventFiles?.length) {
-					if (query) {
-						messageInput?.setText(query);
-					}
+				if (query) {
+					messageInput?.setText(query, () => submitHandler(prompt));
+				} else if (eventFiles?.length) {
 					await tick();
-					submitHandler(query || '');
+					submitHandler('');
 				}
 			}
 		} else if ($page.url.searchParams.get('q')) {
 			const q = $page.url.searchParams.get('q') ?? '';
-			messageInput?.setText(q);
 
-			if (q) {
-				if (($page.url.searchParams.get('submit') ?? 'true') === 'true') {
-					await tick();
-					submitHandler(q);
-				}
+			if (($page.url.searchParams.get('submit') ?? 'true') === 'true') {
+				messageInput?.setText(q, () => submitHandler(prompt));
+			} else {
+				messageInput?.setText(q);
 			}
 		}
 
@@ -2589,6 +2625,13 @@
 					(chatContent?.models ?? undefined) !== undefined
 						? chatContent.models
 						: [chatContent.models ?? ''];
+
+				// An empty model list is not evidence that the chat's models are gone.
+				if ($models.length > 0) {
+					selectedModels = selectedModels.filter((modelId) =>
+						$models.map((m) => m.id).includes(modelId)
+					);
+				}
 
 				if (!($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))) {
 					selectedModels = selectedModels.length > 0 ? [selectedModels[0]] : [''];
@@ -2743,7 +2786,7 @@
 
 	let scrollRAF = null;
 	let contentsRAF = null;
-	const scheduleResponseScrollToBottom = () => {
+	const autoScrollToBottom = () => {
 		if (!shouldAutoScrollResponse()) return;
 
 		if (!scrollRAF) {
@@ -3059,6 +3102,13 @@
 		if (output) {
 			message.output = output;
 			message.content = getOutputText(output);
+			if (
+				data.type === 'response.output_text.delta' &&
+				navigator.vibrate &&
+				$settings?.hapticFeedback
+			) {
+				navigator.vibrate(5);
+			}
 			dispatchCallOverlayAudio(message);
 		}
 
@@ -3160,9 +3210,6 @@
 		}
 
 		console.log(data);
-		await tick();
-
-		scheduleResponseScrollToBottom();
 	};
 
 	//////////////////////////
@@ -3176,7 +3223,7 @@
 			..._files.filter(
 				(item) =>
 					['doc', 'text', 'note', 'chat', 'folder', 'collection'].includes(item.type) ||
-					(item.type === 'file' && !(item?.content_type ?? '').startsWith('image/'))
+					(item.type === 'file' && !isRasterImageContentType(item?.content_type))
 			)
 		);
 		chatFiles = chatFiles.filter(
@@ -3317,11 +3364,11 @@
 			return;
 		}
 
-		const currentMessage = history.messages?.[history.currentId];
+		const forkedMessage = history.messages?.[messageId ?? history.currentId];
 		if (
 			generating ||
 			taskIds?.length ||
-			(currentMessage?.role === 'assistant' && !currentMessage.done)
+			(forkedMessage?.role === 'assistant' && !forkedMessage.done)
 		) {
 			toast.warning($i18n.t('Wait for the current response to finish before forking.'));
 			return;
@@ -3477,16 +3524,6 @@
 			}
 		}
 
-		if (history?.currentId) {
-			const currentMessage = history.messages[history.currentId];
-
-			if (currentMessage.error && !currentMessage.content) {
-				// Error in response
-				toast.error($i18n.t(`Oops! There was an error in the previous response.`));
-				return;
-			}
-		}
-
 		// Clear input and submit
 		messageInput?.setText('');
 		prompt = '';
@@ -3613,7 +3650,7 @@
 			if (model) {
 				const hasImages = createMessagesList(_history, parentId).some((message) =>
 					message.files?.some(
-						(file) => file.type === 'image' || (file?.content_type ?? '').startsWith('image/')
+						(file) => file.type === 'image' || isRasterImageContentType(file?.content_type)
 					)
 				);
 
@@ -3737,7 +3774,7 @@
 			...(userMessage?.files ?? []).filter(
 				(item) =>
 					['doc', 'text', 'note', 'chat', 'collection', 'folder'].includes(item.type) ||
-					(item.type === 'file' && !(item?.content_type ?? '').startsWith('image/'))
+					(item.type === 'file' && !isRasterImageContentType(item?.content_type))
 			)
 		);
 		// Remove duplicates
@@ -3788,7 +3825,7 @@
 			messages = messages
 				.map((message) => {
 					const imageFiles = (message?.files ?? []).filter(
-						(file) => file.type === 'image' || (file?.content_type ?? '').startsWith('image/')
+						(file) => file.type === 'image' || isRasterImageContentType(file?.content_type)
 					);
 
 					if (message.output && message.role === 'assistant') {
@@ -3873,17 +3910,17 @@
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
-				terminal_id:
-					terminalEnabled &&
-					($terminalServers ?? []).some((t) => t.id && t.id === $selectedTerminalId)
-						? $selectedTerminalId
-						: undefined,
+				terminal_id: terminalEnabled && $selectedTerminalId ? $selectedTerminalId : undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(
 						(server, idx) => toolServerIds.includes(idx) || toolServerIds.includes(server?.id)
 					),
 					// Direct terminal servers — always included when enabled (not routed through selectedToolIds)
-					...($terminalServers ?? []).filter((t) => !t.id)
+					...(terminalEnabled
+						? ($terminalServers ?? [])
+								.filter((server) => !server.id)
+								.map((server) => ({ ...server, is_terminal: true }))
+						: [])
 				],
 				features: getFeatures(),
 				image_generation_engine_id: getFeatures().image_generation
@@ -3975,7 +4012,7 @@
 					});
 					await chatId.set(res.chat_id);
 					if (!$temporaryChatEnabled && !embedded) {
-						window.history.replaceState(history.state, '', `/c/${res.chat_id}`);
+						window.history.replaceState(window.history.state, '', `/c/${res.chat_id}`);
 						await refreshChatList(localStorage.token);
 
 						// Persist chat-level params (system prompt, advanced
@@ -4223,7 +4260,7 @@
 						history.messages[messageId] = message;
 					}
 
-					scheduleResponseScrollToBottom();
+					autoScrollToBottom();
 				}
 
 				await saveChatHandler(_chatId, history);
@@ -4262,7 +4299,7 @@
 			await chatId.set(_chatId);
 
 			if (!embedded) {
-				window.history.replaceState(history.state, '', `/c/${_chatId}`);
+				window.history.replaceState(window.history.state, '', `/c/${_chatId}`);
 			}
 
 			await tick();
@@ -4318,7 +4355,8 @@
 
 	const MAX_DRAFT_LENGTH = 5000;
 	let saveDraftTimeout: ReturnType<typeof setTimeout> | null = null;
-	const getDraftChatId = () => chatIdProp || null;
+	// chatIdProp is empty for chats started from the home page (URL set via replaceState)
+	const getDraftChatId = () => chatIdProp || $chatId || null;
 
 	const getChatInputDraft = () => ({
 		prompt,
@@ -4579,25 +4617,14 @@
 >
 	{#if !loading}
 		<div in:fade={{ duration: 50 }} class="w-full h-full flex flex-col">
-			{#if !embedded && $selectedFolder && $selectedFolder?.meta?.background_image_url}
+			{#if backgroundImage}
 				<div
-					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
-					style="background-image: url({$selectedFolder?.meta?.background_image_url})  "
+					class="pointer-events-none absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+					style="background-image: url({backgroundImage})"
 				/>
-
 				<div
-					class="absolute top-0 left-0 w-full h-full bg-linear-to-t from-white to-white/85 dark:from-gray-900 dark:to-gray-900/90 z-0"
-				/>
-			{:else if !embedded && ($settings?.backgroundImageUrl ?? $config?.license_metadata?.background_image_url ?? null)}
-				<div
-					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
-					style="background-image: url({$settings?.backgroundImageUrl ??
-						$config?.license_metadata?.background_image_url})  "
-				/>
-
-				<div
-					class="absolute top-0 left-0 w-full h-full bg-linear-to-t from-white to-white/85 dark:from-gray-900 dark:to-gray-900/90 z-0"
-				/>
+					class="pointer-events-none absolute top-0 left-0 w-full h-full bg-linear-to-t from-white to-white/85 dark:from-gray-900 dark:to-gray-900/90 z-0"
+				></div>
 			{/if}
 
 			<div class="w-full h-full flex">
@@ -4928,6 +4955,7 @@
 						{:else}
 							<div class="flex items-center h-full">
 								<Placeholder
+									bind:selectedModelIdx
 									{history}
 									bind:selectedModels
 									{reasoningEffortByModel}
@@ -4978,7 +5006,7 @@
 										}
 									}}
 									on:submit={async (e) => {
-										clearDraft();
+										clearDraft(getDraftChatId());
 										if (e.detail || files.length > 0) {
 											await tick();
 											submitHandler(withSelectedText(e.detail));

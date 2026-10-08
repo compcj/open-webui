@@ -29,6 +29,7 @@ def runtime():
         'HTMLResponse': HTMLResponse,
         'get_image_base64_from_url': AsyncMock(return_value=IMAGE_DATA),
         'output_id': lambda prefix: prefix + '-1',
+        'BASE64_IMAGE_DATA_URI_RE': re.compile(r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2}'),
     }
     helper_path = BACKEND / 'utils/images/context.py'
     if helper_path.exists():
@@ -56,6 +57,7 @@ def runtime():
         'utils/middleware.py',
         {
             'process_tool_result',
+            'extract_base64_images',
             '_is_tool_result_error',
             'process_messages_with_output',
             'convert_url_images_to_base64',
@@ -80,9 +82,10 @@ def runtime():
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.For)
-        and isinstance(node.iter, ast.Call)
-        and isinstance(node.iter.func, ast.Name)
-        and node.iter.func.id == 'full_output'
+        and isinstance(node.iter, ast.IfExp)
+        and isinstance(node.iter.body, ast.Call)
+        and isinstance(node.iter.body.func, ast.Name)
+        and node.iter.body.func.id == 'full_output'
     )
     followup = next(
         node
@@ -125,7 +128,10 @@ def result_output(runtime, tool_name='generate_image', images=None, tool_result=
         'result_status_by_call_id': {},
         'results': [{'tool_call_id': 'call-1', 'content': content, 'files': files, 'embeds': embeds}],
     }
-    exec(compile(ast.Module(body=[runtime.result_loop], type_ignores=[]), 'stream_result', 'exec'), ns)
+    wrapper = ast.parse('async def assemble():\n    pass\n')
+    wrapper.body[0].body = [runtime.result_loop]
+    exec(compile(ast.fix_missing_locations(wrapper), 'stream_result', 'exec'), ns)
+    asyncio.run(ns['assemble']())
     return ns['output']
 
 
@@ -310,7 +316,7 @@ def test_nonvision_models_keep_tool_text_and_history_but_receive_no_images(runti
 def test_frontend_keeps_small_image_refs_for_temporary_chat_replay_but_omits_data_uris(runtime):
     output = result_output(runtime)
     output[-1]['output'].append({'type': 'input_image', 'image_url': IMAGE_DATA})
-    ns = {'full_output': lambda: output, 'frontend_output': []}
+    ns = {'full_output': lambda: output, 'frontend_output': [], 'snapshot': False, 'output_start': 0}
     exec(compile(ast.Module(body=[runtime.frontend_loop], type_ignores=[]), 'frontend_output', 'exec'), ns)
     parts = ns['frontend_output'][-1]['output']
     assert {'type': 'input_image', 'image_url': IMAGE_URL} in parts
@@ -407,7 +413,11 @@ def test_approved_image_tool_uses_the_same_context_and_authorized_image_loading(
 @pytest.mark.parametrize('url', [IMAGE_URL, IMAGE_URL + '?download=true', 'generated-image'])
 def test_local_image_urls_resolve_the_file_id_through_the_authorized_reader(url):
     loader = AsyncMock(return_value=IMAGE_DATA)
-    ns = {'re': re, 'get_image_base64_from_file_id': loader}
+    ns = {
+        're': re,
+        'get_image_base64_from_file_id': loader,
+        'FILE_CONTENT_URL_PATTERN': re.compile(r'/api/v1/files/([^/?#]+)/content'),
+    }
     load_functions(ns, 'utils/files.py', {'get_image_base64_from_url'})
     user = SimpleNamespace(id='owner', role='user')
     assert asyncio.run(ns['get_image_base64_from_url'](url, user=user)) == IMAGE_DATA
@@ -427,3 +437,60 @@ def test_generated_image_context_does_not_read_another_users_file():
     assert asyncio.run(ns['get_image_base64_from_url'](IMAGE_URL, user=other)) is None
     ns['Files'].get_file_by_id.assert_awaited_once_with('generated-image')
     ns['has_access_to_file'].assert_awaited_once_with('generated-image', 'read', other)
+
+
+@pytest.mark.parametrize('approved', [False, True])
+def test_extracted_tool_image_keeps_visual_context_after_persistence(runtime, approved):
+    image = {'type': 'image', 'url': IMAGE_DATA}
+    store = AsyncMock(return_value=IMAGE_URL)
+    runtime.ns.update(
+        store_tool_result_image=store,
+        request=object(),
+        metadata={'chat_id': 'chat-1'},
+        user=SimpleNamespace(id='owner'),
+    )
+    if not approved:
+        output = result_output(runtime, tool_name='other_tool', tool_result=IMAGE_DATA)
+        assert {'type': 'input_image', 'image_url': IMAGE_URL} in output[-1]['output']
+        store.assert_awaited_once()
+    else:
+        # The approval drain uses the same production assembly helper after persistence.
+        parts, display = runtime.ns['build_tool_result_parts'](
+            {'content': '[image]', 'files': [{'type': 'image', 'url': IMAGE_URL}]}
+        )
+        assert {'type': 'input_image', 'image_url': IMAGE_URL} in parts
+
+
+@pytest.mark.parametrize('chat_id', ['chat-1', 'local:temporary'])
+def test_tool_image_storage_supports_owned_temporary_files_without_chat_link(runtime, chat_id):
+    store = AsyncMock(return_value=IMAGE_URL)
+    ns = runtime.ns
+    ns.update(get_file_url_from_base64=store, is_saved_chat_id=lambda value: value == 'chat-1')
+    load_functions(ns, 'utils/middleware.py', {'store_tool_result_image'})
+    request = object()
+    user = SimpleNamespace(id='owner')
+    metadata = {'chat_id': chat_id, 'message_id': 'assistant-1', 'session_id': 's'}
+    url = asyncio.run(ns['store_tool_result_image'](request, IMAGE_DATA, metadata, user))
+    assert url == IMAGE_URL
+    ns.update(request=request, metadata=metadata, user=user)
+    expected_metadata = metadata if chat_id == 'chat-1' else {'session_id': 's'}
+    store.assert_awaited_once_with(request, IMAGE_DATA, expected_metadata, user)
+    output = result_output(runtime, tool_name='other_tool', tool_result=IMAGE_DATA)
+    ns.update(full_output=lambda: output, frontend_output=[], snapshot=False, output_start=0)
+    exec(compile(ast.Module(body=[runtime.frontend_loop], type_ignores=[]), 'frontend_output', 'exec'), ns)
+    assert {'type': 'input_image', 'image_url': IMAGE_URL} in ns['frontend_output'][-1]['output']
+
+
+@pytest.mark.parametrize('failure', [None, RuntimeError('storage unavailable')])
+def test_failed_tool_image_storage_keeps_inline_context_without_breaking_chat(runtime, failure):
+    ns = runtime.ns
+    ns.update(
+        get_file_url_from_base64=AsyncMock(return_value=None, side_effect=failure), is_saved_chat_id=lambda value: True
+    )
+    load_functions(ns, 'utils/middleware.py', {'store_tool_result_image'})
+    assert (
+        asyncio.run(
+            ns['store_tool_result_image'](object(), IMAGE_DATA, {'chat_id': 'chat-1'}, SimpleNamespace(id='owner'))
+        )
+        == IMAGE_DATA
+    )

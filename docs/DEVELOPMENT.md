@@ -56,7 +56,8 @@ If activation is unavailable, invoke `.venv/bin/python` or `.venv/Scripts/python
 An alternative to uv is a dedicated Python 3.11/3.12 virtual environment with dependencies installed
 using `python -m pip install -r backend/requirements.txt`, followed by the test/format tools needed
 for the task. This requirements-based route does not reproduce `uv.lock` exactly.
-`backend/requirements-min.txt` is marked WIP; do not treat it as the full development environment.
+`backend/requirements-slim.txt` describes the reduced slim image. It replaces the old WIP minimum list;
+do not treat it as the full development environment. Standard images remain the main fork target.
 
 For only the current lightweight helper tests, a separate supported-Python virtual environment can
 use `python -m pip install pytest pytest-asyncio aiohttp`. This is not a full application environment.
@@ -153,20 +154,40 @@ repository-wide cleanup solely to make an unrelated check green.
 
 ## Fork regression map
 
-The current history includes upstream merges and local Search1API/reasoning-effort changes. Treat
-the older documents in `docs/superpowers/` as historical task records. Re-read current files and
-`git log` before an upstream merge; do not apply an old version target to a new task.
+Read [the upstream merge index](upstream/README.md) and the
+[v0.11.4 decisions](upstream/v0.11.4-decisions.md) before comparing or merging upstream.
+Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
+Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
 
-| Behavior                                                          | Files to inspect together                                                                                                                                                                                                                                                             | Regression coverage                                                                |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Search1API                                                        | `backend/open_webui/retrieval/web/search1api.py`, `backend/open_webui/config.py`, `backend/open_webui/routers/retrieval.py`, `src/lib/components/admin/Settings/WebSearch.svelte`                                                                                                     | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py` |
-| Model reasoning options, effective default, per-user/model memory | `src/lib/utils/reasoning-effort.ts`, `src/lib/components/workspace/Models/ModelEditor.svelte`, `src/lib/components/chat/Chat.svelte`, `src/lib/components/chat/MessageInput.svelte`, `src/lib/components/chat/Placeholder.svelte`, `src/lib/stores/index.ts`, `src/lib/apis/index.ts` | `src/lib/utils/reasoning-effort.test.ts`; manual model/settings/chat checks        |
-| Responses reasoning payload mapping                               | `backend/open_webui/utils/responses_reasoning.py`, `backend/open_webui/routers/openai.py`                                                                                                                                                                                             | `backend/tests/test_openai_responses_payload.py`                                   |
+| Behavior                              | Implementation boundary                                                        | Regression starting point                                                                                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search1API                            | `retrieval/web/search1api.py`, retrieval/config routes, admin WebSearch        | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py`                                                                                                           |
+| Reasoning effort and Responses        | Model metadata/defaults, chat controls, `utils/responses_reasoning.py`         | `src/lib/utils/reasoning-effort.test.ts`, `backend/tests/test_openai_responses_payload.py`                                                                                                   |
+| Skills / OpenClaw                     | Admin discovery config, skill ACL, middleware, runtime, import/editor/export   | `backend/tests/test_skill_discovery_policy.py`, `backend/tests/test_skills_runtime.py`, `src/lib/utils/skills.test.ts`, `src/lib/utils/skill-discovery.test.ts`                              |
+| Tool preferences and settings         | Chat/SettingsModal, queued top-level UI patches, backend user settings         | `src/lib/components/chat/SettingsModal.test.ts`, `src/lib/utils/ui-settings.test.ts`, `src/lib/utils/tool-feature-preferences.test.ts`, `src/lib/components/chat/Chat.tool-features.test.ts` |
+| Knowledge, memory, notes              | Feature controls, explicit attachments, builtin-tool permission checks         | `backend/tests/test_chat_tool_features.py`                                                                                                                                                   |
+| Search/page evidence                  | Builtin web tools, source conversion, escaped metadata, stable numbering       | `backend/tests/test_builtin_web_tools.py`, `backend/tests/test_web_tool_citations.py`                                                                                                        |
+| Image engines and context             | Admin engine editor, POST verify, generation/edit tools, persisted tool output | `backend/tests/test_image_generation_engines.py`, `backend/tests/test_image_tool_context.py`, `backend/tests/test_comfyui_errors.py`                                                         |
+| Terminal delivery and identity        | Proxy routes, signed references, HTTP/WS ownership and context                 | `backend/tests/test_terminal_file_routes.py`, `backend/tests/test_terminal_websocket.py`, `src/lib/apis/terminal/index.test.ts`                                                              |
+| Terminal instructions and attachments | AGENTS.md per-turn loading after real user attachment pairing                  | `backend/tests/test_terminal_agents_attachments.py`, `backend/tests/test_skill_discovery_policy.py`                                                                                          |
+| Composer suggestion interaction       | Real ProseMirror plugin, Tab, composition events and touch                     | `src/lib/components/common/RichTextInput/AutoCompletion.test.ts`                                                                                                                             |
+| Redis revocation failures             | HTTP authentication, login cookies, terminal WebSocket retry errors            | `backend/tests/test_auth_revocation.py`                                                                                                                                                      |
+| Tika versions and JSON                | Extraction loader response negotiation and version-specific endpoint           | `backend/tests/test_tika_loader.py`                                                                                                                                                          |
 
-Search1API's file named `test_search1api_integration.py` checks source-level contracts. Its passing
-result does not prove a live provider, persisted settings, or the UI works. Add runtime evidence when
-those boundaries change. Existing frontend helper tests also cover shortcuts and Markdown colon
-fences; inspect the actual test files when changing those behaviors.
+Search1API's test named `test_search1api_integration.py` checks source wiring, not a live provider.
+Some existing tests isolate functions through AST loading to avoid importing database/config side
+effects. Those tests do not prove full application startup, schema compatibility, or a complete UI
+workflow. Keep actual endpoint/transport tests where available and report runtime evidence separately.
+
+The full suite uses temporary files. On restricted Windows hosts, choose a fresh task-owned
+`--basetemp` under `.agent-work/` if pytest's system temporary root is inaccessible. Never remove
+another worker's temp directory to unblock a test. Use the selected supported Python interpreter.
+
+Before upgrading, review third-party Tools/Functions requirements: upstream no longer bundles some
+previously implicit packages such as `langchain-community`. Review standard/slim differences,
+Cookie-forwarding defaults, direct-integration visibility, and the new skill discovery opt-ins in the
+[upgrade record](upstream/v0.11.4-decisions.md#升级与回滚). Existing PostgreSQL vector indexes require
+explicit inspection before deciding on a rebuild; this merge does not automatically rebuild them.
 
 The fork also adjusts `.github/workflows/docker.yaml`: the current image workflow publishes through
 GHCR and has removed Helm chart notification and Docker Hub copy steps. During upstream workflow

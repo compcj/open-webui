@@ -95,7 +95,10 @@ def api(monkeypatch):
         'open_webui.models.chats': {'Chats': chats},
         'open_webui.models.groups': {'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[]))},
         'open_webui.utils.access_control': {'has_connection_access': access},
-        'open_webui.utils.auth': {'get_verified_user': verified},
+        'open_webui.utils.auth': {
+            'get_verified_user': verified,
+            'get_verified_user_by_token': AsyncMock(return_value=None),
+        },
     }.items():
         module = ModuleType(name)
         module.__dict__.update(values)
@@ -478,3 +481,25 @@ async def test_upstream_stream_failure_releases_connection(api):
     with pytest.raises(api.router.aiohttp.ClientPayloadError):
         await anext(response.body_iterator)
     assert api.state.response.released and api.state.closed == 1
+
+
+@pytest.mark.parametrize('path', ['api/v1/status', 'api/v1/policies', 'api/v1/terminals/x', '%2561pi/v1/status'])
+def test_proxy_blocks_terminal_admin_endpoints(api, path):
+    response = api.client.get(
+        '/api/v1/terminals/terminal-1/' + path, headers={'Authorization': 'owner', 'X-Session-Id': 'chat-1'}
+    )
+    assert response.status_code == 403
+    assert not api.state.calls
+
+
+@pytest.mark.parametrize('auth_type', ['bearer', 'session', 'system_oauth'])
+@pytest.mark.parametrize('forward', [False, True])
+def test_proxy_cookies_require_explicit_forwarding(api, auth_type, forward):
+    api.connection.update(auth_type=auth_type, forward_cookies=forward)
+    api.client.cookies.set('token', 'owner')
+    api.client.cookies.set('unrelated', 'private-session')
+    response = api.client.get(
+        '/api/v1/terminals/terminal-1/api/config', headers={'Authorization': 'owner', 'X-Session-Id': 'chat-1'}
+    )
+    assert response.status_code == 200
+    assert bool(api.state.calls[0]['cookies']) is forward

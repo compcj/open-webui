@@ -131,7 +131,7 @@ describe('knowledge, memory and notes controls', () => {
 			await chat.contextToggle(feature, false);
 			expect(chat.getFeatures()[feature]).toBe(false);
 			expect(chat.updateUserSettings).toHaveBeenLastCalledWith('synthetic-token', {
-				ui: { textScale: 1.2, toolFeaturesByModel: { a: { [feature]: false } } }
+				ui: { toolFeaturesByModel: { a: { [feature]: false } } }
 			});
 			chat.select(['b']);
 			await chat.resetInput();
@@ -274,7 +274,7 @@ describe('chat tool feature memory', () => {
 			toolFeaturesByModel: { a: { web_search: true, image_generation: false } }
 		});
 		expect(chat.updateUserSettings).toHaveBeenLastCalledWith('synthetic-token', {
-			ui: chat.state().settings
+			ui: { toolFeaturesByModel: chat.state().settings.toolFeaturesByModel }
 		});
 	});
 
@@ -418,7 +418,7 @@ describe('chat tool feature memory', () => {
 				async (_token: string, payload: { ui: Record<string, unknown> }) => {
 					const snapshot = structuredClone(payload);
 					if (++calls === 1) await firstResponse;
-					stored = snapshot.ui;
+					stored = { ...stored, ...snapshot.ui };
 					return snapshot;
 				}
 			);

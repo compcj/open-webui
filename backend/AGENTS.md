@@ -45,6 +45,31 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   trusted-SSRF rationale as tools), `install_deps` requires skill write access and runs declared
   specs only on explicit request.
 
+## Upstream integration contracts
+
+- `skills.auto_discovery.ids` defaults to `[]`; admin-only `GET/POST /api/v1/configs/skills` uses
+  `AUTO_DISCOVERY_SKILL_IDS`. Discovery intersects existing skill access for every role, including
+  admins, and does not replace manual selection or model presets. Terminal auto-discovery trusts
+  only saved admin connection `config.auto_discover_skills`, default false, never client metadata.
+- Manifest generation must not sync unused OpenClaw files. Gate and prepare on actual loading;
+  terminal lookup, listing, content, and AGENTS.md failures degrade without breaking chat.
+- Preserve `search_snippet`, `search_result`, and `page_excerpt` evidence distinctions and stable
+  mixed-source citation numbering. Empty snippets are navigation, not page evidence. Apply source
+  metadata filtering and escaping together; reject unsafe link protocols.
+- Preserve signed terminal file identity/context checks, response isolation, denied port/admin
+  proxy paths, redirect refusal, opt-in cookie forwarding, and HTTP/WS identity consistency.
+- Configured Redis revocation failure must deny access with a retryable HTTP `503` or terminal
+  WebSocket `1013`, without deleting valid login cookies. Unconfigured Redis is a separate case;
+  invalid/revoked credentials remain denied. Check every caller's exception handling.
+- Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Preserve named
+  engine settings and context-only image deduplication across normal, approved, and replayed tools.
+
+Terminal AGENTS.md is a synthetic user message. Enrich real user attachment context before injecting
+it; otherwise ordinal pairing with stored chat history can attach one turn's files to another turn.
+Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pipeline stage.
+
+See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and upgrade boundaries.
+
 ## Verification
 
 Run these from the repository root with the selected development environment:

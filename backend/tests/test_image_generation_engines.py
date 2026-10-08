@@ -1324,3 +1324,36 @@ def test_grok_edit_singleton_list_uses_image_field(image_router, monkeypatch):
 
     assert state.posts[-1]['json']['image'] == {'url': source, 'type': 'image_url'}
     assert 'images' not in state.posts[-1]['json']
+
+
+@pytest.mark.parametrize(
+    'engine,path,authorization',
+    [('automatic1111', '/sdapi/v1/options', 'Basic dXNlcjpwYXNz'), ('comfyui', '/object_info', 'Bearer user:pass')],
+)
+def test_verify_connection_posts_unsaved_configuration_without_changing_defaults(
+    image_router, engine, path, authorization
+):
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+
+    router, state = image_router.module, image_router.state
+    app = FastAPI()
+    app.include_router(router.router, prefix='/api/v1/images')
+    route = next(route for route in router.router.routes if route.path == '/verify')
+
+    async def admin(request: Request):
+        if request.headers.get('x-role') != 'admin':
+            raise HTTPException(403)
+        return SimpleNamespace(id='admin', role='admin')
+
+    app.dependency_overrides[route.dependant.dependencies[0].call] = admin
+    client = TestClient(app)
+    form = {'engine': engine, 'url': 'https://unsaved.example.test/', 'key': 'user:pass'}
+    assert client.post('/api/v1/images/verify', json=form).status_code == 403
+    assert not state.posts
+    response = client.post('/api/v1/images/verify', headers={'x-role': 'admin'}, json=form)
+    assert response.status_code == 200 and response.json() is True
+    assert state.posts == [
+        {'url': 'https://unsaved.example.test' + path, 'headers': {'Authorization': authorization}, 'ssl': True}
+    ]
+    assert not state.upserts

@@ -71,7 +71,7 @@ describe('chat image engine account settings', () => {
 		await chat.load();
 		await chat.choose('studio');
 		expect(chat.updateUserSettings).toHaveBeenLastCalledWith('token-a', {
-			ui: { textScale: 1.1, imageGenerationEngineId: 'studio' }
+			ui: { imageGenerationEngineId: 'studio' }
 		});
 		await chat.choose('');
 		expect(chat.settings()).toEqual({ textScale: 1.1, imageGenerationEngineId: '' });

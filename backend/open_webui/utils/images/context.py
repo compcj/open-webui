@@ -32,9 +32,9 @@ def build_tool_result_parts(result: dict) -> tuple[list[dict], list[dict]]:
     display_files = []
     for file in result.get('files', []):
         url = file.get('url', '')
-        if file.get('type') == 'image' and (file.get('context_only') or url.startswith('data:')):
+        if file.get('type') == 'image' and isinstance(url, str) and url:
             # Persist compact references; resolve authorized image bytes only when sending to the model.
             output_parts.append({'type': 'input_image', 'image_url': url})
-        else:
+        if not file.get('context_only') and not (isinstance(url, str) and url.startswith('data:')):
             display_files.append(file)
     return output_parts, display_files

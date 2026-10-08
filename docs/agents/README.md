@@ -37,6 +37,14 @@ copy rules into every tool file or commit personal model choices, credentials, p
 or machine-specific absolute paths. Historical specs and handoffs describe their own tasks and
 must not silently override the current user's request or repository guidance.
 
+## Upstream merge history
+
+Use [the upstream merge index](../upstream/README.md) to find version decisions and verification
+records. Read it before comparing or merging upstream. Keep current invariants in AGENTS.md and
+scoped guides, user-facing behavior in README, and commands in DEVELOPMENT.md. Version records
+explain why a difference exists and when it may be removed; historical plans do not authorize a
+new push, release, deployment, or change of product policy.
+
 ## Ownership and parallel work
 
 Small tasks can be completed by one agent. When work is delegated or parallelized:

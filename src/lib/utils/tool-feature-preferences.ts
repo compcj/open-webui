@@ -133,5 +133,5 @@ export function createToolFeatureSaveQueue(): (
 	};
 }
 
-// Chat controls all replace the full UI settings object, so they share one queue.
+// Serialize chat settings patches because nested preference maps replace their whole field.
 export const enqueueChatSettingsSave = createToolFeatureSaveQueue();

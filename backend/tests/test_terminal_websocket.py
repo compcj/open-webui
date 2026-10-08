@@ -26,9 +26,7 @@ async def terminal_ws(api, monkeypatch):
             return SimpleNamespace(id='user-1' if token == 'owner' else 'user-2', role='user')
         return None
 
-    monkeypatch.setattr(
-        sys.modules['open_webui.utils.auth'], 'get_verified_user_by_token', verified_token, raising=False
-    )
+    monkeypatch.setattr(api.router, 'get_verified_user_by_token', verified_token)
     state = SimpleNamespace(sessions={}, requests=[], rejected=[], frames=[])
 
     async def create(request):

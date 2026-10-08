@@ -36,6 +36,21 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 | Build and automation                       | `package.json`, `pyproject.toml`, `vite.config.ts`, `Dockerfile`, `.github/workflows/`              |
 | Assets                                     | `static/`; read local `BRANDING.md` before editing branding assets                                  |
 
+## Upstream integration decisions
+
+Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
+[active v0.11.4 decisions](docs/upstream/v0.11.4-decisions.md). Verify official commit IDs and actual
+ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
+behavior against its tests; record new or superseding decisions in a new version record.
+
+Current shared contracts: automatic skill discovery is separately authorized from skill access;
+workspace discovery uses an admin allowlist (empty by default, including for admins), and terminal
+discovery uses only a server-stored admin connection opt-in (false by default). Manual skills and
+model presets keep their semantics. Terminal AGENTS.md loading is independent and fails softly.
+Preserve terminal file isolation/no same-origin port previews and fail closed with retryable errors
+when configured Redis revocation checks are unavailable. Keep user-facing descriptions in README,
+current rules in scoped guides, rationale in the decision record, and commands in DEVELOPMENT.md.
+
 ## Implementation boundaries
 
 - Match nearby patterns and the checked-in formatter configuration. Keep diffs focused; do not
@@ -57,8 +72,7 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 - Trace frontend/backend contracts together: request fields, defaults, permissions, streaming events,
   persistent settings, and error responses. Test the affected boundary, not only one side.
 - Keep `package.json` and `package-lock.json` consistent. For Python dependency changes, inspect
-  `pyproject.toml`, `uv.lock`, and `backend/requirements.txt`; also check `requirements-min.txt` when
-  applicable. Use the relevant package manager to update locks rather than editing resolution data.
+  `pyproject.toml`, `uv.lock`, and `backend/requirements.txt`; also check `backend/requirements-slim.txt` for shared pins and intentional exclusions. Use the relevant package manager to update locks rather than editing resolution data.
 - Do not hand-edit build output, `.svelte-kit/`, dependency directories, or downloaded Pyodide files.
   `static/pyodide/pyodide-lock.json` is tracked: review any change produced by asset preparation.
 - Keep secrets and user data out of code, prompts, logs, tests, and handoffs. Use synthetic fixtures.

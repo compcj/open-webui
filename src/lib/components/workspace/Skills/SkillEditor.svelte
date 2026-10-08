@@ -9,6 +9,10 @@
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import AccessControlModal from '../common/AccessControlModal.svelte';
+	import LanguageModeSelect from '$lib/components/common/LanguageModeSelect.svelte';
+	import LocalizedField from '$lib/components/common/LocalizedField.svelte';
+	let locale = '';
+	let meta: { i18n?: Record<string, Record<string, string>>; [key: string]: any } = {};
 	import { user } from '$lib/stores';
 	import { slugify, formatSkillName } from '$lib/utils';
 	import { parseSkillMarkdown, extractGating, extractInstallSpecs } from '$lib/utils/skills';
@@ -19,11 +23,11 @@
 
 	export let onSubmit: Function;
 	export let edit = false;
-	export let skill = null;
+	export let skill: any = null;
 	export let clone = false;
 	export let disabled = false;
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<any>('i18n');
 
 	let loading = false;
 
@@ -83,6 +87,11 @@
 			return;
 		}
 		loading = true;
+		if (!name.trim()) {
+			locale = '';
+			loading = false;
+			return;
+		}
 		if (!edit) id = slugify(id);
 
 		if (openclawState) {
@@ -103,21 +112,19 @@
 			}
 		}
 
-		await onSubmit({
-			id,
-			name,
-			description,
-			content,
-			is_active: true,
-			meta: {
-				...(skill?.meta ?? {}),
-				...(openclawState ? { openclaw: openclawState } : {}),
-				tags: skill?.meta?.tags ?? []
-			},
-			access_grants: accessGrants
-		});
-
-		loading = false;
+		try {
+			await onSubmit({
+				id,
+				name,
+				description,
+				content,
+				is_active: skill?.is_active ?? true,
+				meta: { ...meta, ...(openclawState ? { openclaw: openclawState } : {}) },
+				access_grants: accessGrants
+			});
+		} finally {
+			loading = false;
+		}
 	};
 
 	const installDepsHandler = async () => {
@@ -169,6 +176,7 @@
 
 	onMount(async () => {
 		if (skill) {
+			meta = structuredClone(skill.meta ?? {});
 			name = skill.name || '';
 			await tick();
 			id = skill.id || '';
@@ -192,6 +200,7 @@
 	share={$user?.permissions?.sharing?.skills || $user?.role === 'admin'}
 	sharePublic={$user?.permissions?.sharing?.public_skills || $user?.role === 'admin'}
 	shareUsers={($user?.permissions?.access_grants?.allow_users ?? true) || $user?.role === 'admin'}
+	allowGroups={($user?.permissions?.access_grants?.allow_groups ?? true) || $user?.role === 'admin'}
 	onChange={async () => {
 		if (edit && skill?.id) {
 			try {
@@ -217,15 +226,15 @@
 			<span>{$i18n.t('Back')}</span>
 		</button>
 
-		<div class="flex shrink-0 items-start gap-2 pb-2 px-1">
-			<div class="min-w-0 flex-1">
+		<div class="flex shrink-0 flex-col gap-2 pb-2 px-1 sm:flex-row sm:items-start">
+			<div class="min-w-0 w-full flex-1">
 				<Tooltip content={$i18n.t('e.g. Code Review Guidelines')} placement="top-start">
-					<input
-						class="w-full bg-transparent text-sm outline-hidden"
-						type="text"
+					<LocalizedField
 						placeholder={$i18n.t('Skill Name')}
-						aria-label={$i18n.t('Skill Name')}
+						showControls={false}
 						bind:value={name}
+						bind:translations={meta.i18n}
+						{locale}
 						required
 						{disabled}
 					/>
@@ -259,12 +268,13 @@
 						content={$i18n.t('e.g. Step-by-step instructions for code reviews')}
 						placement="top-start"
 					>
-						<input
-							class="w-full bg-transparent outline-hidden"
-							type="text"
+						<LocalizedField
 							placeholder={$i18n.t('Skill Description')}
-							aria-label={$i18n.t('Skill Description')}
+							showControls={false}
 							bind:value={description}
+							bind:translations={meta.i18n}
+							{locale}
+							field="description"
 							{disabled}
 						/>
 					</Tooltip>
@@ -272,6 +282,7 @@
 			</div>
 
 			<div class="flex shrink-0 items-center gap-1 pr-0.5">
+				<LanguageModeSelect bind:value={locale} translatedLocales={Object.keys(meta.i18n ?? {})} />
 				{#if !disabled}
 					<AccessButton on:click={() => (showAccessControlModal = true)} />
 				{:else}

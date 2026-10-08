@@ -76,8 +76,8 @@ class TikaLoaderTests(unittest.TestCase):
             'X-TIKA:content',
         )
 
-    def test_tika4_preserves_json_endpoint_and_content_key(self):
-        self.check_extraction({'server_version': '4'}, 'tika/json/text', 'tk:content')
+    def test_tika4_uses_markdown_json_endpoint_and_content_key(self):
+        self.check_extraction({'server_version': '4'}, 'tika/json/md', 'tk:content')
 
     def test_http_failure_reports_tika_error_without_parsing_json(self):
         response = SimpleNamespace(ok=False, reason='Service Unavailable', json=Mock())

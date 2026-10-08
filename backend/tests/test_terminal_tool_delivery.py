@@ -78,7 +78,7 @@ async def test_signed_results_render_bound_cards_without_unscoped_file_browser_e
         node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name in {'build_terminal_file_tool_result', 'terminal_event_handler'}
+        and node.name in {'build_terminal_file_tool_result', 'terminal_event_handler', 'parse_terminal_tool_result'}
     ]
     module = ast.Module(
         body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), *nodes],

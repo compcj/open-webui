@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { getPortProxyUrl } from '$lib/apis/terminal';
-	import { settings } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	const i18n = getContext('i18n');
@@ -269,9 +268,7 @@
 				src={proxyUrl}
 				title="Port {port} preview"
 				class="w-full h-full border-0 bg-white"
-				sandbox="allow-scripts{($settings?.terminalPreviewAllowSameOrigin ?? false)
-					? ' allow-same-origin'
-					: ''} allow-forms allow-popups allow-modals allow-downloads"
+				sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 				on:load={onIframeLoad}
 			/>
 		{/key}

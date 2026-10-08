@@ -742,7 +742,11 @@ export const setSubagentsConfig = async (token: string, config: object) => {
 	return res.json();
 };
 
-export const setDefaultPromptSuggestions = async (token: string, promptSuggestions: string) => {
+export const setDefaultPromptSuggestions = async (
+	token: string,
+	promptSuggestions: any[] | null,
+	promptSuggestionsI18n: Record<string, any> = {}
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/suggestions`, {
@@ -752,7 +756,8 @@ export const setDefaultPromptSuggestions = async (token: string, promptSuggestio
 			Authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			suggestions: promptSuggestions
+			suggestions: promptSuggestions,
+			i18n: promptSuggestionsI18n
 		})
 	})
 		.then(async (res) => {
@@ -828,3 +833,20 @@ export const setBanners = async (token: string, banners: Banner[]) => {
 
 	return res;
 };
+
+export type SkillsConfig = { AUTO_DISCOVERY_SKILL_IDS: string[] };
+
+const requestSkillsConfig = async (token: string, config?: SkillsConfig): Promise<SkillsConfig> => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/skills`, {
+		method: config ? 'POST' : 'GET',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		...(config ? { body: JSON.stringify(config) } : {})
+	});
+	const body = await res.json();
+	if (!res.ok) throw body?.detail ?? 'Failed to update skill discovery settings';
+	return body;
+};
+
+export const getSkillsConfig = (token: string) => requestSkillsConfig(token);
+export const setSkillsConfig = (token: string, config: SkillsConfig) =>
+	requestSkillsConfig(token, config);

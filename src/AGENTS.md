@@ -25,6 +25,27 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Reuse existing components and styles. Check keyboard interaction, focus, loading/error states,
   narrow screens, and dark mode when affected by a UI change.
 
+## Integration contracts
+
+- Preserve the fork composer layout and remembered controls when adding upstream interactions.
+  Check follow-up suggestions with Tab, IME composition, and narrow screens.
+- Submit only changed top-level UI settings: omission preserves a value, explicit `null` resets it.
+  Nested preference maps remain whole fields. Keep ordered saves, account isolation, and error
+  feedback; do not send a stale snapshot of every setting.
+- Workspace auto-discovery is administered through `GET/POST /api/v1/configs/skills` using
+  `AUTO_DISCOVERY_SKILL_IDS`. The UI is not an access-control boundary. Expose terminal
+  `config.auto_discover_skills` only for admin-managed connections, and clear stale discovery
+  results on terminal changes. Preserve manual selections and OpenClaw metadata round trips.
+- Personal direct-integration configuration follows `direct.integrations.enable`; hiding the entry
+  must not disable existing connections or change the independent Direct API Chat policy.
+- Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Keep named engine
+  generation/edit settings, descriptions, edit disablement, attachment deduplication, and compact
+  image context for replay.
+- Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
+  same-origin port proxies. Do not restore a setting that grants terminal HTML the WebUI origin.
+
+See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and future merge checks.
+
 ## Formatting and tests
 
 - `.prettierrc` defines tabs, single quotes, no trailing commas, 100-column print width, and LF.
