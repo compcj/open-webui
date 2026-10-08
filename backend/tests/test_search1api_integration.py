@@ -28,13 +28,11 @@ def test_router_contract():
     search1api = router.index("    elif engine == 'search1api':")
     searchapi = router.index("    elif engine == 'searchapi':")
     assert search1api < searchapi
-    assert '    elif engine ==' not in router[search1api + 1:searchapi]
+    assert '    elif engine ==' not in router[search1api + 1 : searchapi]
 
 
 def test_admin_ui_contract():
-    ui = (ROOT / 'src' / 'lib' / 'components' / 'admin' / 'Settings' / 'WebSearch.svelte').read_text(
-        encoding='utf-8'
-    )
+    ui = (ROOT / 'src' / 'lib' / 'components' / 'admin' / 'Settings' / 'WebSearch.svelte').read_text(encoding='utf-8')
     assert "'search1api'," in ui
     assert "webConfig.WEB_SEARCH_ENGINE === 'search1api'" in ui
     assert 'bind:value={webConfig.SEARCH1API_API_KEY}' in ui

@@ -21,6 +21,14 @@ export function createImageEngineConfig(): ImageEngineConfig {
 	};
 }
 
+// i18next-parser markers for messages translated dynamically by Images.svelte.
+// t('Engine alias is required.')
+// t('Engine aliases must be unique.')
+// t('Additional engine IDs must be unique and cannot be default.')
+// t('Edit additional parameters must be a valid JSON object.')
+// t('Additional parameters must be a valid JSON object.')
+// t('Edit ComfyUI workflow must be a valid JSON object.')
+// t('ComfyUI workflow must be a valid JSON object.')
 export function prepareImageEngineProfiles(
 	engines: ImageGenerationEngine[],
 	drafts: Record<string, { generation: string; edit: string }>

@@ -28,17 +28,8 @@ def filter_results(results, filter_list):
     return [
         result
         for result in results
-        if (
-            not allowed
-            or any(
-                matches(urlparse(result['link']).hostname or '', domain)
-                for domain in allowed
-            )
-        )
-        and not any(
-            matches(urlparse(result['link']).hostname or '', domain)
-            for domain in blocked
-        )
+        if (not allowed or any(matches(urlparse(result['link']).hostname or '', domain) for domain in allowed))
+        and not any(matches(urlparse(result['link']).hostname or '', domain) for domain in blocked)
     ]
 
 
@@ -82,13 +73,7 @@ def load_module(response):
     main_module.get_filtered_results = filter_results
     pool_module = ModuleType('open_webui.utils.session_pool')
     pool_module.get_session = fake_get_session
-    module_path = (
-        Path(__file__).parents[1]
-        / 'open_webui'
-        / 'retrieval'
-        / 'web'
-        / 'search1api.py'
-    )
+    module_path = Path(__file__).parents[1] / 'open_webui' / 'retrieval' / 'web' / 'search1api.py'
     spec = importlib.util.spec_from_file_location('search1api_under_test', module_path)
     module = importlib.util.module_from_spec(spec)
     old_main = sys.modules.get('open_webui.retrieval.web.main')

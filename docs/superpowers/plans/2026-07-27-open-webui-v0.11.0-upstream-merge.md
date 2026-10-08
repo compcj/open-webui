@@ -366,9 +366,7 @@ def test_router_contract():
 
 
 def test_admin_ui_contract():
-    ui = (ROOT / 'src' / 'lib' / 'components' / 'admin' / 'Settings' / 'WebSearch.svelte').read_text(
-        encoding='utf-8'
-    )
+    ui = (ROOT / 'src' / 'lib' / 'components' / 'admin' / 'Settings' / 'WebSearch.svelte').read_text(encoding='utf-8')
     assert "'search1api'," in ui
     assert "webConfig.WEB_SEARCH_ENGINE === 'search1api'" in ui
     assert 'bind:value={webConfig.SEARCH1API_API_KEY}' in ui
