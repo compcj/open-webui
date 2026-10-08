@@ -26,7 +26,7 @@ For development in this checkout, see [CONTRIBUTING.md](CONTRIBUTING.md),
 
 ## 与上游的差异 / Differences from upstream
 
-本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支。本次完整合并目标为官方 **[v0.11.4](https://github.com/open-webui/open-webui/tree/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d)**。以下介绍保留的分支能力和已确认的产品策略；当前实施与验收状态、完整提交基线见[版本设计决策记录](docs/upstream/v0.11.4-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
+本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支。本次已完整合并官方 **[v0.11.4](https://github.com/open-webui/open-webui/tree/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.11.4-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
 
 This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/open-webui/open-webui/tree/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.11.4-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
 
