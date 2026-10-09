@@ -55,8 +55,9 @@ current rules in scoped guides, rationale in the decision record, and commands i
 
 - Match nearby patterns and the checked-in formatter configuration. Keep diffs focused; do not
   reformat unrelated files or introduce dependencies for a small change without a concrete need.
-- Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API and
-  model reasoning-effort behavior; [the development guide](docs/DEVELOPMENT.md) maps their files/tests.
+- Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API,
+  Tavily search depth, and model reasoning-effort behavior. The scoped guides define their contracts;
+  [the development guide](docs/DEVELOPMENT.md) maps their files/tests.
 - Workspace skills support two formats: native OpenWebUI skills and OpenClaw-compatible `SKILL.md`
   skills. `SkillMeta.openclaw` is a permissive JSON bag (`frontmatter`, `files`, `source`, `config`,
   `env`) — keep it schema-tolerant and preserve its round-trip through import, edit, and

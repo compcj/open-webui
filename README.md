@@ -35,6 +35,7 @@ This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/o
 | 功能 / Feature                        | 本分支行为 / Fork behavior                                                                                                                                                                                                                                                               |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Search1API                            | 管理员可配置搜索提供商与 API Key，支持规范化结果和域名过滤；`SEARCH1API_API_KEY` 提供环境默认值。<br>Admin-configured search provider with normalized results and domain filtering; `SEARCH1API_API_KEY` supplies an environment default.                                                |
+| Tavily 搜索深度 / Search depth        | 管理员在“设置 → 网络搜索”选择 Tavily 后，可切换 `basic` / `advanced`，保存后全局生效，默认 `basic`。<br>Admins can select `basic` / `advanced` under Settings → Web Search → Tavily; the saved setting applies globally and defaults to `basic`.                                         |
 | 推理强度 / Reasoning effort           | 模型可配置标准或自定义档位，聊天显示有效默认值，按用户和模型记忆选择，保留窄屏输入区布局。<br>Per-model standard/custom effort choices, effective defaults, remembered user/model selections, and the existing narrow-screen composer layout.                                            |
 | OpenClaw 技能 / Skills                | 支持原生技能及 `SKILL.md`、ZIP、直接链接、GitHub、skills.sh、ClawHub 导入；保留元数据和附带文件，多技能归档提供选择器。<br>Native and OpenClaw skills with file/ZIP/URL imports, metadata and bundled-file round trips, and a picker for multi-skill archives.                           |
 | 终端技能运行 / Terminal skill runtime | 实际加载时检查运行条件、同步文件及替换 `{baseDir}`；依赖安装需显式操作，终端失败时降级。<br>Checks requirements, syncs files, and expands `{baseDir}` when loading; dependency installation is explicit and terminal failures degrade gracefully.                                        |
@@ -43,6 +44,14 @@ This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/o
 | 聊天访问 / Chat access                | 临时聊天与 Direct API Chat 有独立开关，默认开启，管理员豁免；详见[访问控制](docs/chat-access-controls.md)。<br>Independent temporary-chat and Direct API Chat switches, enabled by default with admin exemption; see [access controls](docs/chat-access-controls.md).                    |
 | 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.           |
 | 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                 |
+
+### Tavily 搜索深度 / Tavily search depth
+
+`TAVILY_SEARCH_DEPTH=basic` 提供初始默认值，可设为 `advanced`；启用持久化时，已保存的管理员设置优先于环境默认值。此设置同时适用于聊天内置搜索和联网检索，与网页内容提取的 `TAVILY_EXTRACT_DEPTH` 独立。
+
+`TAVILY_SEARCH_DEPTH=basic` supplies the initial default and also accepts `advanced`. With persistent configuration enabled, saved admin settings take precedence over environment defaults. The setting applies to both built-in chat search and web retrieval, independently of the page loader's `TAVILY_EXTRACT_DEPTH`.
+
+按 [Tavily 官方说明](https://docs.tavily.com/documentation/api-reference/endpoint/search)，`advanced` 提供更高相关性、耗时更高，每次搜索使用 2 credits；`basic` 每次使用 1 credit。<br>According to the [Tavily API documentation](https://docs.tavily.com/documentation/api-reference/endpoint/search), `advanced` prioritizes relevance with increased latency and uses 2 credits per search; `basic` uses 1 credit.
 
 ### v0.11.4 配置默认值 / Configuration defaults
 

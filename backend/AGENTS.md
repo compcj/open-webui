@@ -30,6 +30,13 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Search1API spans `config.py`, `retrieval/web/search1api.py`, `routers/retrieval.py`, and the
   frontend `WebSearch.svelte`. Preserve response normalization, result limits, domain filtering,
   HTTP error handling, configuration persistence, and the missing-key error.
+- Tavily search depth spans `config.py`, `retrieval/web/tavily.py`, and `routers/retrieval.py`.
+  Preserve `TAVILY_SEARCH_DEPTH` (`basic` by default, `advanced` opt-in), the per-key setting
+  `web.search.tavily_search_depth`, and its propagation through the shared search entry point.
+  The admin configuration API accepts only these two values; omission or `null` preserves the
+  current value. Stored settings keep the existing persistence precedence over environment defaults.
+  Search depth is independent of `TAVILY_EXTRACT_DEPTH`; preserve result mapping, domain filtering,
+  and HTTP errors. See the development guide for isolated request/config regression tests.
 - Responses API payload conversion uses `utils/responses_reasoning.py` from `routers/openai.py`.
   Preserve removal of top-level `reasoning_effort` and merging into `reasoning.effort` without
   dropping other reasoning fields. Check the accompanying frontend selection/default behavior.

@@ -159,20 +159,21 @@ Read [the upstream merge index](upstream/README.md) and the
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
 
-| Behavior                              | Implementation boundary                                                        | Regression starting point                                                                                                                                                                    |
-| ------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search1API                            | `retrieval/web/search1api.py`, retrieval/config routes, admin WebSearch        | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py`                                                                                                           |
-| Reasoning effort and Responses        | Model metadata/defaults, chat controls, `utils/responses_reasoning.py`         | `src/lib/utils/reasoning-effort.test.ts`, `backend/tests/test_openai_responses_payload.py`                                                                                                   |
-| Skills / OpenClaw                     | Admin discovery config, skill ACL, middleware, runtime, import/editor/export   | `backend/tests/test_skill_discovery_policy.py`, `backend/tests/test_skills_runtime.py`, `src/lib/utils/skills.test.ts`, `src/lib/utils/skill-discovery.test.ts`                              |
-| Tool preferences and settings         | Chat/SettingsModal, queued top-level UI patches, backend user settings         | `src/lib/components/chat/SettingsModal.test.ts`, `src/lib/utils/ui-settings.test.ts`, `src/lib/utils/tool-feature-preferences.test.ts`, `src/lib/components/chat/Chat.tool-features.test.ts` |
-| Knowledge, memory, notes              | Feature controls, explicit attachments, builtin-tool permission checks         | `backend/tests/test_chat_tool_features.py`                                                                                                                                                   |
-| Search/page evidence                  | Builtin web tools, source conversion, escaped metadata, stable numbering       | `backend/tests/test_builtin_web_tools.py`, `backend/tests/test_web_tool_citations.py`                                                                                                        |
-| Image engines and context             | Admin engine editor, POST verify, generation/edit tools, persisted tool output | `backend/tests/test_image_generation_engines.py`, `backend/tests/test_image_tool_context.py`, `backend/tests/test_comfyui_errors.py`                                                         |
-| Terminal delivery and identity        | Proxy routes, signed references, HTTP/WS ownership and context                 | `backend/tests/test_terminal_file_routes.py`, `backend/tests/test_terminal_websocket.py`, `src/lib/apis/terminal/index.test.ts`                                                              |
-| Terminal instructions and attachments | AGENTS.md per-turn loading after real user attachment pairing                  | `backend/tests/test_terminal_agents_attachments.py`, `backend/tests/test_skill_discovery_policy.py`                                                                                          |
-| Composer suggestion interaction       | Real ProseMirror plugin, Tab, composition events and touch                     | `src/lib/components/common/RichTextInput/AutoCompletion.test.ts`                                                                                                                             |
-| Redis revocation failures             | HTTP authentication, login cookies, terminal WebSocket retry errors            | `backend/tests/test_auth_revocation.py`                                                                                                                                                      |
-| Tika versions and JSON                | Extraction loader response negotiation and version-specific endpoint           | `backend/tests/test_tika_loader.py`                                                                                                                                                          |
+| Behavior                              | Implementation boundary                                                          | Regression starting point                                                                                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search1API                            | `retrieval/web/search1api.py`, retrieval/config routes, admin WebSearch          | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py`                                                                                                           |
+| Tavily search depth                   | `config.py`, `retrieval/web/tavily.py`, retrieval/config routes, admin WebSearch | `backend/tests/test_tavily.py`, `backend/tests/test_tavily_config.py`                                                                                                                        |
+| Reasoning effort and Responses        | Model metadata/defaults, chat controls, `utils/responses_reasoning.py`           | `src/lib/utils/reasoning-effort.test.ts`, `backend/tests/test_openai_responses_payload.py`                                                                                                   |
+| Skills / OpenClaw                     | Admin discovery config, skill ACL, middleware, runtime, import/editor/export     | `backend/tests/test_skill_discovery_policy.py`, `backend/tests/test_skills_runtime.py`, `src/lib/utils/skills.test.ts`, `src/lib/utils/skill-discovery.test.ts`                              |
+| Tool preferences and settings         | Chat/SettingsModal, queued top-level UI patches, backend user settings           | `src/lib/components/chat/SettingsModal.test.ts`, `src/lib/utils/ui-settings.test.ts`, `src/lib/utils/tool-feature-preferences.test.ts`, `src/lib/components/chat/Chat.tool-features.test.ts` |
+| Knowledge, memory, notes              | Feature controls, explicit attachments, builtin-tool permission checks           | `backend/tests/test_chat_tool_features.py`                                                                                                                                                   |
+| Search/page evidence                  | Builtin web tools, source conversion, escaped metadata, stable numbering         | `backend/tests/test_builtin_web_tools.py`, `backend/tests/test_web_tool_citations.py`                                                                                                        |
+| Image engines and context             | Admin engine editor, POST verify, generation/edit tools, persisted tool output   | `backend/tests/test_image_generation_engines.py`, `backend/tests/test_image_tool_context.py`, `backend/tests/test_comfyui_errors.py`                                                         |
+| Terminal delivery and identity        | Proxy routes, signed references, HTTP/WS ownership and context                   | `backend/tests/test_terminal_file_routes.py`, `backend/tests/test_terminal_websocket.py`, `src/lib/apis/terminal/index.test.ts`                                                              |
+| Terminal instructions and attachments | AGENTS.md per-turn loading after real user attachment pairing                    | `backend/tests/test_terminal_agents_attachments.py`, `backend/tests/test_skill_discovery_policy.py`                                                                                          |
+| Composer suggestion interaction       | Real ProseMirror plugin, Tab, composition events and touch                       | `src/lib/components/common/RichTextInput/AutoCompletion.test.ts`                                                                                                                             |
+| Redis revocation failures             | HTTP authentication, login cookies, terminal WebSocket retry errors              | `backend/tests/test_auth_revocation.py`                                                                                                                                                      |
+| Tika versions and JSON                | Extraction loader response negotiation and version-specific endpoint             | `backend/tests/test_tika_loader.py`                                                                                                                                                          |
 
 Search1API's test named `test_search1api_integration.py` checks source wiring, not a live provider.
 Some existing tests isolate functions through AST loading to avoid importing database/config side
@@ -193,3 +194,36 @@ The fork also adjusts `.github/workflows/docker.yaml`: the current image workflo
 GHCR and has removed Helm chart notification and Docker Hub copy steps. During upstream workflow
 merges, review the current triggers, destinations, permissions, and recent history before restoring
 any removed publishing steps.
+
+### Tavily search-depth verification
+
+Run the isolated Tavily tests and neighboring Search1API regressions with the supported Python environment.
+The Tavily tests need `pytest`, `pytest-asyncio`, `requests`, `fastapi`, `pydantic`, `httpx`,
+`sqlalchemy[asyncio]`, and `aiosqlite`; Search1API also needs `aiohttp`. Use the repository's
+versions for runtime dependencies. A helper-only environment does not need the full application stack.
+
+```sh
+python -m pytest backend/tests/test_tavily.py backend/tests/test_tavily_config.py backend/tests/test_search1api.py backend/tests/test_search1api_integration.py backend/tests/test_search1api_missing_key.py -q
+```
+
+The Tavily tests exercise request payloads, result/error handling, configuration validation and
+save/read behavior, and the shared search route using isolated code and mocked external boundaries.
+They do not contact Tavily or prove a complete application startup or browser workflow.
+
+For manual acceptance, use the disposable data/static directories described above:
+
+1. In Admin Settings → Web Search, select Tavily and confirm Search Depth starts at `basic` when no
+   saved setting or environment override exists. Check the English and Chinese labels.
+2. Select `advanced`, save, reload the page, and confirm the selection persists. Switch to another
+   search provider and back; the stored Tavily value must remain available.
+3. Run built-in chat search and web retrieval against a local Tavily-compatible test endpoint using
+   `TAVILY_API_BASE_URL` and a synthetic key. Check both `/search` request bodies contain
+   `search_depth: "advanced"`; switch back to `basic`, save, and repeat.
+4. Configure the Tavily page loader with its own extraction depth and confirm changing search depth
+   does not change `TAVILY_EXTRACT_DEPTH` or `/extract` requests.
+5. On a fresh disposable database, confirm `TAVILY_SEARCH_DEPTH=advanced` supplies the initial
+   default. Save `basic` through the admin UI and restart; with persistence enabled, the saved value
+   must still win over the environment default.
+
+A real-provider smoke test is separate and consumes Tavily credits. If performed, use a development
+key and report it separately from mocked checks; never include the key or response data in logs.

@@ -38,6 +38,10 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   `AUTO_DISCOVERY_SKILL_IDS`. The UI is not an access-control boundary. Expose terminal
   `config.auto_discover_skills` only for admin-managed connections, and clear stale discovery
   results on terminal changes. Preserve manual selections and OpenClaw metadata round trips.
+- Admin Web Search exposes a global Tavily `basic`/`advanced` search-depth selection through
+  `web.TAVILY_SEARCH_DEPTH`. Preserve its saved value on reload and provider changes, and keep it
+  independent of the web loader's `TAVILY_EXTRACT_DEPTH`. New installations default to `basic`;
+  this is an admin setting, not a per-user or per-conversation override.
 - Personal direct-integration configuration follows `direct.integrations.enable`; hiding the entry
   must not disable existing connections or change the independent Direct API Chat policy.
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Keep named engine

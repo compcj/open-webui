@@ -121,6 +121,7 @@
 
 		if (res) {
 			webConfig = res.web;
+			webConfig.TAVILY_SEARCH_DEPTH ??= 'basic';
 
 			// Convert array back to comma-separated string for display
 			if (Array.isArray(webConfig?.WEB_SEARCH_DOMAIN_FILTER_LIST)) {
@@ -580,6 +581,20 @@
 								/>
 							</div>
 						</div>
+						<AdminSettingRow
+							label={$i18n.t('settings.admin.web.tavilySearchDepth.label')}
+							description={$i18n.t('settings.admin.web.tavilySearchDepth.description')}
+							let:labelId
+						>
+							<SettingsSelect bind:value={webConfig.TAVILY_SEARCH_DEPTH} aria-labelledby={labelId}>
+								<option value="basic"
+									>{$i18n.t('settings.admin.web.tavilySearchDepth.basic')}</option
+								>
+								<option value="advanced"
+									>{$i18n.t('settings.admin.web.tavilySearchDepth.advanced')}</option
+								>
+							</SettingsSelect>
+						</AdminSettingRow>
 					{:else if webConfig.WEB_SEARCH_ENGINE === 'staan'}
 						<div class="mb-2.5 flex w-full flex-col">
 							<div>

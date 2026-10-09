@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Iterator, Optional, Sequence, Union
+from typing import Callable, Iterator, Literal, Optional, Sequence, Union
 from urllib.parse import unquote, urlparse
 
 import tiktoken
@@ -387,6 +387,7 @@ RETRIEVAL_CONFIG_KEYS = {
     'STAAN_MARKET': 'web.search.staan_market',
     'STAAN_MAX_SNIPPETS': 'web.search.staan_max_snippets',
     'TAVILY_API_KEY': 'web.search.tavily_api_key',
+    'TAVILY_SEARCH_DEPTH': 'web.search.tavily_search_depth',
     'TAVILY_EXTRACT_DEPTH': 'web.search.tavily_extract_depth',
     'TEXT_SPLITTER': 'rag.text_splitter',
     'TIKA_SERVER_URL': 'rag.tika_server_url',
@@ -743,6 +744,7 @@ async def get_rag_config(request: Request, user=Depends(get_admin_user)):
             'SERPLY_API_KEY': config.SERPLY_API_KEY,
             'DDGS_BACKEND': config.DDGS_BACKEND,
             'TAVILY_API_KEY': config.TAVILY_API_KEY,
+            'TAVILY_SEARCH_DEPTH': config.TAVILY_SEARCH_DEPTH,
             'STAAN_API_KEY': config.STAAN_API_KEY,
             'STAAN_MARKET': config.STAAN_MARKET,
             'STAAN_MAX_SNIPPETS': config.STAAN_MAX_SNIPPETS,
@@ -827,6 +829,7 @@ class WebConfig(BaseModel):
     SERPLY_API_KEY: str | None = None
     DDGS_BACKEND: str | None = None
     TAVILY_API_KEY: str | None = None
+    TAVILY_SEARCH_DEPTH: Literal['basic', 'advanced'] | None = None
     STAAN_API_KEY: str | None = None
     STAAN_MARKET: str | None = None
     STAAN_MAX_SNIPPETS: int | None = None
@@ -1351,6 +1354,8 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
         config.SERPLY_API_KEY = form_data.web.SERPLY_API_KEY
         config.DDGS_BACKEND = form_data.web.DDGS_BACKEND
         config.TAVILY_API_KEY = form_data.web.TAVILY_API_KEY
+        if form_data.web.TAVILY_SEARCH_DEPTH is not None:
+            config.TAVILY_SEARCH_DEPTH = form_data.web.TAVILY_SEARCH_DEPTH
         config.STAAN_API_KEY = form_data.web.STAAN_API_KEY
         config.STAAN_MARKET = form_data.web.STAAN_MARKET
         config.STAAN_MAX_SNIPPETS = form_data.web.STAAN_MAX_SNIPPETS
@@ -1508,6 +1513,7 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
             'SERPHOUSE_DOMAIN': config.SERPHOUSE_DOMAIN,
             'SERPLY_API_KEY': config.SERPLY_API_KEY,
             'TAVILY_API_KEY': config.TAVILY_API_KEY,
+            'TAVILY_SEARCH_DEPTH': config.TAVILY_SEARCH_DEPTH,
             'STAAN_API_KEY': config.STAAN_API_KEY,
             'STAAN_MARKET': config.STAAN_MARKET,
             'STAAN_MAX_SNIPPETS': config.STAAN_MAX_SNIPPETS,
@@ -2708,6 +2714,7 @@ async def search_web(request: Request, engine: str, query: str, user=None) -> li
                 query,
                 config.WEB_SEARCH_RESULT_COUNT,
                 config.WEB_SEARCH_DOMAIN_FILTER_LIST,
+                search_depth=config.TAVILY_SEARCH_DEPTH,
             )
         else:
             raise Exception('No TAVILY_API_KEY found in environment variables')
