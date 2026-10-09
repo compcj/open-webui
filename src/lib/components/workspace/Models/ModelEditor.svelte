@@ -2,7 +2,7 @@
 	import { toast } from 'svelte-sonner';
 
 	import { onMount, onDestroy, getContext, tick } from 'svelte';
-	import { models, tools, functions, user } from '$lib/stores';
+	import { config, models, tools, functions, user } from '$lib/stores';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL, DEFAULT_CAPABILITIES } from '$lib/constants';
 
 	import { getTools } from '$lib/apis/tools';
@@ -25,6 +25,7 @@
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
 	import AvailableReasoningEffortEditor from '$lib/components/workspace/Models/AvailableReasoningEffortEditor.svelte';
 	import { normalizeAvailableReasoningEffort } from '$lib/utils/reasoning-effort';
+	import { resolveCompactionWindow } from '$lib/utils/context-compaction';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -103,6 +104,7 @@
 			// https://docs.openwebui.com/license.
 			profile_image_url: `${WEBUI_BASE_URL}/static/favicon.png`,
 			background_image_url: null as string | null,
+			context_window: null as number | null,
 			description: '',
 			i18n: {},
 			suggestion_prompts: null,
@@ -112,6 +114,12 @@
 			system: ''
 		}
 	};
+
+	$: inheritedCompactionWindow = resolveCompactionWindow(
+		info.base_model_id,
+		$models,
+		$config?.features?.context_compaction_default_context_window ?? 262144
+	);
 
 	let params = {
 		system: ''
@@ -1139,6 +1147,41 @@
 
 								<div class="mb-2">
 									<AvailableReasoningEffortEditor bind:values={availableReasoningEffort} />
+									<div class="my-3">
+										<label
+											for="model-context-window"
+											class="block text-xs text-gray-600 dark:text-gray-400"
+										>
+											{$i18n.t('Maximum context length for compaction')}
+										</label>
+										<input
+											id="model-context-window"
+											type="number"
+											min="1"
+											step="1"
+											class="mt-1 w-full rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-850"
+											placeholder={String(inheritedCompactionWindow.value)}
+											value={info.meta.context_window ?? ''}
+											on:input={(event) => {
+												info.meta.context_window =
+													event.currentTarget.value === ''
+														? null
+														: event.currentTarget.valueAsNumber;
+											}}
+										/>
+										<p class="mt-1 text-xs text-gray-500">
+											{#if inheritedCompactionWindow.source}
+												{$i18n.t('Leave empty to inherit {{tokens}} tokens from {{model}}.', {
+													tokens: inheritedCompactionWindow.value,
+													model: inheritedCompactionWindow.source
+												})}
+											{:else}
+												{$i18n.t('Leave empty to use the global default of {{tokens}} tokens.', {
+													tokens: inheritedCompactionWindow.value
+												})}
+											{/if}
+										</p>
+									</div>
 								</div>
 
 								<div class="flex h-7 w-full justify-between">

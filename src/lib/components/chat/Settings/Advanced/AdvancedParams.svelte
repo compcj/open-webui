@@ -4,6 +4,8 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import type { i18n as i18nType } from 'i18next';
+	import { config } from '$lib/stores';
+	import { getCompactionMode } from '$lib/utils/context-compaction';
 	import { getContext } from 'svelte';
 	import type { Writable } from 'svelte/store';
 
@@ -186,54 +188,56 @@
 			{/if}
 		</div>
 
-		<div>
-			<Tooltip
-				content={$i18n.t(
-					'settings.personal.general.parameters.contextCompactionThreshold.description'
-				)}
-				placement="top-start"
-				className="inline-tooltip"
-			>
-				<div class="flex w-full justify-between">
-					<div class=" self-center text-xs">
-						{$i18n.t('settings.personal.general.parameters.contextCompactionThreshold.label')}
+		{#if admin || getCompactionMode($config?.features) === 'legacy'}
+			<div>
+				<Tooltip
+					content={$i18n.t(
+						'settings.personal.general.parameters.contextCompactionThreshold.description'
+					)}
+					placement="top-start"
+					className="inline-tooltip"
+				>
+					<div class="flex w-full justify-between">
+						<div class=" self-center text-xs">
+							{$i18n.t('settings.personal.general.parameters.contextCompactionThreshold.label')}
+						</div>
+						<button
+							class="p-1 px-3 text-xs flex rounded-sm transition shrink-0 outline-hidden"
+							type="button"
+							on:click={() => {
+								params.compact_token_threshold =
+									(params?.compact_token_threshold ?? null) === null ? 80000 : null;
+							}}
+						>
+							{#if (params?.compact_token_threshold ?? null) === null}
+								<span class="ml-2 self-center"> {$i18n.t('Default')} </span>
+							{:else}
+								<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
+							{/if}
+						</button>
 					</div>
-					<button
-						class="p-1 px-3 text-xs flex rounded-sm transition shrink-0 outline-hidden"
-						type="button"
-						on:click={() => {
-							params.compact_token_threshold =
-								(params?.compact_token_threshold ?? null) === null ? 80000 : null;
-						}}
-					>
-						{#if (params?.compact_token_threshold ?? null) === null}
-							<span class="ml-2 self-center"> {$i18n.t('Default')} </span>
-						{:else}
-							<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
-						{/if}
-					</button>
-				</div>
-			</Tooltip>
+				</Tooltip>
 
-			{#if (params?.compact_token_threshold ?? null) !== null}
-				<div class="flex mt-0.5 space-x-2">
-					<div class=" flex-1">
-						<input
-							class="text-sm w-full bg-transparent outline-hidden outline-none"
-							type="number"
-							aria-label={$i18n.t(
-								'settings.personal.general.parameters.contextCompactionThreshold.label'
-							)}
-							placeholder={$i18n.t('Enter token threshold')}
-							bind:value={params.compact_token_threshold}
-							autocomplete="off"
-							min="1"
-							step="1"
-						/>
+				{#if (params?.compact_token_threshold ?? null) !== null}
+					<div class="flex mt-0.5 space-x-2">
+						<div class=" flex-1">
+							<input
+								class="text-sm w-full bg-transparent outline-hidden outline-none"
+								type="number"
+								aria-label={$i18n.t(
+									'settings.personal.general.parameters.contextCompactionThreshold.label'
+								)}
+								placeholder={$i18n.t('Enter token threshold')}
+								bind:value={params.compact_token_threshold}
+								autocomplete="off"
+								min="1"
+								step="1"
+							/>
+						</div>
 					</div>
-				</div>
-			{/if}
-		</div>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 
 	<div>

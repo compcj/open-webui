@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.utils.chat_id import is_saved_chat_id
+from open_webui.utils.context_compaction_config import load_compaction_settings
+from open_webui.utils.context_compaction_v2 import resolve_context_window
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list
 from open_webui.utils.payload import apply_params_to_form_data
@@ -49,6 +51,9 @@ async def compact_messages_for_request(
     system_prompt: str = '',
 ) -> tuple[list[dict], str | None, bool]:
     config = await _load_config()
+    state = getattr(request.state, 'context_compaction', None)
+    if state is not None:
+        config['enable'] = state.get('mode') == 'legacy'
     if not config['enable']:
         return messages, None, False
 
@@ -57,6 +62,11 @@ async def compact_messages_for_request(
 
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
     token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
+    settings = (state or {}).get('settings') or await load_compaction_settings()
+    context_window = await resolve_context_window(
+        model_id, models, settings.default_context_window, metadata.get('params') or {}
+    )
+    token_threshold = min(token_threshold, context_window)
     if not _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or len(messages) <= 3:
         return [*system_messages, *messages], previous_summary, False
 
@@ -66,6 +76,19 @@ async def compact_messages_for_request(
     if not compacted_messages or not recent_messages:
         return [*system_messages, *messages], previous_summary, False
 
+    before_tokens = (
+        _estimate_tokens(system_prompt) + _estimate_tokens(previous_summary or '') + _estimate_messages_tokens(messages)
+    )
+    event_context = {
+        **_build_context_usage(before_tokens, token_threshold),
+        'mode': 'legacy',
+        'model': model_id,
+        'context_window': context_window,
+        'effective_context_window': context_window,
+        'input_budget': context_window,
+        'remaining_tokens': max(0, token_threshold - before_tokens),
+        'before_tokens': before_tokens,
+    }
     event_emitter = None
     if metadata.get('chat_id') and metadata.get('message_id'):
         from open_webui.socket.main import get_event_emitter
@@ -77,6 +100,7 @@ async def compact_messages_for_request(
             {
                 'type': 'context_compaction',
                 'data': {
+                    **event_context,
                     'action': 'context_compaction',
                     'description': 'Compacting context',
                     'done': False,
@@ -101,6 +125,7 @@ async def compact_messages_for_request(
                 {
                     'type': 'context_compaction',
                     'data': {
+                        **event_context,
                         'action': 'context_compaction',
                         'description': 'Context compaction failed',
                         'done': True,
@@ -137,7 +162,24 @@ async def compact_messages_for_request(
             {
                 'type': 'context_compaction',
                 'data': {
+                    **event_context,
                     'action': 'context_compaction',
+                    **_build_context_usage(
+                        _estimate_tokens(system_prompt)
+                        + _estimate_tokens(summary)
+                        + _estimate_messages_tokens(recent_messages),
+                        token_threshold,
+                    ),
+                    'after_tokens': _estimate_tokens(system_prompt)
+                    + _estimate_tokens(summary)
+                    + _estimate_messages_tokens(recent_messages),
+                    'remaining_tokens': max(
+                        0,
+                        token_threshold
+                        - _estimate_tokens(system_prompt)
+                        - _estimate_tokens(summary)
+                        - _estimate_messages_tokens(recent_messages),
+                    ),
                     'description': 'Context compacted',
                     'done': True,
                 },
@@ -148,6 +190,22 @@ async def compact_messages_for_request(
 
 
 async def compact_chat_branch(request, user, chat: Any, model_id: str, models: dict) -> dict:
+    settings = await load_compaction_settings()
+    if settings.mode == 'off':
+        return {'ok': True, 'compacted': False, 'reason': 'disabled', 'mode': 'off'}
+    if settings.mode == 'v2':
+        if (models.get(model_id) or {}).get('pipe'):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail='V2 compaction does not manage third-party Pipe context.')
+        from open_webui.utils.context_compaction_v2 import compact_v2_chat_branch
+
+        return await compact_v2_chat_branch(request, user, chat, model_id, models)
+    result = await _compact_legacy_chat_branch(request, user, chat, model_id, models)
+    return {**result, 'mode': 'legacy'}
+
+
+async def _compact_legacy_chat_branch(request, user, chat: Any, model_id: str, models: dict) -> dict:
     config = await _load_config()
     if not config['enable']:
         return {'ok': True, 'compacted': False, 'reason': 'disabled'}
@@ -198,6 +256,7 @@ async def compact_chat_branch(request, user, chat: Any, model_id: str, models: d
 async def _load_config() -> dict:
     values = await Config.get_many(
         'chat.context_compaction.enable',
+        'chat.context_compaction.mode',
         'chat.context_compaction.token_threshold',
         'chat.context_compaction.token_cap',
         'chat.context_compaction.retention_percentage',
@@ -205,7 +264,11 @@ async def _load_config() -> dict:
     )
     token_threshold = _parse_positive_int(values.get('chat.context_compaction.token_threshold')) or 80000
     return {
-        'enable': bool(values.get('chat.context_compaction.enable', False)),
+        'enable': (
+            values.get('chat.context_compaction.mode')
+            or ('legacy' if values.get('chat.context_compaction.enable') else 'off')
+        )
+        == 'legacy',
         'token_threshold': token_threshold,
         'token_cap': _parse_positive_int(values.get('chat.context_compaction.token_cap')) or token_threshold,
         'retention_percentage': _clamp_retention_percentage(values.get('chat.context_compaction.retention_percentage')),
@@ -251,10 +314,32 @@ def _usage_token_count(usage: dict) -> int:
     return prompt_tokens + completion_tokens
 
 
-async def get_chat_context_usage(chat: Any, model_id: str | None = None) -> dict | None:
+async def get_chat_context_usage(
+    chat: Any, model_id: str | None = None, models: dict | None = None, *, current_id: str | None = None
+) -> dict | None:
+    settings = await load_compaction_settings()
+    if settings.mode == 'off':
+        return None
+    models = models or {}
+    if not model_id:
+        chat_models = (chat.chat or {}).get('models') or []
+        model_id = chat_models[0] if chat_models else None
+    if settings.mode == 'v2':
+        from open_webui.utils.context_compaction_v2 import get_v2_chat_context_usage
+
+        return await get_v2_chat_context_usage(chat, model_id, models, current_id=current_id)
+    result = await _get_legacy_chat_context_usage(chat, model_id, models, current_id=current_id)
+    if result:
+        result.update(mode='legacy', model=model_id, remaining_tokens=max(0, result['threshold'] - result['tokens']))
+    return result
+
+
+async def _get_legacy_chat_context_usage(
+    chat: Any, model_id: str | None = None, models: dict | None = None, *, current_id: str | None = None
+) -> dict | None:
     chat_data = chat.chat or {}
     history = chat_data.get('history') or {}
-    current_id = getattr(chat, 'current_message_id', None) or history.get('currentId')
+    current_id = current_id or getattr(chat, 'current_message_id', None) or history.get('currentId')
     if not current_id:
         current_id = chat_data.get('currentId') or chat_data.get('branchPointMessageId')
     if not current_id and isinstance(chat_data.get('messages'), list) and chat_data['messages']:
@@ -275,16 +360,34 @@ async def get_chat_context_usage(chat: Any, model_id: str | None = None) -> dict
     if model_id:
         params['model'] = model_id
     threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], {'params': params})
+    settings = await load_compaction_settings()
+    context_window = settings.default_context_window
+    if model_id:
+        context_window = await resolve_context_window(model_id, models or {}, settings.default_context_window, params)
+    threshold = min(threshold, context_window)
+
+    def usage_result(tokens):
+        return {
+            **_build_context_usage(tokens, threshold),
+            'branch_id': current_id,
+            'mode': 'legacy',
+            'model': model_id,
+            'context_window': context_window,
+            'effective_context_window': context_window,
+            'input_budget': context_window,
+            'remaining_tokens': max(0, threshold - tokens),
+        }
+
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
 
     for idx in range(len(messages) - 1, -1, -1):
         usage = messages[idx].get('usage') or (messages[idx].get('info') or {}).get('usage')
         if isinstance(usage, dict) and (tokens := _usage_token_count(usage)):
             tokens += _estimate_messages_tokens(messages[idx + 1 :])
-            return _build_context_usage(tokens, threshold)
+            return usage_result(tokens)
 
     tokens = _estimate_tokens(previous_summary or '') + _estimate_messages_tokens(messages)
-    return _build_context_usage(tokens, threshold)
+    return usage_result(tokens)
 
 
 def _build_context_usage(tokens: int, threshold: int) -> dict:

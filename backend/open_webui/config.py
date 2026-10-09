@@ -2222,6 +2222,27 @@ CONTEXT_COMPACTION_RETENTION_PERCENTAGE = min(
 
 CONTEXT_COMPACTION_PROMPT_TEMPLATE = os.getenv('CONTEXT_COMPACTION_PROMPT_TEMPLATE', '')
 
+# Keep an absent mode distinct from off: persisted legacy enable values must
+# continue to select the original algorithm until an administrator selects a mode.
+CONTEXT_COMPACTION_MODE = os.getenv('CONTEXT_COMPACTION_MODE') or None
+CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW = int(os.getenv('CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW', '262144'))
+CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT', '95'))
+CONTEXT_COMPACTION_V2_TRIGGER_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_TRIGGER_PERCENT', '90'))
+CONTEXT_COMPACTION_V2_REMINDER_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_REMINDER_PERCENT', '10'))
+CONTEXT_COMPACTION_V2_RECENT_TOKENS = int(os.getenv('CONTEXT_COMPACTION_V2_RECENT_TOKENS', '20000'))
+CONTEXT_COMPACTION_V2_MODEL = os.getenv('CONTEXT_COMPACTION_V2_MODEL', '')
+CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS = (
+    int(os.environ['CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS'])
+    if os.getenv('CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS')
+    else None
+)
+CONTEXT_COMPACTION_V2_SUMMARY_PROMPT = os.getenv('CONTEXT_COMPACTION_V2_SUMMARY_PROMPT', '')
+CONTEXT_COMPACTION_V2_REMINDER_ENABLED = os.getenv('CONTEXT_COMPACTION_V2_REMINDER_ENABLED', 'True').lower() == 'true'
+CONTEXT_COMPACTION_V2_REMINDER_PROMPT = os.getenv('CONTEXT_COMPACTION_V2_REMINDER_PROMPT', '')
+CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS = int(os.getenv('CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS', '60'))
+CONTEXT_COMPACTION_V2_MAX_RETRIES = int(os.getenv('CONTEXT_COMPACTION_V2_MAX_RETRIES', '1'))
+
+
 TITLE_GENERATION_PROMPT_TEMPLATE = os.getenv('TITLE_GENERATION_PROMPT_TEMPLATE', '')
 
 DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE = """### Task:
@@ -3160,6 +3181,19 @@ DEFAULT_CONFIG = {
     'chat.context_compaction.token_cap': CONTEXT_COMPACTION_TOKEN_CAP,
     'chat.context_compaction.retention_percentage': CONTEXT_COMPACTION_RETENTION_PERCENTAGE,
     'chat.context_compaction.prompt_template': CONTEXT_COMPACTION_PROMPT_TEMPLATE,
+    'chat.context_compaction.mode': CONTEXT_COMPACTION_MODE,
+    'chat.context_compaction.default_context_window': CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW,
+    'chat.context_compaction.v2.effective_window_percent': CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT,
+    'chat.context_compaction.v2.trigger_percent': CONTEXT_COMPACTION_V2_TRIGGER_PERCENT,
+    'chat.context_compaction.v2.reminder_percent': CONTEXT_COMPACTION_V2_REMINDER_PERCENT,
+    'chat.context_compaction.v2.recent_tokens': CONTEXT_COMPACTION_V2_RECENT_TOKENS,
+    'chat.context_compaction.v2.model': CONTEXT_COMPACTION_V2_MODEL,
+    'chat.context_compaction.v2.max_output_tokens': CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS,
+    'chat.context_compaction.v2.summary_prompt': CONTEXT_COMPACTION_V2_SUMMARY_PROMPT,
+    'chat.context_compaction.v2.reminder_enabled': CONTEXT_COMPACTION_V2_REMINDER_ENABLED,
+    'chat.context_compaction.v2.reminder_prompt': CONTEXT_COMPACTION_V2_REMINDER_PROMPT,
+    'chat.context_compaction.v2.timeout_seconds': CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS,
+    'chat.context_compaction.v2.max_retries': CONTEXT_COMPACTION_V2_MAX_RETRIES,
     'chat.tool_permissions.enable': ENABLE_TOOL_PERMISSIONS,
     'task.title.prompt_template': TITLE_GENERATION_PROMPT_TEMPLATE,
     'task.tags.prompt_template': TAGS_GENERATION_PROMPT_TEMPLATE,

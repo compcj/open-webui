@@ -68,6 +68,7 @@
 		getUsageTokenCount,
 		isRasterImageContentType
 	} from '$lib/utils';
+	import { getCompactionMode, selectContextUsage } from '$lib/utils/context-compaction';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import {
@@ -97,6 +98,7 @@
 		forkChatById,
 		getAllTags,
 		getChatById,
+		getChatContextUsage,
 		getTagsById,
 		resolveChatMessageToolCall,
 		updateChatById,
@@ -281,7 +283,51 @@
 			return next;
 		}, 0);
 
-	$: contextCompactionEnabled = Boolean($config?.features?.enable_context_compaction);
+	$: contextCompactionMode = getCompactionMode($config?.features);
+	$: contextCompactionEnabled = contextCompactionMode !== 'off';
+	$: contextUsageModelId = atSelectedModel?.id ?? selectedModels.find((id) => id) ?? '';
+	let contextUsageRequestKey = '';
+	let contextUsageRequestVersion = 0;
+	const refreshContextUsage = async (id: string, model: string, branchId: string) => {
+		const version = ++contextUsageRequestVersion;
+		serverContextUsage = null;
+		try {
+			const usage = await getChatContextUsage(
+				localStorage.token,
+				id,
+				model,
+				branchId,
+				$models.find((item) => item.id === model)
+			);
+			if (
+				version === contextUsageRequestVersion &&
+				id === $chatId &&
+				branchId === history.currentId
+			) {
+				serverContextUsage = usage;
+			}
+		} catch (error) {
+			console.debug('Unable to load context usage', error);
+		}
+	};
+	$: {
+		const key = `${$chatId}:${contextUsageModelId}:${contextCompactionMode}:${history.currentId ?? ''}`;
+		if (key !== contextUsageRequestKey) {
+			contextUsageRequestKey = key;
+			if (
+				$chatId &&
+				history.currentId &&
+				contextUsageModelId &&
+				contextCompactionEnabled &&
+				!$temporaryChatEnabled
+			) {
+				void refreshContextUsage($chatId, contextUsageModelId, history.currentId);
+			} else {
+				contextUsageRequestVersion += 1;
+				serverContextUsage = null;
+			}
+		}
+	}
 
 	const getContextThreshold = () => {
 		const chatThreshold = Number(params?.compact_token_threshold);
@@ -296,7 +342,7 @@
 	};
 
 	const getContextUsage = () => {
-		if (!history?.currentId) {
+		if (!history?.currentId || contextCompactionMode !== 'legacy') {
 			return null;
 		}
 
@@ -343,7 +389,13 @@
 		};
 	};
 
-	$: contextUsage = getContextUsage() ?? (contextCompactionEnabled ? serverContextUsage : null);
+	$: contextUsage = selectContextUsage(
+		contextCompactionMode,
+		contextUsageModelId,
+		serverContextUsage,
+		getContextUsage(),
+		history.currentId
+	);
 	$: embeddedHeaderTitle = embeddedTitle || $chatTitle || $i18n.t('Chat');
 
 	let selectedToolIds: string[] = [];
@@ -619,7 +671,7 @@
 	let generating = false;
 	let dragged = false;
 	let generationController = null;
-	let contextCompactionToastId = null;
+	let contextCompactionToastId: string | number | null = null;
 
 	let chat = null;
 	let tags = [];
@@ -1442,7 +1494,7 @@
 		await tick();
 
 		if (save) {
-			saveChatHandler(_chatId, history);
+			await saveChatHandler(_chatId, history);
 		}
 	};
 
@@ -1479,6 +1531,9 @@
 		}
 
 		if (status?.done) {
+			if (status?.error && contextCompactionToastId === null) {
+				toast.error($i18n.t('Context compaction failed. Original history is preserved.'));
+			}
 			if (contextCompactionToastId !== null) {
 				if (status?.error) {
 					toast.error($i18n.t('Context compaction failed'), {
@@ -1509,6 +1564,18 @@
 		if (event.chat_id === $chatId) {
 			await tick();
 			const type = event?.data?.type ?? null;
+			if (type === 'context_usage' || type === 'context_compaction') {
+				const usage = event?.data?.data;
+				if (
+					usage?.model === contextUsageModelId &&
+					usage?.mode === contextCompactionMode &&
+					event.message_id === history.currentId &&
+					typeof usage?.tokens === 'number'
+				) {
+					contextUsageRequestVersion += 1;
+					serverContextUsage = { ...usage, branch_id: event.message_id };
+				}
+			}
 			if (type === 'chat:reload') {
 				await loadChat();
 				return;
@@ -2668,7 +2735,8 @@
 
 				// Load tasks from chat-level DB field
 				chatTasks = chat?.tasks ?? [];
-				serverContextUsage = chat?.context_usage ?? null;
+				contextUsageRequestVersion += 1;
+				serverContextUsage = contextCompactionMode === 'v2' ? null : (chat?.context_usage ?? null);
 
 				autoScroll = true;
 				await tick();
@@ -2727,6 +2795,16 @@
 				}
 
 				await tick();
+				// Reloads also follow manual compaction. Query with the current
+				// browser descriptor so generic embedded usage cannot replace it.
+				if (
+					$chatId === chat?.id &&
+					history.currentId &&
+					contextUsageModelId &&
+					contextCompactionEnabled
+				) {
+					await refreshContextUsage($chatId, contextUsageModelId, history.currentId);
+				}
 
 				return true;
 			} else {
@@ -3289,7 +3367,13 @@
 		const toastId = toast.loading($i18n.t('Compacting context...'));
 
 		try {
-			const result = await compactChatById(localStorage.token, $chatId, model);
+			const result = await compactChatById(
+				localStorage.token,
+				$chatId,
+				model,
+				$models.find((item) => item.id === model),
+				$socket?.id
+			);
 			serverContextUsage = result?.context_usage ?? serverContextUsage;
 
 			if (result?.compacted) {
@@ -4322,17 +4406,30 @@
 		return _chatId;
 	};
 
-	const saveChatHandler = async (_chatId, history) => {
+	const saveChatHandler = async (
+		_chatId,
+		historyToSave: { messages: Record<string, any>; currentId: string | null }
+	) => {
+		const savedBranchId = historyToSave.currentId;
 		if ($chatId == _chatId) {
 			if (!$temporaryChatEnabled) {
 				chat = await updateChatById(localStorage.token, _chatId, {
 					models: selectedModels,
-					history: history,
-					messages: createMessagesList(history, history.currentId),
+					history: historyToSave,
+					messages: createMessagesList(historyToSave, savedBranchId),
 					params: params,
 					reasoning_effort_by_model: getReasoningEffortByModelForSave(),
 					files: chatFiles
 				});
+				if (
+					$chatId === _chatId &&
+					history.currentId === savedBranchId &&
+					contextCompactionEnabled &&
+					contextUsageModelId &&
+					savedBranchId
+				) {
+					void refreshContextUsage(_chatId, contextUsageModelId, savedBranchId);
+				}
 			}
 		}
 	};
@@ -4807,6 +4904,7 @@
 										chatId={$chatId}
 										{contextUsage}
 										{contextCompactionEnabled}
+										{contextCompactionMode}
 										{embedded}
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
@@ -4910,6 +5008,7 @@
 										chatId={$chatId}
 										{contextUsage}
 										{contextCompactionEnabled}
+										{contextCompactionMode}
 										{embedded}
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}

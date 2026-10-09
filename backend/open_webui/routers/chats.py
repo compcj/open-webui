@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -32,16 +33,17 @@ from open_webui.models.config import Config
 from open_webui.models.folders import Folders
 from open_webui.models.shared_chats import SharedChatResponse, SharedChats
 from open_webui.models.tags import TagModel, Tags
-from open_webui.socket.main import get_event_emitter
+from open_webui.socket.main import get_event_emitter, get_user_id_from_session_pool
 from open_webui.tasks import get_response_streams_by_chat_id, has_active_tasks, stop_item_tasks
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.auth import bearer_security, get_admin_user, get_current_user, get_verified_user
 from open_webui.utils.chat_fork import build_fork_history
 from open_webui.utils.context_compaction import compact_chat_branch, get_chat_context_usage
+from open_webui.utils.context_compaction_config import CONFIG_FIELDS, CompactionSettings
 from open_webui.utils.misc import get_message_list
-from open_webui.utils.models import get_all_models
-from pydantic import BaseModel
+from open_webui.utils.models import check_model_access, get_all_models
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 CHAT_CONFIG_KEYS = {
+    **{field: spec[1] for field, spec in CONFIG_FIELDS.items()},
     'CONTEXT_COMPACTION_MODEL': 'chat.context_compaction.model',
     'ENABLE_CONTEXT_COMPACTION': 'chat.context_compaction.enable',
     'CONTEXT_COMPACTION_TOKEN_THRESHOLD': 'chat.context_compaction.token_threshold',
@@ -159,16 +162,68 @@ async def get_folder_unread_counts(user_id: str, db: AsyncSession | None = None)
 
 class ChatConfigForm(BaseModel):
     CONTEXT_COMPACTION_MODEL: str | None = ''
-    ENABLE_CONTEXT_COMPACTION: bool
-    CONTEXT_COMPACTION_TOKEN_THRESHOLD: int
+    ENABLE_CONTEXT_COMPACTION: bool = False
+    CONTEXT_COMPACTION_TOKEN_THRESHOLD: int = 80000
     CONTEXT_COMPACTION_TOKEN_CAP: int | None = None
     CONTEXT_COMPACTION_RETENTION_PERCENTAGE: int = 40
-    CONTEXT_COMPACTION_PROMPT_TEMPLATE: str
+    CONTEXT_COMPACTION_PROMPT_TEMPLATE: str = ''
+    CONTEXT_COMPACTION_MODE: Literal['off', 'legacy', 'v2'] | None = None
+    CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW: int = Field(default=262144, gt=0, strict=True)
+    CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT: int = Field(default=95, ge=1, le=100, strict=True)
+    CONTEXT_COMPACTION_V2_TRIGGER_PERCENT: int = Field(default=90, ge=1, le=100, strict=True)
+    CONTEXT_COMPACTION_V2_REMINDER_PERCENT: int = Field(default=10, ge=0, le=100, strict=True)
+    CONTEXT_COMPACTION_V2_RECENT_TOKENS: int = Field(default=20000, ge=0, strict=True)
+    CONTEXT_COMPACTION_V2_MODEL: str = ''
+    CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS: int | None = Field(default=None, gt=0, strict=True)
+    CONTEXT_COMPACTION_V2_SUMMARY_PROMPT: str = ''
+    CONTEXT_COMPACTION_V2_REMINDER_ENABLED: bool = True
+    CONTEXT_COMPACTION_V2_REMINDER_PROMPT: str = ''
+    CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS: int = Field(default=60, gt=0, le=600, strict=True)
+    CONTEXT_COMPACTION_V2_MAX_RETRIES: int = Field(default=1, ge=0, le=5, strict=True)
     ENABLE_TOOL_PERMISSIONS: bool = False
 
 
 class CompactChatForm(BaseModel):
     model: str | None = None
+    model_item: dict | None = None
+    session_id: str | None = None
+
+
+class ContextUsageForm(CompactChatForm):
+    model: str
+    message_id: str | None = None
+
+
+async def get_compaction_models(request, user, chat, model_id, form_data=None, *, require_session=False):
+    # Direct model descriptors are local to this request, as in chat completion.
+    # Never add a user's browser connection to the shared server model registry.
+    models = request.app.state.MODELS
+    direct_model = form_data.model_item if form_data else None
+    if direct_model and direct_model.get('direct') is True:
+        if direct_model.get('id') != model_id:
+            raise HTTPException(status_code=400, detail='Direct model does not match the requested model.')
+        if require_session:
+            session_id = form_data.session_id
+            if not session_id or get_user_id_from_session_pool(session_id) != user.id:
+                raise HTTPException(status_code=403, detail='Direct compaction requires your active browser session.')
+            request.state.direct = True
+            request.state.model = dict(direct_model)
+            request.state.metadata = {
+                'user_id': user.id,
+                'session_id': session_id,
+                'chat_id': chat.id,
+                'message_id': chat.current_message_id or ((chat.chat or {}).get('history') or {}).get('currentId'),
+            }
+        return {**dict(models.items()), model_id: dict(direct_model)}
+    if not models:
+        await get_all_models(request, user=user)
+        models = request.app.state.MODELS
+    model = models.get(model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail='Model not found')
+    if user.role != 'admin':
+        await check_model_access(user, model)
+    return models
 
 
 def chat_search_content_text(text: str) -> str:
@@ -215,6 +270,10 @@ def chat_search_snippet(chat: dict, search_text: str, max_length: int = 200) -> 
 async def get_chat_config_values() -> dict:
     values = await Config.get_many(*CHAT_CONFIG_KEYS.values())
     config = {field: values[storage_key] for field, storage_key in CHAT_CONFIG_KEYS.items() if storage_key in values}
+    settings = CompactionSettings.from_config(values, legacy_enabled=bool(values.get('chat.context_compaction.enable')))
+    for field, (name, _key, _default) in CONFIG_FIELDS.items():
+        config[field] = getattr(settings, name)
+    config['ENABLE_CONTEXT_COMPACTION'] = settings.mode != 'off'
     if config.get('CONTEXT_COMPACTION_MODEL') is None:
         config['CONTEXT_COMPACTION_MODEL'] = ''
     if config.get('CONTEXT_COMPACTION_TOKEN_CAP') is None:
@@ -840,20 +899,33 @@ async def get_chat_config(user=Depends(get_admin_user)):
 
 @router.post('/config', response_model=ChatConfigForm)
 async def set_chat_config(form_data: ChatConfigForm, user=Depends(get_admin_user)):
-    threshold = max(1, int(form_data.CONTEXT_COMPACTION_TOKEN_THRESHOLD))
-    token_cap = max(1, int(form_data.CONTEXT_COMPACTION_TOKEN_CAP or threshold))
-    retention_percentage = min(50, max(10, int(form_data.CONTEXT_COMPACTION_RETENTION_PERCENTAGE)))
-    await Config.upsert(
-        chat_config_updates(
-            {
-                **form_data.model_dump(),
-                'CONTEXT_COMPACTION_MODEL': form_data.CONTEXT_COMPACTION_MODEL or '',
-                'CONTEXT_COMPACTION_TOKEN_THRESHOLD': threshold,
-                'CONTEXT_COMPACTION_TOKEN_CAP': token_cap,
-                'CONTEXT_COMPACTION_RETENTION_PERCENTAGE': retention_percentage,
-            }
+    # Old clients only know the legacy fields. Preserve omitted V2 values and
+    # let an explicitly stored mode win over the compatibility enable flag.
+    supplied = form_data.model_dump(exclude_unset=True)
+    if supplied.get('CONTEXT_COMPACTION_MODE') is None:
+        supplied.pop('CONTEXT_COMPACTION_MODE', None)
+    else:
+        supplied['ENABLE_CONTEXT_COMPACTION'] = supplied['CONTEXT_COMPACTION_MODE'] != 'off'
+    current = await Config.get_many(*CHAT_CONFIG_KEYS.values())
+    updates = chat_config_updates(supplied)
+    merged = {**current, **updates}
+    try:
+        CompactionSettings.from_config(merged, legacy_enabled=bool(merged.get('chat.context_compaction.enable')))
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if 'CONTEXT_COMPACTION_TOKEN_THRESHOLD' in supplied:
+        updates['chat.context_compaction.token_threshold'] = max(1, supplied['CONTEXT_COMPACTION_TOKEN_THRESHOLD'])
+    if 'CONTEXT_COMPACTION_TOKEN_CAP' in supplied:
+        updates['chat.context_compaction.token_cap'] = max(
+            1, supplied['CONTEXT_COMPACTION_TOKEN_CAP'] or merged.get('chat.context_compaction.token_threshold', 80000)
         )
-    )
+    if 'CONTEXT_COMPACTION_RETENTION_PERCENTAGE' in supplied:
+        updates['chat.context_compaction.retention_percentage'] = min(
+            50, max(10, supplied['CONTEXT_COMPACTION_RETENTION_PERCENTAGE'])
+        )
+    if 'CONTEXT_COMPACTION_MODEL' in supplied:
+        updates['chat.context_compaction.model'] = supplied['CONTEXT_COMPACTION_MODEL'] or ''
+    await Config.upsert(updates)
     return await get_chat_config_values()
 
 
@@ -1274,9 +1346,8 @@ async def compact_chat_by_id(
     id: str,
     form_data: CompactChatForm | None = None,
     user=Depends(get_verified_user),
-    db: AsyncSession = Depends(get_async_session),
 ):
-    chat = await Chats.get_chat_by_id_and_user_id(id, user.id, db=db)
+    chat = await Chats.get_chat_by_id_and_user_id(id, user.id)
     if not chat:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
 
@@ -1285,9 +1356,6 @@ async def compact_chat_by_id(
             status_code=status.HTTP_409_CONFLICT,
             detail='Wait for the current response to finish before compacting.',
         )
-
-    if not request.app.state.MODELS:
-        await get_all_models(request, user=user)
 
     history = (chat.chat or {}).get('history') or {}
     messages_map = await Chats.get_messages_map_by_chat_id(id)
@@ -1304,8 +1372,9 @@ async def compact_chat_by_id(
     if not model_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No model found for context compaction.')
 
-    result = await compact_chat_branch(request, user, chat, model_id, request.app.state.MODELS)
-    result['context_usage'] = await get_chat_context_usage(chat, model_id)
+    models = await get_compaction_models(request, user, chat, model_id, form_data, require_session=True)
+    result = await compact_chat_branch(request, user, chat, model_id, models)
+    result['context_usage'] = await get_chat_context_usage(chat, model_id, models)
     if result.get('compacted'):
         await publish_event(
             request,
@@ -1320,6 +1389,37 @@ async def compact_chat_by_id(
 ############################
 # GetChatById
 ############################
+
+
+@router.get('/{id}/context-usage')
+async def get_chat_context_usage_by_id(
+    id: str,
+    request: Request,
+    model: str | None = None,
+    message_id: str | None = None,
+    user=Depends(get_verified_user),
+):
+    chat = await Chats.get_chat_by_id_for_user(id, user)
+    if not chat:
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.NOT_FOUND)
+    model = model or next(iter((chat.chat or {}).get('models') or []), None)
+    if not model:
+        return None
+    models = await get_compaction_models(request, user, chat, model)
+    return await get_chat_context_usage(chat, model, models, current_id=message_id)
+
+
+@router.post('/{id}/context-usage')
+async def query_chat_context_usage(
+    id: str, request: Request, form_data: ContextUsageForm, user=Depends(get_verified_user)
+):
+    chat = await Chats.get_chat_by_id_for_user(id, user)
+    if not chat:
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.NOT_FOUND)
+    # This only estimates stored history: unlike manual compaction it never
+    # dispatches to a browser, so it also works before a socket reconnects.
+    models = await get_compaction_models(request, user, chat, form_data.model, form_data)
+    return await get_chat_context_usage(chat, form_data.model, models, current_id=form_data.message_id)
 
 
 @router.get('/{id}', response_model=ChatResponse | None)
@@ -1341,7 +1441,7 @@ async def get_chat_by_id(
             data,
             await get_response_streams_by_chat_id(request.app.state.redis, id),
         )
-        data['context_usage'] = await get_chat_context_usage(chat)
+        data['context_usage'] = await get_chat_context_usage(chat, models=request.app.state.MODELS)
         return data
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)

@@ -2383,6 +2383,7 @@ def process_messages_with_output(
     messages: list[dict],
     reasoning_format: str | None = None,
     include_tool_images: bool = True,
+    preserve_compaction_ids: bool = False,
 ) -> list[dict]:
     """
     Process messages with OR-aligned output items for LLM consumption.
@@ -2404,6 +2405,8 @@ def process_messages_with_output(
             )
             if output_messages:
                 for output_message in output_messages:
+                    if preserve_compaction_ids and message.get('id'):
+                        output_message['_context_message_id'] = message['id']
                     if output_message.get('role') == 'user':
                         # Preserve attachment pairing until final model normalization.
                         output_message['_tool_image_context'] = True
@@ -2413,6 +2416,8 @@ def process_messages_with_output(
                 continue
 
         clean_message = dict(message)
+        if preserve_compaction_ids and message.get('id'):
+            clean_message['_context_message_id'] = message['id']
         for key in ('id', 'files', 'output', 'model', 'contextSummary', 'context_summary', 'usage'):
             clean_message.pop(key, None)
         processed.append(clean_message)
@@ -2641,6 +2646,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         form_data.get('messages', []),
         reasoning_format=get_reasoning_format(model),
         include_tool_images=model.get('info', {}).get('meta', {}).get('capabilities', {}).get('vision', True),
+        preserve_compaction_ids=getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2',
     )
     form_data['messages'] = sanitize_tool_pairs(form_data['messages'])
 
@@ -3716,6 +3722,8 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
                 db_messages,
                 reasoning_format=get_reasoning_format(model),
                 include_tool_images=model.get('info', {}).get('meta', {}).get('capabilities', {}).get('vision', True),
+                preserve_compaction_ids=getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode')
+                == 'v2',
             )
             form_data['messages'] = sanitize_tool_pairs(form_data['messages'])
             await convert_url_images_to_base64(form_data, user=user)
@@ -6408,6 +6416,18 @@ async def streaming_chat_response_handler(response, ctx):
                                     }
                                 )
 
+                        if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
+                            for message in new_form_data['messages'][len(form_data['messages']) :]:
+                                message['_context_message_id'] = metadata['message_id']
+                            # Persist completed outputs before summarization can checkpoint them.
+                            # This appends to raw history; the summary is stored separately.
+                            await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                metadata['chat_id'],
+                                metadata['message_id'],
+                                {'output': full_output(), 'done': False},
+                                touch=False,
+                            )
+
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                         if filter_functions:
@@ -6634,6 +6654,18 @@ async def streaming_chat_response_handler(response, ctx):
                                     ),
                                 ],
                             }
+
+                            if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
+                                for message in new_form_data['messages'][len(form_data['messages']) :]:
+                                    message['_context_message_id'] = metadata['message_id']
+                                # Persist completed outputs before summarization can checkpoint them.
+                                # This appends to raw history; the summary is stored separately.
+                                await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                    metadata['chat_id'],
+                                    metadata['message_id'],
+                                    {'output': full_output(), 'done': False},
+                                    touch=False,
+                                )
 
                             new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 

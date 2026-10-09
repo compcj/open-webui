@@ -51,6 +51,20 @@ Preserve terminal file isolation/no same-origin port previews and fail closed wi
 when configured Redis revocation checks are unavailable. Keep user-facing descriptions in README,
 current rules in scoped guides, rationale in the decision record, and commands in DEVELOPMENT.md.
 
+## Context compaction contracts
+
+- Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to
+  off/legacy. Never auto-enable V2 on upgrade. Preserve the legacy algorithm and override rules.
+- Keep original chat messages intact. Legacy `contextSummary` and V2 `chat_context_checkpoint`
+  storage are independent; off replays full raw history and mode changes apply next request.
+- V2 lives in `backend/open_webui/utils/context_compaction_v2.py`, validated settings in
+  `context_compaction_config.py`, final-send/retry hooks in `context_compaction_dispatch.py`, and
+  persistence in `backend/open_webui/models/chat_context_checkpoints.py`. Isolate checkpoints by
+  model and validated branch ancestry/content; stale or competing writes must never win.
+- Trace model `meta.context_window`, admin settings, provider sends, continuation flows and usage
+  events together. See [feature guide](docs/context-compaction.md), scoped frontend/backend rules,
+  and [verification commands](docs/DEVELOPMENT.md#context-compaction-verification).
+
 ## Implementation boundaries
 
 - Match nearby patterns and the checked-in formatter configuration. Keep diffs focused; do not

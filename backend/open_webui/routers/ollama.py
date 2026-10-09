@@ -1160,6 +1160,10 @@ async def generate_chat_completion(
     prefix_id = api_config.get('prefix_id')
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
 
+    from open_webui.utils.context_compaction_dispatch import apply_context_compaction
+
+    payload = await apply_context_compaction(request, user, payload, metadata, model_id)
+
     return await send_request(
         f'{url}/api/chat',
         payload=JSONCodec.dumps(payload),

@@ -46,6 +46,19 @@
 	let chatConfig = {
 		CONTEXT_COMPACTION_MODEL: '',
 		ENABLE_CONTEXT_COMPACTION: false,
+		CONTEXT_COMPACTION_MODE: 'off',
+		CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW: 262144,
+		CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT: 95,
+		CONTEXT_COMPACTION_V2_TRIGGER_PERCENT: 90,
+		CONTEXT_COMPACTION_V2_REMINDER_PERCENT: 10,
+		CONTEXT_COMPACTION_V2_RECENT_TOKENS: 20000,
+		CONTEXT_COMPACTION_V2_MODEL: '',
+		CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS: null as number | null,
+		CONTEXT_COMPACTION_V2_SUMMARY_PROMPT: '',
+		CONTEXT_COMPACTION_V2_REMINDER_ENABLED: true,
+		CONTEXT_COMPACTION_V2_REMINDER_PROMPT: '',
+		CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS: 60,
+		CONTEXT_COMPACTION_V2_MAX_RETRIES: 1,
 		CONTEXT_COMPACTION_TOKEN_THRESHOLD: 80000,
 		CONTEXT_COMPACTION_TOKEN_CAP: 80000,
 		CONTEXT_COMPACTION_RETENTION_PERCENTAGE: 40,
@@ -62,6 +75,9 @@
 		);
 
 	const updateInterfaceHandler = async () => {
+		chatConfig.ENABLE_CONTEXT_COMPACTION = chatConfig.CONTEXT_COMPACTION_MODE !== 'off';
+		chatConfig.CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS =
+			chatConfig.CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS || null;
 		const taskConfigPayload = {
 			...taskConfig,
 			TASK_MODEL_PARAMS: configuredParams(taskConfig.TASK_MODEL_PARAMS)
@@ -78,6 +94,12 @@
 						features: {
 							...current.features,
 							enable_context_compaction: chatConfig.ENABLE_CONTEXT_COMPACTION,
+							context_compaction_mode: chatConfig.CONTEXT_COMPACTION_MODE as
+								| 'off'
+								| 'legacy'
+								| 'v2',
+							context_compaction_default_context_window:
+								chatConfig.CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW,
 							enable_tool_permissions: chatConfig.ENABLE_TOOL_PERMISSIONS
 						}
 					}
@@ -163,9 +185,13 @@
 {#if models !== null && taskConfig && chatConfig}
 	<form
 		class="flex h-full flex-col justify-between text-sm"
-		on:submit|preventDefault={() => {
-			updateInterfaceHandler();
-			dispatch('save');
+		on:submit|preventDefault={async () => {
+			try {
+				await updateInterfaceHandler();
+				dispatch('save');
+			} catch (error) {
+				toast.error(String(error));
+			}
 		}}
 	>
 		<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
@@ -273,10 +299,31 @@
 					description={$i18n.t('settings.admin.interface.contextCompaction.description')}
 					let:labelId
 				>
-					<Switch bind:state={chatConfig.ENABLE_CONTEXT_COMPACTION} ariaLabelledbyId={labelId} />
+					<SettingsSelect bind:value={chatConfig.CONTEXT_COMPACTION_MODE} aria-labelledby={labelId}>
+						<option value="off">{$i18n.t('Compaction off')}</option>
+						<option value="legacy">{$i18n.t('Legacy compaction')}</option>
+						<option value="v2">{$i18n.t('V2 compaction')}</option>
+					</SettingsSelect>
 				</AdminSettingRow>
 
-				{#if chatConfig.ENABLE_CONTEXT_COMPACTION}
+				<AdminSettingField
+					label={$i18n.t('Default context window for compaction')}
+					description={$i18n.t(
+						'Used when neither the model nor its base model specifies a context window.'
+					)}
+				>
+					<input
+						type="number"
+						min="1"
+						step="1"
+						required
+						class={inputClass}
+						aria-label={$i18n.t('Default context window for compaction')}
+						bind:value={chatConfig.CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW}
+					/>
+				</AdminSettingField>
+
+				{#if chatConfig.CONTEXT_COMPACTION_MODE === 'legacy'}
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.contextCompactionModel.label')}
 						description={$i18n.t('settings.admin.interface.contextCompactionModel.description')}
@@ -361,6 +408,138 @@
 							<code>{'{{CURRENT_DATE}}'}</code>
 						</div>
 					</AdminSettingField>
+				{/if}
+				{#if chatConfig.CONTEXT_COMPACTION_MODE === 'v2'}
+					<p class="text-xs text-gray-500 dark:text-gray-400">
+						{$i18n.t(
+							'V2 combines continuation summaries, complete recent turns and token budget reminders. Settings apply to the next request.'
+						)}
+					</p>
+					<AdminSettingField label={$i18n.t('V2 summary model')}>
+						<SettingsSelect
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_MODEL}
+							className="w-full"
+							ariaLabel={$i18n.t('V2 summary model')}
+						>
+							<option value="">{$i18n.t('Current Model')}</option>
+							{#each modelOptions as model}
+								<option value={model.id}>{model.name}</option>
+							{/each}
+						</SettingsSelect>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Effective context window (%)')}>
+						<input
+							type="number"
+							min="1"
+							max="100"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Effective context window (%)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Automatic compaction threshold (%)')}>
+						<input
+							type="number"
+							min="1"
+							max="100"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Automatic compaction threshold (%)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_TRIGGER_PERCENT}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Remaining budget for reminder (%)')}>
+						<input
+							type="number"
+							min="0"
+							max="100"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Remaining budget for reminder (%)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_REMINDER_PERCENT}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Recent original context budget (tokens)')}>
+						<input
+							type="number"
+							min="0"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Recent original context budget (tokens)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_RECENT_TOKENS}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('Summary output limit (tokens)')}
+						description={$i18n.t('Leave empty to inherit the summary model output limit.')}
+					>
+						<input
+							type="number"
+							min="1"
+							step="1"
+							class={inputClass}
+							aria-label={$i18n.t('Summary output limit (tokens)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Summary timeout (seconds)')}>
+						<input
+							type="number"
+							min="1"
+							max="600"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Summary timeout (seconds)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Summary failure retries')}>
+						<input
+							type="number"
+							min="0"
+							max="5"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Summary failure retries')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_MAX_RETRIES}
+						/>
+					</AdminSettingField>
+					<AdminSettingRow label={$i18n.t('Context budget reminders')} let:labelId>
+						<Switch
+							bind:state={chatConfig.CONTEXT_COMPACTION_V2_REMINDER_ENABLED}
+							ariaLabelledbyId={labelId}
+						/>
+					</AdminSettingRow>
+					<AdminSettingField label={$i18n.t('V2 summary prompt')}>
+						<Textarea
+							className={textareaClass}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_SUMMARY_PROMPT}
+							placeholder={$i18n.t(
+								'Leave empty to use the default prompt, or enter a custom prompt'
+							)}
+						/>
+					</AdminSettingField>
+					{#if chatConfig.CONTEXT_COMPACTION_V2_REMINDER_ENABLED}
+						<AdminSettingField
+							label={$i18n.t('Context budget reminder prompt')}
+							description={$i18n.t('Variables: {remaining_tokens}, {threshold}, {input_budget}.')}
+						>
+							<Textarea
+								className={textareaClass}
+								bind:value={chatConfig.CONTEXT_COMPACTION_V2_REMINDER_PROMPT}
+								placeholder={$i18n.t(
+									'Leave empty to use the default prompt, or enter a custom prompt'
+								)}
+							/>
+						</AdminSettingField>
+					{/if}
 				{/if}
 			</AdminSettingSection>
 

@@ -4,6 +4,7 @@ import random
 import sys
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Optional
 
 from aiocache import cached
@@ -55,6 +56,9 @@ async def generate_direct_chat_completion(
     log.info('generate_direct_chat_completion')
 
     metadata = form_data.pop('metadata', {})
+    from open_webui.utils.context_compaction_dispatch import apply_context_compaction
+
+    form_data = await apply_context_compaction(request, user, form_data, metadata, form_data['model'])
 
     user_id = metadata.get('user_id')
     session_id = metadata.get('session_id')
@@ -146,6 +150,31 @@ async def generate_direct_chat_completion(
 
 
 async def generate_chat_completion(
+    request: Request,
+    form_data: dict,
+    user: Any,
+    bypass_filter: bool = False,
+    bypass_system_prompt: bool = False,
+):
+    from open_webui.utils.context_compaction_dispatch import run_with_context_retry
+    from open_webui.utils.context_compaction_v2 import internal_compaction
+
+    async def send():
+        # Providers mutate model names, metadata and messages. Each recovery
+        # starts with the same input; it never re-enters tool middleware.
+        body = {key: deepcopy(value) for key, value in form_data.items() if key != 'metadata'}
+        if 'metadata' in form_data:
+            body['metadata'] = dict(form_data['metadata'])
+        return await _generate_chat_completion(request, body, user, bypass_filter, bypass_system_prompt)
+
+    # Detect internal tasks before state metadata is merged by the dispatcher.
+    if (form_data.get('metadata') or {}).get('task'):
+        with internal_compaction():
+            return await send()
+    return await run_with_context_retry(request, send)
+
+
+async def _generate_chat_completion(
     request: Request,
     form_data: dict,
     user: Any,
@@ -288,6 +317,8 @@ async def generate_chat_completion(
                 form_data=form_data,
                 user=user,
             )
+            if isinstance(response, JSONResponse) and response.status_code >= 400:
+                return response
             if form_data.get('stream'):
                 response.headers['content-type'] = 'text/event-stream'
                 return StreamingResponse(

@@ -77,6 +77,31 @@ Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pi
 
 See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and upgrade boundaries.
 
+## Context compaction
+
+- Preserve off/legacy/V2 compatibility and the original implementation in `utils/context_compaction.py`.
+  New settings are administrator-only; an explicit mode wins over the old enable flag. Resolve
+  `meta.context_window` through base-model inheritance/global default and cap smaller Ollama num_ctx.
+- V2 budget checks belong after model parameters and all prompt/tool/knowledge/skill/file injections,
+  before transport conversion/send. Initial, approved-tool, tool-loop and code continuations share
+  the hook. Only trusted saved-WebUI request state activates it; internal summary/background tasks
+  use the ContextVar guard, never a client bypass flag. Pipes/stateless requests are outside scope.
+- Browser-direct compaction uses request-local model descriptors. Manual summaries require the
+  authenticated user's own live socket; stored-history usage queries have no dispatch side effect.
+  Never resolve private server model parameters through a direct descriptor's ID or base-model pointer.
+- Count final input, tools and multimodal allowances with an explicit source. Calibrate only matched
+  single-call input usage, never cumulative billing totals. Reserve configured output only.
+- Preserve latest real user input, runtime instructions, incomplete calls and call/result pairing.
+  Compact complete groups, never truncate raw messages. Persist completed continuation outputs
+  before checkpoint validation, and prevent replay from restoring already covered tool output.
+- V2 checkpoints are separate from legacy summaries and validate source fingerprints plus version
+  in one short transaction; no DB session may span model generation. Isolate model/branch state,
+  reject stale writes, preserve original history and remove checkpoints with deleted chats.
+- On timeout/empty/no-reduction/oversized summaries, continue unchanged only when the request fits
+  its input budget; otherwise return an actionable error. Retry explicit provider overflow once
+  only before content is delivered; never re-execute tools. Cancellation preserves valid history.
+- See [feature guide](../docs/context-compaction.md) and [isolated tests/migrations](../docs/DEVELOPMENT.md#context-compaction-verification).
+
 ## Verification
 
 Run these from the repository root with the selected development environment:

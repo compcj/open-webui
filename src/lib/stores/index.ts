@@ -379,6 +379,8 @@ type Config = {
 		enable_admin_chat_access: boolean;
 		enable_admin_analytics: boolean;
 		enable_context_compaction?: boolean;
+		context_compaction_mode?: 'off' | 'legacy' | 'v2';
+		context_compaction_default_context_window?: number;
 		enable_tool_permissions?: boolean;
 		enable_community_sharing: boolean;
 		enable_memories: boolean;

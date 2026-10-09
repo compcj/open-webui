@@ -81,6 +81,12 @@ class ModelMeta(BaseModel):
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
     available_reasoning_effort: list[str] | None = None
+    context_window: int | None = Field(
+        default=None,
+        gt=0,
+        strict=True,
+        description='Maximum context length used for compaction; not a provider parameter.',
+    )
 
     model_config = ConfigDict(extra='allow')
 

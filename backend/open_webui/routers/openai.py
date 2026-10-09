@@ -1608,6 +1608,12 @@ async def generate_chat_completion(
         payload['continue_final_message'] = True
         payload['add_generation_prompt'] = False
 
+    # All model parameters and injected messages are now resolved. Count the
+    # OpenAI-shaped request before Azure/Responses transport conversion.
+    from open_webui.utils.context_compaction_dispatch import apply_context_compaction
+
+    payload = await apply_context_compaction(request, user, payload, metadata, form_data['model'])
+
     if api_config.get('azure') or api_config.get('provider') == 'azure':
         # Only set api-key header if not using Azure Entra ID authentication
         auth_type = api_config.get('auth_type', 'bearer')

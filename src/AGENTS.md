@@ -52,6 +52,23 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 
 See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and future merge checks.
 
+## Context compaction
+
+- Admin Interface settings expose off/legacy/V2 and preserve the inactive algorithm's values.
+  New V2 parameters are global, not user/chat overrides; existing threshold overrides apply only
+  to legacy. Saved admin mode wins over the compatibility enable flag.
+- Model `meta.context_window` is optional positive integer metadata, inherited from the base model
+  then the global default. Keep it out of inference params and preserve import/export and model ACL.
+- Use backend `context_usage`/`context_compaction` events and model-specific usage queries as the
+  source of V2 counts. Reject stale model/mode/branch results on selection changes; refresh after history edits. Off must not display
+  a legacy checkpoint as full-history usage. Distinguish saved-history estimates and provider input
+  usage; never substitute cumulative billing totals for V2 occupancy.
+- Browser-direct manual compaction sends the selected descriptor and current socket ID; usage queries
+  send the descriptor without depending on socket readiness. Keep server-model requests compatible.
+- `/compact` follows the global mode and stays disabled during generation. Maintain Chinese and
+  English labels, parameter validation feedback, inherited values and narrow-screen controls.
+- See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).
+
 ## Formatting and tests
 
 - `.prettierrc` defines tabs, single quotes, no trailing commas, 100-column print width, and LF.

@@ -227,3 +227,89 @@ For manual acceptance, use the disposable data/static directories described abov
 
 A real-provider smoke test is separate and consumes Tavily credits. If performed, use a development
 key and report it separately from mocked checks; never include the key or response data in logs.
+
+### Context compaction verification
+
+Use Node 22 and Python 3.11/3.12. The V2 guide is [context-compaction.md](context-compaction.md).
+New regression locations:
+
+| Boundary                                                                      | Tests                                                 |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Budget formulas, CJK, multimodal, grouping, summary failures and replay       | `backend/tests/test_context_compaction_v2.py`         |
+| Checkpoint CAS, source edits, branch/model isolation and migration round trip | `backend/tests/test_context_compaction_v2_storage.py` |
+| Chat/model checkpoint cleanup with SQLite cascades disabled                   | `backend/tests/test_context_compaction_cleanup.py`    |
+| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata | `backend/tests/test_context_compaction_api.py`        |
+| Original algorithm, legacy threshold caps and off/V2 raw replay               | `backend/tests/test_context_compaction_legacy.py`     |
+| Provider context errors, bounded retry and streaming visibility               | `backend/tests/test_context_compaction_dispatch.py`   |
+| Mode compatibility, model inheritance and stale model/branch usage rejection  | `src/lib/utils/context-compaction.test.ts`            |
+
+Set `DATA_DIR`, `STATIC_DIR`, `DATABASE_URL`, and a synthetic `WEBUI_SECRET_KEY` to a disposable
+directory before any real model/router/application imports. For helper checks, use
+`ENABLE_DB_MIGRATIONS=false` to avoid import-triggered migrations. Do not point tests at a production
+SQLite file, Redis namespace, uploads directory or secrets. Storage tests use their own temporary
+SQLite databases and inject the session boundary; API tests mount extracted production handlers with
+synthetic auth/storage dependencies, not a complete application. Provider tests use synthetic responses.
+
+```sh
+python -m pytest backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_v2_storage.py backend/tests/test_context_compaction_api.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_context_compaction_legacy.py backend/tests/test_context_compaction_cleanup.py -q
+python -m pytest backend/tests -q
+npm run test:frontend -- --run --dir src src/lib/utils/context-compaction.test.ts
+npm run test:frontend -- --run --dir src
+npm run check
+```
+
+The new Alembic revision is `c7d2e4f6a801`, descending from `d4c1a8e37b62`.
+It creates `chat_context_checkpoint` without rewriting `chat_message.context_summary` or raw history.
+Verify a single revision head. On a disposable database, upgrade the previous head, insert synthetic
+legacy messages and a legacy summary, upgrade to the new head, then confirm those values are unchanged.
+Exercise new table insert/model separation/version conflict, downgrade only the new revision and
+upgrade again. The new-revision storage test checks the table/index lifecycle; it is not proof of the
+entire application's historical migration chain or PostgreSQL behavior.
+
+From the repository root, with the isolated environment above, the full migration entry point is:
+
+```python
+from pathlib import Path
+from alembic import command
+from alembic.config import Config
+
+cfg = Config('backend/open_webui/alembic.ini')
+cfg.set_main_option('script_location', str(Path('backend/open_webui/migrations').resolve()))
+command.upgrade(cfg, 'head')
+```
+
+After editing documentation, use the installed Prettier without downloading a formatter:
+
+```sh
+npx --no-install prettier --check AGENTS.md src/AGENTS.md backend/AGENTS.md README.md docs/context-compaction.md docs/DEVELOPMENT.md
+python -m ruff format --check backend/open_webui/utils/context_compaction_config.py backend/open_webui/utils/context_compaction_v2.py backend/open_webui/utils/context_compaction_dispatch.py backend/open_webui/models/chat_context_checkpoints.py
+python -m ruff check --select=F --ignore=F401,F403,F405,F541,F811,F841 backend/open_webui/utils/context_compaction_config.py backend/open_webui/utils/context_compaction_v2.py backend/open_webui/utils/context_compaction_dispatch.py backend/open_webui/models/chat_context_checkpoints.py
+git diff --check
+```
+
+Also check any other changed Python/frontend files with the same targeted tools, and validate Markdown
+relative links. Do not count a no-tests result, formatting, or AST isolation as a full runtime check.
+Compare existing `npm run check` failures against the same base revision before attributing them to V2.
+
+Manual acceptance with an isolated running application and test model connection:
+
+1. Start with the legacy enable flag both false and true and no mode; verify off/legacy mapping.
+   Select each mode, reload settings, and verify inactive-mode values remain. A non-admin cannot
+   save config. Test invalid percentages and a summary output limit that leaves no usable input.
+2. Edit a model's `meta.context_window`, clear it to inherit, change the base model, export/import,
+   and verify effective length. Confirm provider requests contain no context metadata parameter.
+3. Exercise saved chats with Chinese history, attachments, retrieval, skills and tool schemas.
+   Observe source-labelled backend usage, switch models and verify the badge updates. Off sends
+   full history; legacy still honors its threshold overrides; V2 does not use those overrides.
+4. Compress twice, reload, edit an old branch, fork and run two models concurrently. Check original
+   messages remain, summaries stay isolated and edited sources cannot reuse a stale checkpoint.
+5. Run long tools, approval pause/resume and code execution across compaction. Keep calls/results
+   paired and ensure already summarized output is not restored or tools re-executed on retry.
+6. Exercise timeouts, empty/reasoning-only/truncated summaries, cancellation and context-limit errors
+   before and after the first visible delta. A failed summary may continue only while input fits;
+   over-budget requests show a recoverable error. Manual `/compact` is blocked while generating. For browser-direct models, require the caller's own
+   socket for manual summary dispatch and verify stored-history usage still loads before reconnect.
+   A direct model ID/base pointer must not load a private server model's parameters.
+7. Check settings/model forms and status UI in Chinese/English, narrow screens, light/dark mode,
+   keyboard focus and input errors. Synthetic component/browser tests supplement this walkthrough;
+   live provider behavior still needs an available configured model.

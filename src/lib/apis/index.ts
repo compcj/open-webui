@@ -1783,6 +1783,7 @@ export interface ModelMeta {
 	capabilities?: object;
 	profile_image_url?: string;
 	available_reasoning_effort?: string[];
+	context_window?: number | null;
 	default_reasoning_effort?: string;
 	background_image_url?: string | null;
 }

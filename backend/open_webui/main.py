@@ -1655,6 +1655,19 @@ async def chat_completion(
 
     async def process_chat(request, form_data, user, metadata, model, tasks=None):
         try:
+            # Freeze mode/settings for this response. Only the authenticated saved
+            # WebUI path creates this state; API metadata cannot opt into it.
+            if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('user_message_id'):
+                from open_webui.utils.context_compaction_config import load_compaction_settings
+
+                settings = await load_compaction_settings()
+                request.state.context_compaction = {
+                    'mode': 'off' if settings.mode == 'v2' and model.get('pipe') else settings.mode,
+                    'settings': settings,
+                    'chat_id': metadata['chat_id'],
+                    'user_message_id': metadata['user_message_id'],
+                    'metadata': metadata,
+                }
             ctx = None
             if metadata.get('assistant_message_id'):
                 ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, [])
@@ -2281,6 +2294,8 @@ async def get_app_config(request: Request):
         'automations.enable',
         'notes.enable',
         'chat.context_compaction.enable',
+        'chat.context_compaction.mode',
+        'chat.context_compaction.default_context_window',
         'chat.tool_permissions.enable',
         'web.search.enable',
         'web.search.confirmation.enable',
@@ -2370,7 +2385,16 @@ async def get_app_config(request: Request):
                     'enable_calendar': config.get('calendar.enable'),
                     'enable_automations': config.get('automations.enable'),
                     'enable_notes': config.get('notes.enable'),
-                    'enable_context_compaction': config.get('chat.context_compaction.enable'),
+                    'enable_context_compaction': (
+                        config.get('chat.context_compaction.mode')
+                        or ('legacy' if config.get('chat.context_compaction.enable') else 'off')
+                    )
+                    != 'off',
+                    'context_compaction_mode': config.get('chat.context_compaction.mode')
+                    or ('legacy' if config.get('chat.context_compaction.enable') else 'off'),
+                    'context_compaction_default_context_window': config.get(
+                        'chat.context_compaction.default_context_window', 262144
+                    ),
                     'enable_tool_permissions': config.get('chat.tool_permissions.enable'),
                     'enable_web_search': config.get('web.search.enable'),
                     'enable_web_search_confirmation': config.get('web.search.confirmation.enable'),

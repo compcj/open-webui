@@ -37,6 +37,33 @@ export const getChatConfig = async (token: string) => {
 	return res;
 };
 
+export const getChatContextUsage = async (
+	token: string,
+	id: string,
+	model: string,
+	messageId: string,
+	modelItem?: any
+) => {
+	const direct = modelItem?.direct === true;
+	const query = new URLSearchParams({ model, message_id: messageId });
+	const response = await fetch(
+		`${WEBUI_API_BASE_URL}/chats/${encodeURIComponent(id)}/context-usage${direct ? '' : `?${query}`}`,
+		{
+			method: direct ? 'POST' : 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				authorization: `Bearer ${token}`
+			},
+			...(direct
+				? { body: JSON.stringify({ model, message_id: messageId, model_item: modelItem }) }
+				: {})
+		}
+	);
+	if (!response.ok) throw getErrorDetail(await response.json());
+	return response.json();
+};
+
 export const updateChatConfig = async (token: string, config: object) => {
 	let error = null;
 
@@ -1308,7 +1335,13 @@ export const updateChatById = async (
 	return res;
 };
 
-export const compactChatById = async (token: string, id: string, model?: string | null) => {
+export const compactChatById = async (
+	token: string,
+	id: string,
+	model?: string | null,
+	modelItem?: any,
+	sessionId?: string
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/compact`, {
@@ -1318,7 +1351,10 @@ export const compactChatById = async (token: string, id: string, model?: string 
 			'Content-Type': 'application/json',
 			...(token && { authorization: `Bearer ${token}` })
 		},
-		body: JSON.stringify({ model })
+		body: JSON.stringify({
+			model,
+			...(modelItem?.direct ? { model_item: modelItem, session_id: sessionId } : {})
+		})
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();

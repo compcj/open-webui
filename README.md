@@ -45,6 +45,23 @@ This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/o
 | 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.           |
 | 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                 |
 
+### 上下文压缩 / Context compaction
+
+管理员在 **设置 → 界面 → 上下文压缩** 选择 **关闭／原版压缩／V2压缩**。
+V2 将延续摘要、近期完整原文和 Token 预算提醒结合，默认上下文长度 **262144**、有效窗口 **95%**、
+触发比例 **90%**、近期原文预算 **20000 tokens**；可单独选择摘要模型并调整关键参数。
+每个工作区模型可设置“压缩用最大上下文长度”，留空继承基础模型或全局值。
+升级时旧开关仅映射为关闭或原版，不自动启用 V2；切换模式保留全部原始聊天与各自摘要。
+详见[参数、预算与故障处理指南](docs/context-compaction.md)。
+
+Under **Settings → Interface → Context Compaction**, admins choose **Off / Legacy / V2** globally.
+V2 combines continuation summaries, complete recent conversation groups and token budget reminders.
+Defaults are a **262144-token** window, **95%** effective window, **90%** trigger and **20000 tokens**
+of recent original context. Summary models and key parameters are configurable; each workspace model
+can override or inherit its compaction context window. Upgrades keep the previous off/legacy behavior;
+switching modes preserves raw history and each algorithm's summaries. See the
+[configuration and troubleshooting guide](docs/context-compaction.md).
+
 ### Tavily 搜索深度 / Tavily search depth
 
 `TAVILY_SEARCH_DEPTH=basic` 提供初始默认值，可设为 `advanced`；启用持久化时，已保存的管理员设置优先于环境默认值。此设置同时适用于聊天内置搜索和联网检索，与网页内容提取的 `TAVILY_EXTRACT_DEPTH` 独立。

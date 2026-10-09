@@ -281,6 +281,8 @@ def convert_messages_openai_to_ollama(messages: list[dict]) -> list[dict]:
     for message in messages:
         # Initialize the new message structure with the role
         new_message = {'role': message['role']}
+        if message.get('_context_message_id'):
+            new_message['_context_message_id'] = message['_context_message_id']
 
         # Preserve Ollama-native 'thinking' field (used by reasoning models,
         # may be injected by filter inlet functions).
