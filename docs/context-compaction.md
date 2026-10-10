@@ -103,6 +103,17 @@ tool definitions or instructions can change that prefix. The reminder counts tow
 usage and is omitted if it would exceed the input budget or displace the final assistant message in
 a `continue_final_message` prefill request.
 
+工具引用与预算提醒的生命周期不同：引用随对应工具结果保存，回放沿用首次生成的文本；预算提醒只属于本次请求。
+两者都计入最终模型输入。V2 对工具结果生成摘要或摘录时保留引用映射，原始结果读取仍返回原文；
+实际历史压缩仍可能改变缓存前缀。参见[工具引用修复记录](upstream/v0.11.4-tool-citation-cache-followup.md)
+及[验证方法](DEVELOPMENT.md#tool-citation-cache-verification)。
+
+Tool citations persist with their results and replay the originally rendered text; budget reminders
+exist only for the current request. Both count toward final model input. V2 tool summaries/excerpts
+retain citation mappings while raw result reads still return original text. Actual history compaction
+can still change the cached prefix. See the [citation fix record](upstream/v0.11.4-tool-citation-cache-followup.md)
+and [verification steps](DEVELOPMENT.md#tool-citation-cache-verification).
+
 ## 预算公式与计数 / Budget calculation
 
 1. `C` = 当前模型 `meta.context_window` → 基础模型 → 全局缺省值。

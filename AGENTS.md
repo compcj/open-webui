@@ -51,6 +51,16 @@ Preserve terminal file isolation/no same-origin port previews and fail closed wi
 when configured Redis revocation checks are unavailable. Keep user-facing descriptions in README,
 current rules in scoped guides, rationale in the decision record, and commands in DEVELOPMENT.md.
 
+## Tool citation prefix contract
+
+Native tool continuations append new results and their citation context without rebuilding earlier
+system/user messages or file RAG context. Install fixed citation rules before the first request;
+preserve frozen citation text, raw tool output and existing call/result boundaries during replay.
+Citation IDs follow first appearance within the current assistant reply, including approval resumes.
+See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
+[verification](docs/DEVELOPMENT.md#tool-citation-cache-verification), and the
+[follow-up decision](docs/upstream/v0.11.4-tool-citation-cache-followup.md).
+
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to

@@ -68,8 +68,8 @@ def runtime():
                 {'role': 'user', 'content': 'Read the original sources.'},
             ]
         },
-        'all_tool_call_sources': [],
-        'tool_call_sources': [],
+        'output': [],
+        'source_ids': None,
     }
     load_functions(ns, 'retrieval/utils.py', {'filter_source_metadata'})
     load_functions(
@@ -89,30 +89,28 @@ def runtime():
     )
     load_functions(ns, 'utils/task.py', {'rag_template'})
     load_functions(ns, 'utils/responses_reasoning.py', {'remap_reasoning_effort_for_responses'})
-    load_functions(ns, 'routers/openai.py', {'convert_to_responses_payload'})
+    load_functions(ns, 'routers/openai.py', {'convert_to_responses_payload', '_normalize_stored_item'})
+    ns['RESPONSES_ALLOWED_FIELDS'] = {
+        'function_call_output': {'type', 'call_id', 'output'},
+        'function_call': {'type', 'call_id', 'name', 'arguments', 'id'},
+    }
     load_functions(ns, 'tools/builtin.py', {'fetch_url'})
-    tree = load_functions(
+    load_functions(
         ns,
         'utils/middleware.py',
         {
             'get_citation_source_from_tool_result',
             'get_source_context',
             'get_tool_source_context',
+            'get_tool_citation_instructions',
+            'add_tool_citation_instructions',
+            'get_tool_citation_source_ids',
+            'attach_tool_citations',
             'apply_source_context_to_messages',
             '_is_tool_result_error',
         },
     )
-    # Run the actual citation-emission/reapplication block from the streaming loop,
-    # rather than reproducing its branching or assembling a test-only payload.
-    blocks = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == 'citations_enabled'
-    ]
-    assert len(blocks) == 1
-    wrapper = ast.parse('async def apply_round():\n    pass\n')
-    wrapper.body[0].body = [blocks[0]]
-    exec(compile(ast.fix_missing_locations(wrapper), 'native_citation_round', 'exec'), ns)
+    ns['form_data']['messages'] = ns['add_tool_citation_instructions'](ns['form_data']['messages'])
     return SimpleNamespace(ns=ns, events=events, config=config, config_reads=config_reads)
 
 
@@ -129,15 +127,60 @@ def hit(index, title=None, snippet=None):
 
 
 async def apply_round(runtime, sources):
-    runtime.ns['tool_call_sources'] = copy.deepcopy(sources)
-    await runtime.ns['apply_round']()
-    return '\n'.join(message['content'] for message in runtime.ns['form_data']['messages'])
+    ns = runtime.ns
+    if ns['source_ids'] is None:
+        ns['source_ids'] = ns['get_tool_citation_source_ids'](ns['metadata']['sources'], [])
+        ns['form_data']['messages'] = await ns['apply_source_context_to_messages'](
+            ns['request'], ns['form_data']['messages'], ns['metadata']['sources'], ns['user_message']
+        )
+    # The parser is exercised separately with actual tool payloads. Here it returns
+    # the mixed source fixtures so the production attachment/event boundary runs.
+    parser = ns['get_citation_source_from_tool_result']
+    ns['get_citation_source_from_tool_result'] = lambda *args: copy.deepcopy(sources)
+    result = {'content': 'Tool evidence'}
+    try:
+        await ns['attach_tool_citations'](
+            result, 'fetch_url', {}, {}, ns['source_ids'], ns['event_emitter'], ns['citations_enabled']
+        )
+    finally:
+        ns['get_citation_source_from_tool_result'] = parser
+    call_id = str(len(ns['output']))
+    ns['output'].extend(
+        [
+            {
+                'type': 'function_call',
+                'call_id': call_id,
+                'name': 'fetch_url',
+                'arguments': '{}',
+                'status': 'completed',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                'output': [{'type': 'input_text', 'text': result.pop('content')}],
+                **result,
+            },
+        ]
+    )
+    messages = ns['convert_output_to_messages'](ns['output'], raw=True)
+    return '\n'.join(message['content'] for message in [*ns['form_data']['messages'], *messages])
 
 
 def tool_elements(content):
-    match = re.search(r'<tool_sources>.*?</tool_sources>', content, re.DOTALL)
-    assert match, content
-    return ElementTree.fromstring(match.group()).findall('source')
+    matches = re.findall(r'<tool_sources>.*?</tool_sources>', content, re.DOTALL)
+    assert matches, content
+    return [element for match in matches for element in ElementTree.fromstring(match).findall('source')]
+
+
+@pytest.mark.asyncio
+async def test_native_tool_sources_do_not_rewrite_existing_messages(runtime):
+    before = copy.deepcopy(runtime.ns['form_data']['messages'])
+    for index in range(1, 6):
+        sources = runtime.ns['get_citation_source_from_tool_result'](
+            'fetch_url', {'url': f'https://example.test/{index}'}, f'Page evidence {index}'
+        )
+        await apply_round(runtime, sources)
+        assert runtime.ns['form_data']['messages'] == before
 
 
 @pytest.mark.asyncio
@@ -157,13 +200,13 @@ async def test_native_round_preserves_thirty_search_snippets_and_links(runtime, 
     assert 'rag.template' not in runtime.config_reads
     assert 'fetch_url' in content
     assert len(runtime.events) == 1
-    # Stateful Responses continuations resend system instructions, not the old
-    # user message. The citation mapping must remain in those instructions.
     system = runtime.ns['get_system_message'](runtime.ns['form_data']['messages'])
+    messages = runtime.ns['convert_output_to_messages'](runtime.ns['output'], raw=True)
     payload = runtime.ns['convert_to_responses_payload'](
-        {'model': 'synthetic', 'messages': [system], 'previous_response_id': 'response_synthetic'}
+        {'model': 'synthetic', 'messages': [system, *messages], 'previous_response_id': 'response_synthetic'}
     )
-    assert len(tool_elements(payload['instructions'])) == 30
+    assert '<tool_sources>' not in payload['instructions']
+    assert len(tool_elements(payload['input'][-1]['output'])) == 30
     assert payload['previous_response_id'] == 'response_synthetic'
 
 
@@ -184,7 +227,7 @@ async def test_files_search_and_fetch_share_stable_numbers_across_rounds(runtime
     elements = tool_elements(content)
     assert [element.attrib['id'] for element in elements] == ['2', '3', '2', '4', '2']
     assert elements[2].attrib['content-kind'] == 'page_excerpt'
-    assert content.count('<tool_sources>') == 1
+    assert content.count('<tool_sources>') == 2
     assert content.count('FILE TEMPLATE') == 1
     assert content.count('Read the original sources.') == 1
     file_context = ElementTree.fromstring(re.search(r'<context>.*?</context>', content, re.DOTALL).group())
@@ -360,3 +403,28 @@ def test_failed_fetch_result_has_no_citation(runtime, result):
     assert (
         runtime.ns['get_citation_source_from_tool_result']('fetch_url', {'url': 'https://example.test/1'}, result) == []
     )
+
+
+def test_separate_tool_rounds_preserve_previous_message_prefix(runtime):
+    output = []
+    previous = []
+    for index in range(5):
+        output.extend(
+            [
+                {
+                    'type': 'function_call',
+                    'call_id': str(index),
+                    'name': 'fetch_url',
+                    'arguments': '{}',
+                    'status': 'completed',
+                },
+                {
+                    'type': 'function_call_output',
+                    'call_id': str(index),
+                    'output': [{'type': 'input_text', 'text': str(index)}],
+                },
+            ]
+        )
+        messages = runtime.ns['convert_output_to_messages'](output, raw=True)
+        assert messages[: len(previous)] == previous
+        previous = copy.deepcopy(messages)

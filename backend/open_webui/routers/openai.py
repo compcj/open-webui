@@ -1272,7 +1272,12 @@ def _normalize_stored_item(item: dict) -> dict:
     if allowed is None:
         # Unknown type — pass through as-is (e.g. reasoning, extension items).
         return item
-    return {k: v for k, v in item.items() if k in allowed}
+    normalized = {k: v for k, v in item.items() if k in allowed}
+    if item_type == 'function_call_output':
+        from open_webui.utils.tool_citations import citation_output
+
+        normalized['output'] = citation_output(item)
+    return normalized
 
 
 def convert_to_responses_payload(payload: dict) -> dict:

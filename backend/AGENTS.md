@@ -77,6 +77,34 @@ Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pi
 
 See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and upgrade boundaries.
 
+## Tool citation prefix contract
+
+- Install fixed citation instructions before the initial native tool request. Attach dynamic sources
+  to the result that produced them; never reset/rebuild the leading system message, latest user
+  message or file RAG template during the native tool loop. Keep separate rounds' call/result groups.
+- Persist optional `citation_context` (rendered text) and `citation_sources` (structured sources) on
+  `function_call_output`. Render once and replay that text verbatim. Keep `output`, images, reasoning
+  data and display files intact; do not regenerate older mappings from a cumulative source list.
+- Normal and approved execution share citation attachment. Restore IDs from the current reply's
+  saved `sources`, falling back to initial sources and persisted tool citation metadata; use the
+  same first-seen source identity as the frontend. Earlier replies have their own numbering.
+  Approval refreshes only the current reply's output projections, keeping reasoning with its calls
+  and preserving prepared sidecars even when they share a V2 message ID. Capture their positions
+  outside the messages and remove temporary markers before dispatch, including pipes. Never repeat
+  resolved tools.
+- Project citation text onto a copy for Chat Completions and both Responses replay paths. Strip local
+  metadata before provider transport. Stateful Responses sends only the new batch's results;
+  V2 retains its existing stateless replay rule so the full input can be measured and projected.
+- Include rendered citations before input counting, fingerprints and compaction. Tool-budget source
+  references cover raw text only. New budgeted citations contain ID/type/URL markers without duplicate
+  snippet bodies; summaries/excerpts retain this suffix, and exact raw reads must not acquire it.
+  Initial file/injected context keeps its existing placement.
+- Legacy outputs without these fields retain their previous replay behavior. Preserve evidence
+  kinds, escaping, safe URL filtering, source events and disabled-citation behavior. No migration or
+  provider session-routing change is required. See the
+  [follow-up decision](../docs/upstream/v0.11.4-tool-citation-cache-followup.md) and
+  [verification](../docs/DEVELOPMENT.md#tool-citation-cache-verification).
+
 ## Context compaction
 
 - Preserve off/legacy/V2 compatibility and the original implementation in `utils/context_compaction.py`.

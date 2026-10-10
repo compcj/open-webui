@@ -9,13 +9,19 @@ AGENTS.md instructions, and the current user request govern implementation.
 | ---------------- | ------------------------------------------------------------------------------ |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
+The v0.11.4 [tool citation cache follow-up](v0.11.4-tool-citation-cache-followup.md) changes source
+placement while retaining D05's evidence and numbering policy. Check it alongside the original
+release record; it has its own implementation and validation status.
+
 ## Workflow for the next merge
 
 1. Verify the fork HEAD, official upstream target SHA, actual merge base, shallow boundaries, and
    working-tree state. Resolve official tags against the upstream repository; do not assume a local
    same-named tag identifies the official release.
 2. Review every active decision in the previous record. Compare upstream changes with the retained
-   behavior and its regression tests, including frontend/backend contracts and defaults.
+   behavior and its regression tests, including frontend/backend contracts and defaults. For citations,
+   verify evidence semantics, stable request prefixes, approval/history replay and tool-budget ranges
+   against the follow-up record's tests.
 3. Classify each result: adopt upstream, retain a fork difference, adapt an interface, or converge an
    equivalent fix. A clean textual merge is not evidence of behavioral compatibility.
 4. Preserve manual choices and existing access controls when changing automatic discovery. Review

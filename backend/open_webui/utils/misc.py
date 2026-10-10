@@ -358,6 +358,7 @@ def convert_output_to_messages(
         return []
 
     from open_webui.utils.tool_result_sources import output_descriptors, output_text
+    from open_webui.utils.tool_citations import citation_output
 
     descriptors = output_descriptors(output) if include_tool_result_refs else {}
     messages = []
@@ -445,6 +446,10 @@ def convert_output_to_messages(
                 if include_tool_result_refs
                 else None
             )
+            # Budget references cover raw text only. The frozen citation suffix
+            # remains in the final input even when that raw span is projected.
+            if raw:
+                content = output_text({'output': citation_output(output_item)})
             image_urls = []
             for part in output_parts:
                 if part.get('type') == 'input_image' and include_tool_images:
@@ -503,6 +508,11 @@ def convert_output_to_messages(
                 pending_content.append(text)
 
         elif item_type == 'function_call':
+            # A new call after results starts a new round, not an extension of
+            # the previous assistant message's tool_calls (which breaks caching).
+            if pending_tool_outputs:
+                flush_tool_outputs()
+                flush_tool_images()
             if item.get('call_id') not in function_call_ids:
                 continue
 

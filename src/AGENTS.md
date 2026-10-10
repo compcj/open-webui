@@ -47,6 +47,11 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Keep named engine
   generation/edit settings, descriptions, edit disablement, attachment deduplication, and compact
   image context for replay.
+- Citation cards and inline numbers use the existing `source` events in first-seen order within
+  each assistant reply. Keep tool output's optional `citation_context` and `citation_sources` through
+  save/load, output updates and temporary-chat requests. The backend owns frozen model citation
+  text; the frontend must not regenerate it or reorder sources. See the
+  [citation follow-up](../docs/upstream/v0.11.4-tool-citation-cache-followup.md).
 - Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
   same-origin port proxies. Do not restore a setting that grants terminal HTML the WebUI origin.
 

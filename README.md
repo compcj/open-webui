@@ -45,6 +45,20 @@ This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/o
 | 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.           |
 | 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                 |
 
+### 工具引用与输入缓存 / Tool citations and input caching
+
+联网工具的新来源随对应结果追加，连续搜索和抓取不再为更新引用而重写已有系统提示或历史消息。
+引用编号在当前回复内保持一致，保存、继续回复和工具审批后仍可使用；原始工具结果完整保留。
+这减少了引用处理引起的输入前缀变化；供应商缓存是否命中仍取决于模型、路由、缓存有效期和实际压缩等条件，
+不保证固定命中率或费用降幅。详见[修复记录与验证范围](docs/upstream/v0.11.4-tool-citation-cache-followup.md)。
+
+New web sources travel with their tool results. Repeated searches and page fetches preserve earlier
+instructions and messages while updating citations. Citation IDs remain consistent within each reply,
+including saved history, continuation and tool approval; original tool results remain intact.
+This reduces prefix changes caused by citation handling. Cache hits still depend on the model,
+provider routing, cache lifetime and actual compaction, with no guaranteed hit rate or cost reduction.
+See the [fix record and verification scope](docs/upstream/v0.11.4-tool-citation-cache-followup.md).
+
 ### 上下文压缩 / Context compaction
 
 管理员在 **设置 → 界面 → 上下文压缩** 选择 **关闭／原版压缩／V2压缩**。

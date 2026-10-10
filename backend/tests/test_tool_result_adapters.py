@@ -20,9 +20,30 @@ def runtime(monkeypatch):
     load_functions(
         ns,
         'utils/misc.py',
-        {'convert_output_to_messages', 'reconcile_tool_pairs', 'strip_empty_content_blocks', 'merge_system_messages'},
+        {
+            'convert_output_to_messages',
+            'reconcile_tool_pairs',
+            'strip_empty_content_blocks',
+            'merge_system_messages',
+            'get_system_message',
+            'get_content_from_message',
+        },
     )
-    load_functions(ns, 'utils/middleware.py', {'process_messages_with_output', 'normalize_messages_for_model'})
+    load_functions(
+        ns,
+        'utils/middleware.py',
+        {
+            'process_messages_with_output',
+            'normalize_messages_for_model',
+            'attach_tool_citations',
+            'get_tool_citation_source_ids',
+            'get_source_context',
+            'get_citation_source_from_tool_result',
+            'get_reasoning_format',
+            'sanitize_tool_pairs',
+            'convert_url_images_to_base64',
+        },
+    )
     return ns
 
 
@@ -255,6 +276,7 @@ async def test_native_v2_citations_do_not_reintroduce_raw_snippets(runtime):
             'add_or_update_system_message',
             'add_or_update_user_message',
             'get_content_from_message',
+            'get_system_message',
             'update_message_content',
         },
     )
@@ -271,17 +293,21 @@ async def test_native_v2_citations_do_not_reintroduce_raw_snippets(runtime):
             }
         )
     )
-    source = {
-        'source': {'name': 'web'},
-        'document': ['secret long evidence'],
-        'metadata': [{'source': 'url', 'content_kind': 'search_snippet'}],
-    }
-    messages = await ns['apply_source_context_to_messages'](
-        request, [{'role': 'user', 'content': 'question'}], [], 'question', tool_sources=[source]
+    load_functions(
+        ns,
+        'utils/middleware.py',
+        {'get_citation_source_from_tool_result', 'attach_tool_citations', '_is_tool_result_error'},
     )
-    assert 'secret long evidence' not in str(messages), 'budgeted evidence must have only one provider copy'
-    assert 'search_snippet' in str(messages)
-    assert source['document'] == ['secret long evidence']
+    snippet = 'secret long evidence ' * 1000
+    result = {'content': json.dumps([{'title': 'Page', 'link': 'https://example.test/1', 'snippet': snippet}])}
+    raw = result['content']
+    await ns['attach_tool_citations'](result, 'search_web', {}, {}, {}, None, request=request)
+    assert 'secret long evidence' not in result['citation_context'], (
+        'budgeted evidence must have only one provider copy'
+    )
+    assert 'search_snippet' in result['citation_context']
+    assert snippet in result['citation_sources'][0]['document'][0]
+    assert result['content'] == raw
 
 
 @pytest.mark.asyncio
@@ -498,6 +524,8 @@ async def test_nonnative_execution_persistence_injection_and_replay_share_exact_
             'persist_injected_tool_results',
             'get_source_context',
             'get_tool_source_context',
+            'get_tool_citation_instructions',
+            'add_tool_citation_instructions',
             'apply_source_context_to_messages',
         },
     )
