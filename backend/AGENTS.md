@@ -104,6 +104,19 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 - V2 checkpoints are separate from legacy summaries and validate source fingerprints plus version
   in one short transaction; no DB session may span model generation. Isolate model/branch state,
   reject stale writes, preserve original history and remove checkpoints with deleted chats.
+- V2 tool budgeting uses `utils/tool_result_budget.py`, exact provenance in `tool_result_sources.py`
+  and branch/source-validated storage in `tool_result_store.py`/`models/chat_tool_results.py`.
+  Resolve `C` with inheritance and smaller `num_ctx`; derive individual/batch caps from `C`, reserve
+  incoming desired tokens and compact older complete history before summarizing tools. Protect the
+  incoming batch/latest user/incomplete groups, allocate fairly and verify the full final input.
+  Native, approved, injected and code results keep original content and call pairing. Apply historical
+  checkpoints before tool projections; keep raw source identities for checkpoint validation.
+  Summary failure falls back to explicitly incomplete exact excerpts with a raw result ID; exact
+  `read_tool_result` passages may be resized but never summarized. Register this auxiliary tool only
+  from trusted saved-chat V2 state. Raw reads require chat access, current branch ancestry and unchanged
+  sources. Cache projections by model/branch/task/policy/budget; no transaction spans model generation.
+  Persist tool-result status metadata, clean both tool tables on chat deletion, and preserve off/legacy
+  and disabled-tool-budget behavior. Neither projection nor overflow retry re-executes tools.
 - On timeout/empty/no-reduction/oversized summaries, continue unchanged only when the request fits
   its input budget; otherwise return an actionable error. Retry explicit provider overflow once
   only before content is delivered; never re-execute tools. Cancellation preserves valid history.

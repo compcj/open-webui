@@ -15,6 +15,17 @@ export interface ContextUsage {
 	remaining_tokens?: number;
 	before_tokens?: number;
 	after_tokens?: number;
+	tool_budget_enabled?: boolean;
+	tool_result_limit?: number;
+	tool_batch_limit?: number;
+	tool_result_percent?: number;
+	tool_batch_percent?: number;
+	last_tool_batch?: {
+		batch_id: string;
+		original_tokens: number;
+		processed_tokens: number;
+		results: ToolResultStatus[];
+	};
 }
 
 export const getCompactionMode = (features: Record<string, unknown> = {}): CompactionMode => {
@@ -61,3 +72,28 @@ export const selectContextUsage = (
 	}
 	return mode === 'legacy' ? legacy : null;
 };
+
+export interface ToolResultStatus {
+	action?: 'tool_result_compaction';
+	mode: 'v2';
+	model: string;
+	batch_id: string;
+	tool: string;
+	result_id?: string;
+	method?: 'summary' | 'excerpt' | 'original' | 'read';
+	original_tokens?: number;
+	processed_tokens?: number;
+	result_limit?: number;
+	batch_limit?: number;
+	allocated_tokens?: number;
+	estimate_source?: string;
+	branch_id?: string;
+	done: boolean;
+}
+
+export const isValidToolBudgetPercent = (single: number, batch: number): boolean =>
+	Number.isInteger(single) &&
+	Number.isInteger(batch) &&
+	single >= 1 &&
+	single <= batch &&
+	batch <= 100;

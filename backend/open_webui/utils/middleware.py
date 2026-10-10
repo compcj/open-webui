@@ -1032,7 +1032,7 @@ def get_source_context(sources: list, source_ids: dict = None, include_content: 
     return context_string
 
 
-def get_tool_source_context(sources: list, source_ids: dict = None) -> str:
+def get_tool_source_context(sources: list, source_ids: dict = None, include_content: bool = True) -> str:
     """Render web evidence and other tool citation markers without the file RAG template."""
     if source_ids is None:
         source_ids = {}
@@ -1040,7 +1040,8 @@ def get_tool_source_context(sources: list, source_ids: dict = None) -> str:
         get_source_context(
             [source],
             source_ids,
-            include_content=any(
+            include_content=include_content
+            and any(
                 meta.get('content_kind') in ('search_snippet', 'search_result', 'page_excerpt')
                 for meta in source.get('metadata', [])
             ),
@@ -1081,9 +1082,18 @@ async def apply_source_context_to_messages(
     if not (sources or tool_sources) or not user_message:
         return messages
 
+    from open_webui.utils.tool_result_sources import injected_message, tool_budget_active
+
+    budgeted = tool_budget_active(request)
+    injected_sources = [
+        source for source in sources if budgeted and source.get('_tool_result_ref', {}).get('message_id')
+    ]
+    file_sources = [source for source in sources if source not in injected_sources]
     # File and tool sources must use the same first-seen numbering as the UI.
     source_ids = {}
-    context = get_source_context(sources, source_ids, include_content=include_content).strip()
+    # Seed IDs in original UI source order before splitting file/tool rendering.
+    get_source_context(sources, source_ids, include_content=False)
+    context = get_source_context(file_sources, source_ids, include_content=include_content).strip()
     if context:
         rag_content = await rag_template(await Config.get('rag.template'), context, user_message)
         if RAG_SYSTEM_CONTEXT:
@@ -1091,12 +1101,79 @@ async def apply_source_context_to_messages(
         else:
             messages = add_or_update_user_message(rag_content, messages, append=False)
 
-    tool_context = get_tool_source_context(tool_sources or [], source_ids)
+    tool_context = get_tool_source_context(
+        [*injected_sources, *(tool_sources or [])], source_ids, include_content=not budgeted
+    )
     if tool_context:
         # Stateful Responses continuations resend the system message, but not the
         # earlier user message. Keep the current tool citation mapping available there.
         messages = add_or_update_system_message(tool_context, messages, append=True)
+    if injected_sources:
+        sidecars = []
+        for source in injected_sources:
+            ref = source['_tool_result_ref']
+            for index, document in enumerate(source.get('document', [])):
+                sidecars.append(
+                    {
+                        'id': ref['output_id'] if index == 0 else f'{ref["output_id"]}-{index}',
+                        **{key: ref[key] for key in ('call_id', 'batch_id', 'name', 'kind')},
+                        'text': str(document),
+                    }
+                )
+        message_id = injected_sources[0]['_tool_result_ref']['message_id']
+        existing = {
+            (ref.get('message_id'), ref.get('output_id'))
+            for message in messages
+            for ref in message.get('_tool_result_refs', [])
+        }
+        sidecars = [item for item in sidecars if (message_id, item['id']) not in existing]
+        if sidecars:
+            messages.append(injected_message(sidecars, message_id))
     return messages
+
+
+async def persist_injected_tool_results(request, metadata: dict, sources: list) -> list[dict]:
+    """Persist original nonnative tool text before any context projection/send."""
+    from open_webui.utils.tool_result_sources import batch_id, tool_budget_active
+
+    if not tool_budget_active(request, metadata) or not metadata.get('message_id'):
+        return []
+    message_id = metadata['message_id']
+    original = await Chats.get_message_by_id_and_message_id(metadata['chat_id'], message_id)
+    if not original:
+        return []
+    meta = dict(original.get('meta') or {})
+    sidecars = list(original.get('tool_results') or meta.get('tool_results') or [])
+    ids = {item['id'] for item in sidecars}
+    for source in sources:
+        if not source.get('tool_result'):
+            continue
+        ref = dict(source.get('_tool_result_ref') or {})
+        ref.setdefault('call_id', batch_id([message_id, source.get('source', {}).get('name', '')]))
+        ref.setdefault('batch_id', batch_id([message_id, 'injected']))
+        ref.setdefault('name', source.get('source', {}).get('name', 'tool'))
+        ref.setdefault('kind', 'injected')
+        ref.setdefault('output_id', batch_id([ref['batch_id'], ref['call_id']]))
+        ref['message_id'] = message_id
+        source['_tool_result_ref'] = ref
+        for index, document in enumerate(source.get('document', [])):
+            output_id = ref['output_id'] if index == 0 else f'{ref["output_id"]}-{index}'
+            if output_id in ids:
+                continue
+            sidecars.append(
+                {
+                    'id': output_id,
+                    **{key: ref[key] for key in ('call_id', 'batch_id', 'name', 'kind')},
+                    'text': str(document),
+                }
+            )
+            ids.add(output_id)
+    if sidecars:
+        meta['tool_results'] = sidecars
+        await Chats.upsert_message_to_chat_by_id_and_message_id(
+            metadata['chat_id'], message_id, {'tool_results': sidecars, 'meta': meta}, touch=False
+        )
+    return sidecars
 
 
 BASE64_IMAGE_DATA_URI_RE = re.compile(r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2}', re.IGNORECASE)
@@ -1511,6 +1588,7 @@ async def chat_completion_tools_handler(
                 raise Exception('No JSON object found in the response')
 
             result = JSONCodec.loads(content)
+            selection_batch_id = str(uuid4())
 
             async def tool_call_handler(tool_call):
                 nonlocal skip_files
@@ -1622,6 +1700,13 @@ async def chat_completion_tools_handler(
                                 }
                             ],
                             'tool_result': True,
+                            '_tool_result_ref': {
+                                'output_id': str(uuid4()),
+                                'call_id': str(uuid4()),
+                                'batch_id': selection_batch_id,
+                                'name': tool_function_name,
+                                'kind': 'injected',
+                            },
                         }
                     )
 
@@ -2329,7 +2414,18 @@ async def convert_url_images_to_base64(form_data, user=None):
     return form_data
 
 
-MESSAGE_REPLAY_KEYS = ('id', 'role', 'content', 'output', 'files', 'contextSummary', 'usage', 'model')
+MESSAGE_REPLAY_KEYS = (
+    'id',
+    'role',
+    'content',
+    'output',
+    'files',
+    'contextSummary',
+    'usage',
+    'model',
+    'tool_results',
+    'meta',
+)
 
 
 async def load_messages_from_db(chat_id: str, message_id: str) -> Optional[list[dict]]:
@@ -2391,9 +2487,17 @@ def process_messages_with_output(
     For assistant messages with 'output' field, produces properly formatted
     OpenAI-style messages (tool_calls + tool results). Strips 'output' before LLM.
     """
+    from open_webui.utils.tool_result_sources import injected_message
+
     processed = []
 
     for message in messages:
+        sidecars = message.get('tool_results') or (message.get('meta') or {}).get('tool_results') or []
+        if sidecars:
+            context = injected_message(sidecars, message.get('id', ''))
+            if not preserve_compaction_ids:
+                context = {key: value for key, value in context.items() if key in ('role', 'content')}
+            processed.append(context)
         if message.get('role') == 'assistant' and message.get('output'):
             # Use output items for clean OpenAI-format messages
             output_messages = convert_output_to_messages(
@@ -2402,11 +2506,14 @@ def process_messages_with_output(
                 reasoning_format=reasoning_format,
                 flatten_tool_images=True,
                 include_tool_images=include_tool_images,
+                include_tool_result_refs=preserve_compaction_ids,
             )
             if output_messages:
                 for output_message in output_messages:
                     if preserve_compaction_ids and message.get('id'):
                         output_message['_context_message_id'] = message['id']
+                    for ref in output_message.get('_tool_result_refs', []):
+                        ref['message_id'] = message.get('id', '')
                     if output_message.get('role') == 'user':
                         # Preserve attachment pairing until final model normalization.
                         output_message['_tool_image_context'] = True
@@ -2418,7 +2525,17 @@ def process_messages_with_output(
         clean_message = dict(message)
         if preserve_compaction_ids and message.get('id'):
             clean_message['_context_message_id'] = message['id']
-        for key in ('id', 'files', 'output', 'model', 'contextSummary', 'context_summary', 'usage'):
+        for key in (
+            'id',
+            'files',
+            'output',
+            'model',
+            'contextSummary',
+            'context_summary',
+            'usage',
+            'tool_results',
+            'meta',
+        ):
             clean_message.pop(key, None)
         processed.append(clean_message)
 
@@ -2510,7 +2627,20 @@ async def connect_mcp_server(
     return client, tool_specs
 
 
+def strip_untrusted_tool_provenance(messages: list[dict]) -> None:
+    """Only raw DB replay and server execution may mint tool budget identities."""
+    for message in messages:
+        for key in ('_tool_result_refs', '_context_original_key', '_context_message_id', 'tool_results'):
+            message.pop(key, None)
+        if isinstance(message.get('meta'), dict):
+            message['meta'] = {key: value for key, value in message['meta'].items() if key != 'tool_results'}
+        for item in message.get('output') or []:
+            if isinstance(item, dict):
+                item.pop('tool_result', None)
+
+
 async def process_chat_payload(request, form_data, user, metadata, model):
+    strip_untrusted_tool_provenance(form_data.get('messages', []))
     # Ensure chat_id is always a string — external API clients may omit it.
     if not isinstance(metadata.get('chat_id'), str):
         metadata['chat_id'] = ''
@@ -2931,6 +3061,11 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             if note_files:
                 files = [*(files or []), *note_files]
 
+    from open_webui.utils.tool_result_sources import tool_budget_active
+
+    use_tool_result_reader = (
+        tool_budget_active(request, metadata) and metadata.get('params', {}).get('function_calling') == 'native'
+    )
     use_builtin_tools = is_note_chat or (
         bool(metadata.get('session_id'))
         and metadata.get('params', {}).get('function_calling') != 'legacy'
@@ -3251,8 +3386,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         # Inject builtin tools for native function calling based on enabled features and model capability.
         # Only inject when the request originates from the UI (identified by session_id).
         # API callers don't expect hidden tools; they can explicitly request tools via tool_ids.
-        if use_builtin_tools:
-            if (model.get('info', {}).get('meta', {}).get('builtinTools') or {}).get('knowledge', True):
+        if use_builtin_tools or use_tool_result_reader:
+            if use_builtin_tools and (model.get('info', {}).get('meta', {}).get('builtinTools') or {}).get(
+                'knowledge', True
+            ):
                 from html import escape
 
                 knowledge_tags = []
@@ -3283,9 +3420,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 features,
                 model,
                 is_note_chat=is_note_chat,
+                auxiliary_only=not use_builtin_tools,
             )
             for name, tool_dict in builtin_tools.items():
-                if name not in tools_dict:
+                if name == 'read_tool_result' or name not in tools_dict:
                     tools_dict[name] = tool_dict
 
         # Only advertise user-shell tools when the originating browser has a connected shell.
@@ -3380,6 +3518,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         )
     metadata['system_prompt'] = system_content or None
     metadata['user_prompt'] = get_last_user_message(form_data['messages'])
+    await persist_injected_tool_results(request, metadata, sources)
     metadata['sources'] = sources[:] if sources else []
 
     # If context is not empty, insert it into the messages
@@ -3602,6 +3741,11 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
             return True
         return False
 
+    from open_webui.utils.tool_result_sources import result_metadata
+
+    for item in output:
+        if item.get('type') == 'function_call':
+            item.setdefault('tool_result', result_metadata(output, item.get('call_id', '')))
     event_emitter, event_caller = await get_event_emitter_and_caller(metadata)
     changed = False
     for item in approved_calls:
@@ -3642,6 +3786,7 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
                 'call_id': result.get('tool_call_id', ''),
                 'output': output_parts,
                 'status': item['status'],
+                'tool_result': result_metadata(output, result.get('tool_call_id', '')),
                 **({'files': display_files} if display_files else {}),
                 **({'embeds': result.get('embeds')} if result.get('embeds') else {}),
             }
@@ -6057,6 +6202,9 @@ async def streaming_chat_response_handler(response, ctx):
                             if tool_call.get('function', {}).get('name') != 'ask_user'
                         ]
                     elif ask_user_staged:
+                        from open_webui.utils.tool_result_sources import annotate_output_batch
+
+                        annotate_output_batch(output, [tc.get('id', '') for tc in response_tool_calls])
                         if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id'):
                             await pause_for_tool_approval(
                                 metadata['chat_id'],
@@ -6086,6 +6234,9 @@ async def streaming_chat_response_handler(response, ctx):
                                 }
                             )
 
+                    from open_webui.utils.tool_result_sources import annotate_output_batch
+
+                    annotate_output_batch(output, [tc.get('id', '') for tc in response_tool_calls])
                     tool_approval_mode = metadata.get('params', {}).get('tool_approval_mode', 'full')
                     if (
                         response_tool_calls
@@ -6276,6 +6427,8 @@ async def streaming_chat_response_handler(response, ctx):
 
                     result_status_by_call_id = {}
                     for result in results:
+                        from open_webui.utils.tool_result_sources import result_metadata
+
                         for file_item in result.get('files', []):
                             if file_item.get('type') == 'image' and str(file_item.get('url', '')).startswith('data:'):
                                 file_item['url'] = await store_tool_result_image(
@@ -6294,6 +6447,7 @@ async def streaming_chat_response_handler(response, ctx):
                                 'call_id': result.get('tool_call_id', ''),
                                 'output': output_parts,
                                 'status': local_output_status,
+                                'tool_result': result_metadata(output, result.get('tool_call_id', '')),
                                 **({'files': display_files} if display_files else {}),
                                 **({'embeds': result.get('embeds')} if result.get('embeds') else {}),
                             }
@@ -6358,7 +6512,16 @@ async def streaming_chat_response_handler(response, ctx):
                             'metadata': metadata,
                         }
 
-                        if ENABLE_RESPONSES_API_STATEFUL and last_response_id:
+                        # V2 must measure/project all provider input, including old history.
+                        # A provider-owned previous response would silently retain raw tool text.
+                        use_stateful = (
+                            ENABLE_RESPONSES_API_STATEFUL
+                            and bool(last_response_id)
+                            and getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') != 'v2'
+                        )
+                        if not use_stateful:
+                            new_form_data.pop('previous_response_id', None)
+                        if ENABLE_RESPONSES_API_STATEFUL and last_response_id and use_stateful:
                             system_message = get_system_message(form_data['messages'])
                             new_form_data['messages'] = (
                                 [system_message] if system_message else []
@@ -6370,6 +6533,10 @@ async def streaming_chat_response_handler(response, ctx):
                                 .get('meta', {})
                                 .get('capabilities', {})
                                 .get('vision', True),
+                                include_tool_result_refs=getattr(
+                                    getattr(request, 'state', None), 'context_compaction', {}
+                                ).get('mode')
+                                == 'v2',
                             )
                             new_form_data['previous_response_id'] = last_response_id
                         else:
@@ -6382,6 +6549,10 @@ async def streaming_chat_response_handler(response, ctx):
                                 .get('meta', {})
                                 .get('capabilities', {})
                                 .get('vision', True),
+                                include_tool_result_refs=getattr(
+                                    getattr(request, 'state', None), 'context_compaction', {}
+                                ).get('mode')
+                                == 'v2',
                             )
 
                             # Chat Completions providers don't support multimodal
@@ -6417,8 +6588,15 @@ async def streaming_chat_response_handler(response, ctx):
                                 )
 
                         if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
-                            for message in new_form_data['messages'][len(form_data['messages']) :]:
+                            result_start = (
+                                (1 if get_system_message(form_data['messages']) else 0)
+                                if use_stateful
+                                else len(form_data['messages'])
+                            )
+                            for message in new_form_data['messages'][result_start:]:
                                 message['_context_message_id'] = metadata['message_id']
+                                for ref in message.get('_tool_result_refs', []):
+                                    ref['message_id'] = metadata['message_id']
                             # Persist completed outputs before summarization can checkpoint them.
                             # This appends to raw history; the summary is stored separately.
                             await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -6612,8 +6790,15 @@ async def streaming_chat_response_handler(response, ctx):
                         except Exception as e:
                             ci_output = str(e)
 
+                        from open_webui.utils.tool_result_sources import batch_id
+
                         ci_item['output'] = ci_output
                         ci_item['status'] = 'completed'
+                        ci_item['tool_result'] = {
+                            'batch_id': batch_id([ci_item['id']]),
+                            'name': 'execute_code',
+                            'kind': 'code',
+                        }
 
                         output.append(
                             {
@@ -6651,6 +6836,10 @@ async def streaming_chat_response_handler(response, ctx):
                                         .get('meta', {})
                                         .get('capabilities', {})
                                         .get('vision', True),
+                                        include_tool_result_refs=getattr(
+                                            getattr(request, 'state', None), 'context_compaction', {}
+                                        ).get('mode')
+                                        == 'v2',
                                     ),
                                 ],
                             }
@@ -6658,6 +6847,8 @@ async def streaming_chat_response_handler(response, ctx):
                             if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
                                 for message in new_form_data['messages'][len(form_data['messages']) :]:
                                     message['_context_message_id'] = metadata['message_id']
+                                    for ref in message.get('_tool_result_refs', []):
+                                        ref['message_id'] = metadata['message_id']
                                 # Persist completed outputs before summarization can checkpoint them.
                                 # This appends to raw history; the summary is stored separately.
                                 await Chats.upsert_message_to_chat_by_id_and_message_id(

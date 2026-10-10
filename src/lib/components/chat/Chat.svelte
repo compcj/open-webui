@@ -1588,7 +1588,11 @@
 			if (message) {
 				const data = event?.data?.data ?? null;
 
-				if (type === 'status' || type === 'context_compaction') {
+				if (
+					type === 'status' ||
+					type === 'context_compaction' ||
+					type === 'tool_result_compaction'
+				) {
 					if (message?.statusHistory) {
 						message.statusHistory.push(data);
 					} else {

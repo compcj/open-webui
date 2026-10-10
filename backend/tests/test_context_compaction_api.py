@@ -353,3 +353,48 @@ async def test_browser_direct_manual_and_usage_require_own_live_session(compacti
                 assert usage.json()['branch_id'] == 'sibling'
                 assert usage.json()['model'] == 'browser-model'
         assert 'browser-model' not in app.state.MODELS
+
+
+@pytest.mark.asyncio
+async def test_tool_budget_admin_config_validates_persists_and_preserves_omission(config_app):
+    import httpx
+
+    app, values = config_app
+    headers = {'authorization': 'admin'}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        saved = await client.post(
+            '/config',
+            headers=headers,
+            json={
+                'CONTEXT_COMPACTION_MODE': 'v2',
+                'CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED': False,
+                'CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT': 12,
+                'CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT': 25,
+                'CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT': 'Preserve exact facts',
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()['CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT'] == 12
+        assert values['chat.context_compaction.v2.tool_budget_enabled'] is False
+        assert values['chat.context_compaction.v2.tool_result_percent'] == 12
+        assert values['chat.context_compaction.v2.tool_batch_percent'] == 25
+        assert values['chat.context_compaction.v2.tool_summary_prompt'] == 'Preserve exact facts'
+        old = await client.post('/config', headers=headers, json={'ENABLE_CONTEXT_COMPACTION': False})
+        assert old.json()['CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT'] == 12
+        before = dict(values)
+        for field, value in (
+            ('CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT', 0),
+            ('CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT', 101),
+            ('CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT', 26),
+            ('CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT', True),
+            ('CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT', 11),
+            ('CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT', 1.5),
+            ('CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT', '30'),
+        ):
+            invalid = await client.post('/config', headers=headers, json={field: value})
+            assert invalid.status_code == 422, invalid.text
+            assert values == before
+        unauthorized = await client.post(
+            '/config', headers={'authorization': 'user'}, json={'CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED': True}
+        )
+        assert unauthorized.status_code == 403

@@ -41,6 +41,16 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
         id = Column(Text, primary_key=True)
         chat_id = Column(Text)
 
+    class ChatToolResult(base):
+        __tablename__ = 'chat_tool_result'
+        id = Column(Text, primary_key=True)
+        chat_id = Column(Text)
+
+    class ChatToolResultContext(base):
+        __tablename__ = 'chat_tool_result_context'
+        id = Column(Text, primary_key=True)
+        chat_id = Column(Text)
+
     class AutomationRun(base):
         __tablename__ = 'automation_run'
         id = Column(Text, primary_key=True)
@@ -73,6 +83,8 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
         Chat=Chat,
         ChatMessage=ChatMessage,
         ChatContextCheckpoint=ChatContextCheckpoint,
+        ChatToolResult=ChatToolResult,
+        ChatToolResultContext=ChatToolResultContext,
         AutomationRun=AutomationRun,
         select=select,
         update=update,
@@ -97,12 +109,18 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
             for chat_id in ('first', 'other', 'second'):
                 for model in ('a', 'b'):
                     session.add(ChatContextCheckpoint(id=f'{chat_id}-{model}', chat_id=chat_id))
+                    session.add(ChatToolResult(id=f'{chat_id}-{model}', chat_id=chat_id))
+                    session.add(ChatToolResultContext(id=f'{chat_id}-{model}', chat_id=chat_id))
             await session.commit()
         assert await getattr(table, method)(*args) is True
         async with sessions() as session:
             rows = (await session.execute(select(ChatContextCheckpoint))).scalars().all()
             assert {row.chat_id for row in rows} == remaining
             assert len(rows) == len(remaining) * 2
+            for model in (ChatToolResult, ChatToolResultContext):
+                rows = (await session.execute(select(model))).scalars().all()
+                assert {row.chat_id for row in rows} == remaining
+                assert len(rows) == len(remaining) * 2
             assert set((await session.execute(select(Chat.id))).scalars()) == remaining
     finally:
         await engine.dispose()

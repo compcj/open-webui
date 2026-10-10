@@ -43,6 +43,8 @@ async def apply_context_compaction(request, user, payload: dict, metadata: dict 
 
     state = getattr(request.state, 'context_compaction', None)
     if state and state.get('mode') == 'v2' and not is_internal_compaction():
+        # Provider-owned conversation history cannot be measured or compacted locally.
+        payload.pop('previous_response_id', None)
         models = request.app.state.MODELS
         if getattr(request.state, 'direct', False) and hasattr(request.state, 'model'):
             models = {**dict(models.items()), request.state.model['id']: request.state.model}
@@ -51,7 +53,11 @@ async def apply_context_compaction(request, user, payload: dict, metadata: dict 
         )
     # Server-only source identity must never become an inference parameter.
     payload['messages'] = [
-        {key: value for key, value in message.items() if key != '_context_message_id'}
+        {
+            key: value
+            for key, value in message.items()
+            if key not in {'_context_message_id', '_context_original_key', '_tool_result_refs'}
+        }
         for message in payload.get('messages', [])
     ]
     return payload

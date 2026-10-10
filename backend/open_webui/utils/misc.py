@@ -328,6 +328,7 @@ def convert_output_to_messages(
     reasoning_format: str | None = None,
     flatten_tool_images: bool = False,
     include_tool_images: bool = True,
+    include_tool_result_refs: bool = False,
 ) -> list[dict]:
     """
     Convert OR-aligned output items to OpenAI Chat Completion-format messages.
@@ -356,7 +357,11 @@ def convert_output_to_messages(
     if not output or not isinstance(output, list):
         return []
 
+    from open_webui.utils.tool_result_sources import output_descriptors, output_text
+
+    descriptors = output_descriptors(output) if include_tool_result_refs else {}
     messages = []
+    pending_tool_refs = []
     pending_tool_calls = []
     pending_content = []
     pending_reasoning = []  # Only populated for top-level structured reasoning fields.
@@ -376,7 +381,7 @@ def convert_output_to_messages(
     function_call_ids = completed_call_ids & result_call_ids
 
     def flush_pending():
-        nonlocal pending_content, pending_tool_calls, pending_reasoning, pending_reasoning_details
+        nonlocal pending_content, pending_tool_calls, pending_reasoning, pending_reasoning_details, pending_tool_refs
         if not pending_content and not pending_tool_calls and not pending_reasoning and not pending_reasoning_details:
             return
 
@@ -384,6 +389,7 @@ def convert_output_to_messages(
             'role': 'assistant',
             'content': '\n'.join(pending_content) if pending_content else '',
             **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
+            **({'_tool_result_refs': pending_tool_refs} if pending_tool_refs else {}),
         }
 
         if pending_reasoning:
@@ -397,6 +403,7 @@ def convert_output_to_messages(
 
         messages.append(message)
         pending_content = []
+        pending_tool_refs = []
         pending_tool_calls = []
         pending_reasoning = []
         pending_reasoning_details = []
@@ -426,15 +433,21 @@ def convert_output_to_messages(
             return
 
         flush_pending()
-        for output_item in pending_tool_outputs:
+        for item_index, output_item in pending_tool_outputs:
             output_parts = output_item.get('output', [])
-            content = ''
+            content = output_text(output_item)
+            result_ref = (
+                {
+                    **descriptors[output_item.get('id') or f'output-{item_index}'],
+                    'start': 0,
+                    'end': len(content),
+                }
+                if include_tool_result_refs
+                else None
+            )
             image_urls = []
             for part in output_parts:
-                if part.get('type') == 'input_text':
-                    output_text = part.get('text', '')
-                    content += str(output_text) if not isinstance(output_text, str) else output_text
-                elif part.get('type') == 'input_image' and include_tool_images:
+                if part.get('type') == 'input_image' and include_tool_images:
                     url = part.get('image_url', '')
                     if url:
                         image_urls.append(url)
@@ -444,6 +457,7 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
+                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
                         'content': content,
                     }
                 )
@@ -453,6 +467,7 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
+                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
                         'content': [
                             {'type': 'input_text', 'text': content},
                             *[{'type': 'input_image', 'image_url': url} for url in image_urls],
@@ -464,13 +479,14 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
+                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
                         'content': content,
                     }
                 )
 
         pending_tool_outputs = []
 
-    for item in output:
+    for item_index, item in enumerate(output):
         item_type = item.get('type', '')
         if item_type not in {'function_call', 'function_call_output'}:
             flush_tool_outputs()
@@ -510,7 +526,7 @@ def convert_output_to_messages(
             if item.get('call_id') not in function_call_ids:
                 continue
 
-            pending_tool_outputs.append(item)
+            pending_tool_outputs.append((item_index, item))
 
         elif item_type == 'reasoning':
             reasoning_details = item.get('reasoning_details') if raw else None
@@ -556,14 +572,19 @@ def convert_output_to_messages(
                 pending_content.append(f'<code_interpreter>\n{code}\n</code_interpreter>')
 
             if code_output:
-                if isinstance(code_output, dict):
-                    stdout = code_output.get('stdout', '')
-                    result = code_output.get('result', '')
-                    output_text = stdout or result
-                else:
-                    output_text = str(code_output)
-                if output_text:
-                    pending_content.append(f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>')
+                code_output_text = output_text(item)
+                if code_output_text:
+                    prefix = '<code_interpreter_output>\n'
+                    start = sum(len(chunk) + 1 for chunk in pending_content) + len(prefix)
+                    pending_content.append(f'{prefix}{code_output_text}\n</code_interpreter_output>')
+                    if include_tool_result_refs:
+                        pending_tool_refs.append(
+                            {
+                                **descriptors[item.get('id') or f'output-{item_index}'],
+                                'start': start,
+                                'end': start + len(code_output_text),
+                            }
+                        )
 
         elif item_type.startswith('open_webui:'):
             # Skip other extension types

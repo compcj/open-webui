@@ -51,6 +51,9 @@ This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/o
 V2 将延续摘要、近期完整原文和 Token 预算提醒结合，默认上下文长度 **262144**、有效窗口 **95%**、
 触发比例 **90%**、近期原文预算 **20000 tokens**；可单独选择摘要模型并调整关键参数。
 预算提醒附加在消息末尾，尽量保持已有上下文前缀稳定，以利于输入缓存复用。
+V2 默认启用工具结果预算：单个结果最多占模型窗口的 **10%**，同一批次最多 **30%**。
+先为工具批次保留额度并压缩较早历史，再按公平预算生成工具摘要；摘要失败时提供明确标记的不完整原文摘录。
+原始结果完整保存，可在回复状态中查看并分页查找；模型也可用 `read_tool_result` 读取精确原文片段。
 每个工作区模型可设置“压缩用最大上下文长度”，留空继承基础模型或全局值。
 升级时旧开关仅映射为关闭或原版，不自动启用 V2；切换模式保留全部原始聊天与各自摘要。
 详见[参数、预算与故障处理指南](docs/context-compaction.md)。
@@ -58,6 +61,10 @@ V2 将延续摘要、近期完整原文和 Token 预算提醒结合，默认上�
 Under **Settings → Interface → Context Compaction**, admins choose **Off / Legacy / V2** globally.
 V2 combines continuation summaries, complete recent conversation groups and token budget reminders.
 Budget reminders are appended after the conversation to preserve the existing prefix for input cache reuse.
+V2 enables tool budgets by default: **10%** of the model window per result and **30%** per batch.
+It reserves space for the incoming batch and compacts older history first, then fairly allocates tool
+summaries with explicitly incomplete exact excerpts on summary failure. Complete originals stay saved
+and are available through response status paging/search and the model's `read_tool_result` tool.
 Defaults are a **262144-token** window, **95%** effective window, **90%** trigger and **20000 tokens**
 of recent original context. Summary models and key parameters are configurable; each workspace model
 can override or inherit its compaction context window. Upgrades keep the previous off/legacy behavior;

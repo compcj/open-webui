@@ -87,6 +87,9 @@
 			done: boolean;
 			action: string;
 			description: string;
+			error?: boolean;
+			hidden?: boolean;
+			method?: string;
 			urls?: string[];
 			query?: string;
 		}[];
@@ -94,6 +97,9 @@
 			done: boolean;
 			action: string;
 			description: string;
+			error?: boolean;
+			hidden?: boolean;
+			method?: string;
 			urls?: string[];
 			query?: string;
 		};
@@ -200,6 +206,8 @@
 	).filter(
 		(status) =>
 			status?.action === 'context_compaction' ||
+			(status?.action === 'tool_result_compaction' &&
+				(!status?.done || status?.error || status?.method !== 'original')) ||
 			(model?.info?.meta?.capabilities?.status_updates ?? true)
 	);
 	$: hasVisibleStatus = statusEntries.length > 0 && !(statusEntries.at(-1)?.hidden ?? false);
@@ -723,7 +731,11 @@
 			<div>
 				<div class="chat-{message.role} w-full min-w-full">
 					<div>
-						<StatusHistory statusHistory={statusEntries} />
+						<StatusHistory
+							statusHistory={statusEntries}
+							{chatId}
+							branchId={history.currentId ?? messageId}
+						/>
 
 						{#if message?.embeds && message.embeds.length > 0}
 							<div

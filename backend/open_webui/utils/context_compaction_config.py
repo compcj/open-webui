@@ -36,6 +36,26 @@ CONFIG_FIELDS = {
     'CONTEXT_COMPACTION_V2_REMINDER_PROMPT': ('reminder_prompt', 'chat.context_compaction.v2.reminder_prompt', ''),
     'CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS': ('timeout_seconds', 'chat.context_compaction.v2.timeout_seconds', 60),
     'CONTEXT_COMPACTION_V2_MAX_RETRIES': ('max_retries', 'chat.context_compaction.v2.max_retries', 1),
+    'CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED': (
+        'tool_budget_enabled',
+        'chat.context_compaction.v2.tool_budget_enabled',
+        True,
+    ),
+    'CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT': (
+        'tool_result_percent',
+        'chat.context_compaction.v2.tool_result_percent',
+        10,
+    ),
+    'CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT': (
+        'tool_batch_percent',
+        'chat.context_compaction.v2.tool_batch_percent',
+        30,
+    ),
+    'CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT': (
+        'tool_summary_prompt',
+        'chat.context_compaction.v2.tool_summary_prompt',
+        '',
+    ),
 }
 
 
@@ -54,9 +74,15 @@ class CompactionSettings(BaseModel):
     reminder_prompt: str = ''
     timeout_seconds: int = Field(strict=True, default=60, ge=1, le=600)
     max_retries: int = Field(strict=True, default=1, ge=0, le=5)
+    tool_budget_enabled: bool = True
+    tool_result_percent: int = Field(strict=True, default=10, ge=1, le=100)
+    tool_batch_percent: int = Field(strict=True, default=30, ge=1, le=100)
+    tool_summary_prompt: str = ''
 
     @model_validator(mode='after')
     def validate_budget(self):
+        if self.tool_result_percent > self.tool_batch_percent:
+            raise ValueError('tool_result_percent must not exceed tool_batch_percent')
         if self.trigger_percent > self.effective_window_percent:
             raise ValueError('trigger_percent must not exceed effective_window_percent')
         if self.recent_tokens >= self.default_context_window * self.effective_window_percent // 100:

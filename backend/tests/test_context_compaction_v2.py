@@ -958,7 +958,15 @@ class ManualNativeRoundtripTests(IsolatedCase):
             )
         )
         generation = AsyncMock(return_value='Earlier search results and diagram.')
+        tool_budget = importlib.import_module('open_webui.utils.tool_result_budget')
+        tool_store = SimpleNamespace(
+            list_contexts=AsyncMock(return_value=[]),
+            save_result=AsyncMock(side_effect=lambda chat, descriptor, **kwargs: {**descriptor, 'id': 'stored-tool'}),
+            get_context=AsyncMock(return_value=None),
+            save_context=AsyncMock(return_value={'id': 'context'}),
+        )
         with (
+            patch.object(tool_budget, 'get_tool_result_store', return_value=tool_store),
             patch.dict(
                 sys.modules,
                 {

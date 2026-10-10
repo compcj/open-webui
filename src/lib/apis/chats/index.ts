@@ -64,6 +64,41 @@ export const getChatContextUsage = async (
 	return response.json();
 };
 
+export interface ToolResultPage {
+	result_id: string;
+	text: string;
+	start: number;
+	end: number;
+	total_chars: number;
+	next_cursor: string | null;
+	source: {
+		name: string;
+		call_id: string;
+		batch_id: string;
+		message_id: string;
+		output_id: string;
+	};
+	incomplete: boolean;
+}
+
+export const getChatToolResult = async (
+	token: string,
+	chatId: string,
+	resultId: string,
+	branchId: string,
+	options: { query?: string; cursor?: string } = {}
+): Promise<ToolResultPage> => {
+	const query = new URLSearchParams({ branch_id: branchId });
+	if (options.query) query.set('query', options.query);
+	if (options.cursor) query.set('cursor', options.cursor);
+	const response = await fetch(
+		`${WEBUI_API_BASE_URL}/chats/${encodeURIComponent(chatId)}/tool-results/${encodeURIComponent(resultId)}?${query}`,
+		{ method: 'GET', headers: { Accept: 'application/json', authorization: `Bearer ${token}` } }
+	);
+	if (!response.ok) throw getErrorDetail(await response.json());
+	return response.json();
+};
+
 export const updateChatConfig = async (token: string, config: object) => {
 	let error = null;
 

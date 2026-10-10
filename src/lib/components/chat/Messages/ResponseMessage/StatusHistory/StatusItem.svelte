@@ -27,6 +27,34 @@
 					{$i18n.t('Compacting context')}
 				{/if}
 			</div>
+		{:else if status?.action === 'tool_result_compaction'}
+			<div role="status" class="text-gray-500 dark:text-gray-400 text-sm text-wrap">
+				{#if status?.error}
+					{$i18n.t('Tool result processing failed.')}
+					{#if status?.description}
+						<span class="block">{status.description}</span>
+					{/if}
+				{:else if !status?.done}
+					{$i18n.t('Processing tool result')}
+				{:else if status?.method === 'excerpt'}
+					{$i18n.t('Tool result excerpt (incomplete)')}
+				{:else if status?.method === 'summary'}
+					{$i18n.t('Tool result summarized')}
+				{:else if status?.method === 'read'}
+					{$i18n.t('Exact tool result passage')}
+				{:else}
+					{$i18n.t('Original tool result retained')}
+				{/if}
+				{#if status?.tool}<span class="break-all"> · {status.tool}</span>{/if}
+				{#if typeof status?.original_tokens === 'number' && typeof status?.processed_tokens === 'number'}
+					<span title={status?.estimate_source}>
+						· {$i18n.t('{{original}} → {{processed}} tokens', {
+							original: status.original_tokens,
+							processed: status.processed_tokens
+						})}
+					</span>
+				{/if}
+			</div>
 		{:else if status?.action === 'web_search' && (status?.urls || status?.items)}
 			<WebSearchResults {status}>
 				<div class="flex flex-col justify-center -space-y-0.5">

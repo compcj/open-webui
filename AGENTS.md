@@ -61,6 +61,11 @@ current rules in scoped guides, rationale in the decision record, and commands i
   `context_compaction_config.py`, final-send/retry hooks in `context_compaction_dispatch.py`, and
   persistence in `backend/open_webui/models/chat_context_checkpoints.py`. Isolate checkpoints by
   model and validated branch ancestry/content; stale or competing writes must never win.
+- V2 tool budgets apply only to trusted saved chats when enabled: resolve model window `C`, reserve
+  the incoming batch's desired allowance, compact older history first, then allocate per-result and
+  batch caps fairly. Preserve raw results, call/result pairing and checkpoint source identities.
+  Tool summaries/excerpts are request projections; exact raw rereads remain exact and branch-scoped.
+  Off/legacy/disabled behavior is unchanged; retries must never execute tools again.
 - Trace model `meta.context_window`, admin settings, provider sends, continuation flows and usage
   events together. See [feature guide](docs/context-compaction.md), scoped frontend/backend rules,
   and [verification commands](docs/DEVELOPMENT.md#context-compaction-verification).

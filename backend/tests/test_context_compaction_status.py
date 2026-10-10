@@ -17,7 +17,10 @@ from test_web_tool_citations import load_functions
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind,persist', [('context_compaction', True), ('status', True), ('context_usage', False)])
+@pytest.mark.parametrize(
+    'kind,persist',
+    [('context_compaction', True), ('tool_result_compaction', True), ('status', True), ('context_usage', False)],
+)
 async def test_socket_persists_lifecycle_but_not_usage(kind, persist):
     chats = SimpleNamespace(add_message_status_to_chat_by_id_and_message_id=AsyncMock())
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))

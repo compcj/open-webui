@@ -1625,6 +1625,52 @@ async def search_chats(
         return JSONCodec.dumps({'error': str(e)})
 
 
+async def read_tool_result(
+    result_id: str,
+    query: str | None = None,
+    cursor: str | None = None,
+    max_tokens: int = 2048,
+    __request__: Request = None,
+    __user__: dict = None,
+    __metadata__: dict = None,
+) -> str:
+    """Read an exact bounded page of a saved original tool result.
+
+    Use the result ID from a tool-result summary or excerpt to recover omitted
+    evidence. Pages are exact original text and never summarized. Follow
+    next_cursor to continue; a query starts a matching passage.
+
+    :param result_id: Saved raw result ID supplied by a tool-result budget notice
+    :param query: Optional literal text to find in the original result
+    :param cursor: Opaque next_cursor returned by the preceding page
+    :param max_tokens: Maximum tokens for the JSON page, from 1 to 8192 (default 2048)
+    :return: JSON page with exact text, positions, incompleteness and next_cursor
+    """
+    from open_webui.utils.tool_result_sources import tool_budget_active
+
+    if not tool_budget_active(__request__) or not __user__:
+        return JSONCodec.dumps({'error': 'Raw tool-result reading requires an authenticated saved V2 chat.'})
+    state = __request__.state.context_compaction
+    metadata = state.get('metadata') or {}
+    branch_id = metadata.get('message_id') or state.get('user_message_id')
+    if not branch_id or not isinstance(result_id, str) or not result_id:
+        return JSONCodec.dumps({'error': 'A saved result ID and current chat branch are required.'})
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 8192:
+        return JSONCodec.dumps({'error': 'max_tokens must be an integer from 1 to 8192.'})
+    from open_webui.utils.tool_result_store import read_tool_result_page
+
+    page = await read_tool_result_page(
+        UserModel(**__user__),
+        state['chat_id'],
+        result_id,
+        branch_id=branch_id,
+        query=query,
+        cursor=cursor,
+        max_tokens=max_tokens,
+    )
+    return JSONCodec.dumps(page, ensure_ascii=False, separators=(',', ':'))
+
+
 async def view_chat(
     chat_id: str,
     __request__: Request = None,

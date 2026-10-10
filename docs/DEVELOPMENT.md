@@ -238,20 +238,25 @@ status updates are disabled. Use synthetic history/provider replies for automate
 
 New regression locations:
 
-| Boundary                                                                             | Tests                                                                                                                                    |
-| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Budget formulas, CJK, multimodal, grouping, summary failures and replay              | `backend/tests/test_context_compaction_v2.py`                                                                                            |
-| Tail reminders, continuation deduplication, budget accounting and assistant prefills | `backend/tests/test_context_compaction_v2.py`                                                                                            |
-| Responses conversion preserves stable instructions and trailing reminders            | `backend/tests/test_openai_responses_payload.py`                                                                                         |
-| Checkpoint CAS, source edits, branch/model isolation and migration round trip        | `backend/tests/test_context_compaction_v2_storage.py`                                                                                    |
-| Chat/model checkpoint cleanup with SQLite cascades disabled                          | `backend/tests/test_context_compaction_cleanup.py`                                                                                       |
-| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata        | `backend/tests/test_context_compaction_api.py`                                                                                           |
-| Original algorithm, legacy threshold caps and off/V2 raw replay                      | `backend/tests/test_context_compaction_legacy.py`                                                                                        |
-| Provider context errors, bounded retry and streaming visibility                      | `backend/tests/test_context_compaction_dispatch.py`                                                                                      |
-| OpenAI preset/prefix routing with persisted 100000 window and 90000 trigger          | `backend/tests/test_context_compaction_model_routing.py`                                                                                 |
-| Compaction socket events and status persistence in both chat stores                  | `backend/tests/test_context_compaction_status.py`                                                                                        |
-| Chat lifecycle events, branch isolation and localized response status                | `src/lib/components/chat/Chat.context-compaction.test.ts`, `src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts` |
-| Mode compatibility, model inheritance and stale model/branch usage rejection         | `src/lib/utils/context-compaction.test.ts`                                                                                               |
+| Boundary                                                                                       | Tests                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Budget formulas, CJK, multimodal, grouping, summary failures and replay                        | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
+| Tail reminders, continuation deduplication, budget accounting and assistant prefills           | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
+| Responses conversion preserves stable instructions and trailing reminders                      | `backend/tests/test_openai_responses_payload.py`                                                                                                |
+| Checkpoint CAS, source edits, branch/model isolation and migration round trip                  | `backend/tests/test_context_compaction_v2_storage.py`                                                                                           |
+| Chat/model checkpoint cleanup with SQLite cascades disabled                                    | `backend/tests/test_context_compaction_cleanup.py`                                                                                              |
+| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata                  | `backend/tests/test_context_compaction_api.py`                                                                                                  |
+| Original algorithm, legacy threshold caps and off/V2 raw replay                                | `backend/tests/test_context_compaction_legacy.py`                                                                                               |
+| Provider context errors, bounded retry and streaming visibility                                | `backend/tests/test_context_compaction_dispatch.py`                                                                                             |
+| OpenAI preset/prefix routing with persisted 100000 window and 90000 trigger                    | `backend/tests/test_context_compaction_model_routing.py`                                                                                        |
+| Compaction socket events and status persistence in both chat stores                            | `backend/tests/test_context_compaction_status.py`                                                                                               |
+| Chat lifecycle events, branch isolation and localized response status                          | `src/lib/components/chat/Chat.context-compaction.test.ts`, `src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts`        |
+| Tool percentage validation, authenticated raw pages and stale viewer requests                  | `src/lib/utils/tool-results.test.ts`, `src/lib/components/chat/Messages/ResponseMessage/ToolResultViewer.test.ts`                               |
+| Native/approved/injected/code provenance, reader registration and untrusted metadata stripping | `backend/tests/test_tool_result_adapters.py`                                                                                                    |
+| Raw/cache identity races, source/branch validation, exact paging, ASGI ACL and migration       | `backend/tests/test_tool_result_storage.py`, `backend/tests/test_context_compaction_cleanup.py`, `backend/tests/test_context_compaction_api.py` |
+| Real storage + budget orchestration replay and exact-reader shrinking                          | `backend/tests/test_tool_result_budget_integration.py`                                                                                          |
+| History-first tool reservation, fair caps, summaries/excerpts and exact reread budgeting       | `backend/tests/test_tool_result_budget.py`                                                                                                      |
+| Mode compatibility, model inheritance and stale model/branch usage rejection                   | `src/lib/utils/context-compaction.test.ts`                                                                                                      |
 
 Set `DATA_DIR`, `STATIC_DIR`, `DATABASE_URL`, and a synthetic `WEBUI_SECRET_KEY` to a disposable
 directory before any real model/router/application imports. For helper checks, use
@@ -263,14 +268,19 @@ synthetic auth/storage dependencies, not a complete application. Provider tests 
 ```sh
 python -m pytest backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_v2_storage.py backend/tests/test_context_compaction_api.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_context_compaction_legacy.py backend/tests/test_context_compaction_cleanup.py -q
 python -m pytest backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_status.py backend/tests/test_openai_responses_payload.py backend/tests/test_web_tool_citations.py backend/tests/test_image_tool_context.py -q
+python -m pytest backend/tests/test_tool_result_budget.py backend/tests/test_tool_result_budget_integration.py backend/tests/test_tool_result_storage.py backend/tests/test_tool_result_adapters.py backend/tests/test_context_compaction_status.py -q
 python -m pytest backend/tests -q
+npm run test:frontend -- --run --dir src src/lib/utils/tool-results.test.ts src/lib/components/chat/Messages/ResponseMessage/ToolResultViewer.test.ts
 npm run test:frontend -- --run --dir src src/lib/utils/context-compaction.test.ts src/lib/components/chat/Chat.context-compaction.test.ts src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts
 npm run test:frontend -- --run --dir src
 npm run check
 ```
 
-The new Alembic revision is `c7d2e4f6a801`, descending from `d4c1a8e37b62`.
-It creates `chat_context_checkpoint` without rewriting `chat_message.context_summary` or raw history.
+The history-checkpoint Alembic revision is `c7d2e4f6a801`, descending from `d4c1a8e37b62`.
+The tool-result revision `e8f3a9c2b604` descends from `c7d2e4f6a801` and creates `chat_tool_result`
+and `chat_tool_result_context`; upgrade/downgrade changes only these new tables and preserves chats.
+`test_tool_result_storage.py` verifies their round trip on disposable SQLite.
+The history revision creates `chat_context_checkpoint` without rewriting `chat_message.context_summary` or raw history.
 Verify a single revision head. On a disposable database, upgrade the previous head, insert synthetic
 legacy messages and a legacy summary, upgrade to the new head, then confirm those values are unchanged.
 Exercise new table insert/model separation/version conflict, downgrade only the new revision and
@@ -329,3 +339,24 @@ Manual acceptance with an isolated running application and test model connection
 7. Check settings/model forms and status UI in Chinese/English, narrow screens, light/dark mode,
    keyboard focus and input errors. Synthetic component/browser tests supplement this walkthrough;
    live provider behavior still needs an available configured model.
+
+Tool-result budget acceptance extends the walkthrough above:
+
+1. Set `C = 100000` with no output reserve. Verify default tool caps of 10000/30000 tokens in
+   `/status`; change individual/batch percentages, reload, and reject non-integers or individual > batch.
+   Verify off, legacy and disabled tool budgeting preserve their behavior.
+2. Use 70000 tokens of fixed input/history and a desired 30000-token incoming batch with `B = 95000`.
+   Observe older-history compaction before tool summaries. Test one long result, parallel long/short
+   results, Chinese/JSON/web output, errors and empty results; all calls retain paired results and
+   the complete provider input fits its budget.
+3. Exercise native tools, approval resume, injected tools, code continuations and replay after reload.
+   Verify raw results stay unchanged, checkpoints do not restore covered output, and overflow retries
+   do not execute tools again. Try a smaller summary model and timeout/empty/oversized summaries;
+   excerpts must be exact, explicitly incomplete, and include a readable raw ID inside the cap.
+4. Disable ordinary model tool statuses. Verify tool summaries/excerpts stay visible in English and
+   Chinese. Open the original viewer with keyboard navigation on narrow/light/dark layouts; check
+   plain-text escaping, loading/error/retry, search and bounded paging. Editing source content,
+   switching to sibling branches and accessing another chat must invalidate or deny raw reads.
+5. Call `read_tool_result` repeatedly and verify exact bounded JSON pages, positions/cursors and no
+   recursive summarization. Test concurrent projection saves and chat deletion cleanup on a disposable
+   database; check the new migration upgrade/downgrade independently of the historical migration chain.

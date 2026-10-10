@@ -87,3 +87,28 @@ describe('compaction lifecycle in chat', () => {
 		expect(chat.toast.loading).not.toHaveBeenCalled();
 	});
 });
+
+describe('tool result status lifecycle', () => {
+	it('stores backend tool projection metadata without altering response content or usage', async () => {
+		const chat = createChat();
+		const data = {
+			action: 'tool_result_compaction',
+			mode: 'v2',
+			model: 'model',
+			done: true,
+			method: 'excerpt',
+			result_id: 'raw',
+			branch_id: 'reply',
+			original_tokens: 40000,
+			processed_tokens: 10000
+		};
+		await chat.event({
+			chat_id: 'chat',
+			message_id: 'reply',
+			data: { type: 'tool_result_compaction', data }
+		});
+		expect(chat.history.messages.reply.statusHistory).toEqual([data]);
+		expect(chat.history.messages.reply.content).toBe('');
+		expect(chat.usage()).toBeNull();
+	});
+});

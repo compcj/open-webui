@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, Query, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.config import ENABLE_ADMIN_CHAT_ACCESS, ENABLE_ADMIN_EXPORT
@@ -42,6 +42,7 @@ from open_webui.utils.chat_fork import build_fork_history
 from open_webui.utils.context_compaction import compact_chat_branch, get_chat_context_usage
 from open_webui.utils.context_compaction_config import CONFIG_FIELDS, CompactionSettings
 from open_webui.utils.misc import get_message_list
+from open_webui.utils.tool_result_store import read_tool_result_page
 from open_webui.utils.models import check_model_access, get_all_models
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -180,6 +181,10 @@ class ChatConfigForm(BaseModel):
     CONTEXT_COMPACTION_V2_REMINDER_PROMPT: str = ''
     CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS: int = Field(default=60, gt=0, le=600, strict=True)
     CONTEXT_COMPACTION_V2_MAX_RETRIES: int = Field(default=1, ge=0, le=5, strict=True)
+    CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED: bool = True
+    CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT: int = Field(default=10, ge=1, le=100, strict=True)
+    CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT: int = Field(default=30, ge=1, le=100, strict=True)
+    CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT: str = ''
     ENABLE_TOOL_PERMISSIONS: bool = False
 
 
@@ -1389,6 +1394,21 @@ async def compact_chat_by_id(
 ############################
 # GetChatById
 ############################
+
+
+@router.get('/{chat_id}/tool-results/{result_id}')
+async def get_chat_tool_result_page(
+    chat_id: str,
+    result_id: str,
+    branch_id: str = Query(min_length=1),
+    query: str | None = Query(default=None, max_length=1024),
+    cursor: str | None = Query(default=None, max_length=1024),
+    max_tokens: int = Query(default=2048, ge=1, le=8192),
+    user=Depends(get_verified_user),
+):
+    return await read_tool_result_page(
+        user, chat_id, result_id, branch_id=branch_id, query=query, cursor=cursor, max_tokens=max_tokens
+    )
 
 
 @router.get('/{id}/context-usage')

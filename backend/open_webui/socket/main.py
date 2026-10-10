@@ -1163,7 +1163,7 @@ async def get_event_emitter(request_info, update_db=True):
         if save_to_chat:
             event_type = event_data.get('type')
 
-            if event_type in {'status', 'context_compaction'}:
+            if event_type in {'status', 'context_compaction', 'tool_result_compaction'}:
                 await Chats.add_message_status_to_chat_by_id_and_message_id(
                     request_info['chat_id'],
                     request_info['message_id'],

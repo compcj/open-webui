@@ -83,3 +83,36 @@ async def test_no_retry_after_content_or_tool_delta_is_delivered():
         response = await run_with_context_retry(request(), send)
         assert len([x async for x in response.body_iterator]) == 2
         assert send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_final_hook_removes_provider_history_and_internal_tool_provenance(monkeypatch):
+    from open_webui.utils.context_compaction_dispatch import apply_context_compaction
+    from open_webui.utils import context_compaction_v2 as v2
+
+    req = request()
+    req.app = SimpleNamespace(state=SimpleNamespace(MODELS={'model': {}}))
+    payload = {
+        'model': 'model',
+        'previous_response_id': 'provider-history',
+        'messages': [
+            {
+                'role': 'tool',
+                'tool_call_id': 'call',
+                'content': 'bounded evidence',
+                '_context_message_id': 'a',
+                '_context_original_key': 'raw-key',
+                '_tool_result_refs': [{'output_id': 'raw'}],
+            }
+        ],
+    }
+    seen = []
+
+    async def prepare(req, user, body, metadata, model_id, models, **kwargs):
+        seen.append(body.copy())
+        return body
+
+    monkeypatch.setattr(v2, 'prepare_v2_request', prepare)
+    result = await apply_context_compaction(req, None, payload, {}, 'model')
+    assert 'previous_response_id' not in seen[0] and 'previous_response_id' not in result
+    assert result['messages'] == [{'role': 'tool', 'tool_call_id': 'call', 'content': 'bounded evidence'}]

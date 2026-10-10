@@ -422,6 +422,8 @@ def message_key(message: dict) -> str:
     This normalization is only for checkpoint coverage. Raw source fingerprints,
     payload contents, token accounting and provider-usage applicability stay exact.
     """
+    if message.get('_context_original_key'):
+        return message['_context_original_key']
     canonical = copy.deepcopy(wire_message(message))
     content = canonical.pop('content', '') or ''
     images = list(canonical.pop('images', []) or [])
@@ -473,6 +475,9 @@ def source_refs(messages: list[dict]) -> list[dict]:
         # Output-bearing assistant content is a rendered aggregate that can grow
         # while its completed output prefix remains unchanged.
         data = {key: message.get(key) for key in ('role', 'parentId', 'files', 'sources', 'embeds', 'tool_calls')}
+        sidecars = message.get('tool_results') or as_dict(message.get('meta')).get('tool_results')
+        if sidecars:
+            data['tool_results'] = sidecars
         if not raw_output:
             data['content'] = message.get('content')
         refs.append(
@@ -516,6 +521,7 @@ def coverage_refs(raw: list[dict], compacted: list[dict], previous: dict | None)
             call_ids = {m.get('tool_call_id') for m in selected if m.get('tool_call_id')}
             call_ids.update(call.get('id') for m in selected for call in m.get('tool_calls') or [] if call.get('id'))
             texts = [text_content(m) for m in selected if text_content(m) and m.get('role') != 'tool']
+            selected_output_ids = {r.get('output_id') for m in selected for r in m.get('_tool_result_refs') or []}
             end = len(refs.get(identity, {}).get('output_prefix') or [])
             for index, item in enumerate(output[: len(ref['output_prefix'])]):
                 content = item.get('content') or []
@@ -524,7 +530,11 @@ def coverage_refs(raw: list[dict], compacted: list[dict], previous: dict | None)
                     if isinstance(content, str)
                     else ''.join(str(part.get('text') or '') for part in content if isinstance(part, dict))
                 )
-                if item.get('call_id') in call_ids or (item_text and any(item_text in text for text in texts)):
+                if (
+                    item.get('id') in selected_output_ids
+                    or item.get('call_id') in call_ids
+                    or (item_text and any(item_text in text for text in texts))
+                ):
                     end = max(end, index + 1)
                 elif item.get('type') == 'open_webui:code_interpreter':
                     # The renderer includes interpreter code and stdout in its
@@ -820,6 +830,19 @@ async def generate_summary(
         raise CompactionFailure('Configured summary model is unavailable; choose an available model')
     stored = await load_stored_models(summary_id, models)
     params = inherited_params(model_chain(summary_id, models, stored))
+    tool_summary = (
+        settings.tool_summary_prompt
+        and settings.summary_prompt == settings.tool_summary_prompt
+        and settings.summary_max_output_tokens is not None
+    )
+    if tool_summary:
+        configured_caps = [
+            n for key in ('max_tokens', 'max_completion_tokens', 'num_predict') if (n := positive_int(params.get(key)))
+        ]
+        if configured_caps:
+            settings = settings.model_copy(
+                update={'summary_max_output_tokens': min(settings.summary_max_output_tokens, *configured_caps)}
+            )
     if settings.summary_max_output_tokens is not None:
         openai_output_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
         for key in ('max_tokens', 'max_completion_tokens', 'num_predict'):
@@ -834,6 +857,34 @@ async def generate_summary(
         payload['messages'].append({'role': 'system', 'content': system})
     payload = apply_params_to_form_data(payload, models[summary_id], params)
     budget = resolve_budget(settings, summary_id, models, payload, stored)
+    if tool_summary:
+        # A target-model tool allocation can exceed this model's entire window.
+        # Reserve space for fixed instructions, a maximum-sized previous handoff,
+        # and the next source fragment as well as generated output. The initial
+        # previous text is included in the probe; normal tool summaries start empty.
+        overhead = estimate_payload_tokens(
+            {
+                **payload,
+                'messages': [
+                    *payload.get('messages', []),
+                    {'role': 'system', 'content': settings.summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT},
+                    {
+                        'role': 'user',
+                        'content': f'Previous handoff:\n{previous}\n\nConversation data fragment (may continue):\n',
+                    },
+                ],
+            }
+        )
+        ceiling = (budget.effective_context_window - overhead) // 3
+        if ceiling <= 0:
+            raise CompactionFailure('The summary model context cannot fit its instructions and a tool fragment')
+        output_limit = min(settings.summary_max_output_tokens, ceiling)
+        settings = settings.model_copy(update={'summary_max_output_tokens': output_limit})
+        if models[summary_id].get('owned_by') == 'ollama':
+            payload['options'][output_key] = output_limit
+        else:
+            payload[output_key] = output_limit
+        budget = resolve_budget(settings, summary_id, models, payload, stored)
     # Use a separate request state: providers mutate metadata/model/bypass flags.
     # Those mutations must never leak into the user/tool generation request.
     summary_request = copy.copy(request)
@@ -928,10 +979,38 @@ async def prepare_v2_request(
             messages, previous, checkpoint = rebuilt, candidate['summary'], candidate
             original['messages'] = messages
             break
+    from open_webui.utils.tool_result_budget import ToolBudgetPlan, tool_limits
+
+    tool_plan = None
+    if settings.tool_budget_enabled and any(m.get('_tool_result_refs') for m in messages):
+        summary_stored = (
+            stored
+            if not settings.summary_model or settings.summary_model == model_id
+            else await load_stored_models(settings.summary_model, models)
+        )
+        tool_plan = ToolBudgetPlan(
+            request,
+            user,
+            original,
+            raw_user,
+            metadata,
+            model_id,
+            models,
+            settings,
+            budget,
+            state,
+            branch_id=current_id,
+            stored_summary_models=summary_stored,
+        )
+        original = await tool_plan.load(original)
+        messages = original.get('messages') or []
+        if not tool_plan.entries:
+            tool_plan = None
     tokens, source = request_tokens(original, state)
     before = tokens
+    reserved_tokens = tool_plan.reserve(original) if tool_plan else tokens
     did_compact = False
-    if force or tokens >= budget.threshold:
+    if force or reserved_tokens >= budget.threshold or reserved_tokens > budget.input_budget:
         await emit_event(
             metadata,
             'context_compaction',
@@ -950,6 +1029,8 @@ async def prepare_v2_request(
                     'Cannot identify the saved user turn; save or reload the chat before compacting'
                 )
             protected = _protected_indices(messages, raw, latest)
+            if tool_plan:
+                protected.update(tool_plan.indices(original, incoming_only=True))
             groups = atomic_groups(messages)
             if checkpoint:
                 protected.update(
@@ -970,7 +1051,8 @@ async def prepare_v2_request(
             # Reserve only the measured schema/envelope overhead here; after a
             # summary exists its actual size determines any further adjustment.
             envelope = estimate_payload_tokens({**original, 'messages': [history_message('')]})
-            target = max(0, min(settings.recent_tokens, budget.input_budget - envelope))
+            tool_reserve = tool_plan.desired_tokens(original) if tool_plan else 0
+            target = max(0, min(settings.recent_tokens, budget.input_budget - envelope - tool_reserve))
             allowed = select_available(target)
             if not allowed:
                 # At the trigger, compact at least the oldest optional complete
@@ -1001,11 +1083,11 @@ async def prepare_v2_request(
                         *[m for m in retained if m.get('role') not in {'system', 'developer'}],
                     ],
                 }
-                after = estimate_payload_tokens(result)
-                if after < before and after <= budget.input_budget:
+                after = tool_plan.reserve(result) if tool_plan else estimate_payload_tokens(result)
+                if after < reserved_tokens and after <= budget.input_budget:
                     break
                 summary_overhead = estimate_payload_tokens({**original, 'messages': [history_message(summary)]})
-                target = max(0, min(target - 1, budget.input_budget - summary_overhead))
+                target = max(0, min(target - 1, budget.input_budget - summary_overhead - tool_reserve))
                 expanded = select_available(target)
                 if not expanded > allowed:
                     expanded = select_available(0, all_optional=True)
@@ -1083,7 +1165,7 @@ async def prepare_v2_request(
                     'before_tokens': before,
                 },
             )
-            if before > budget.input_budget:
+            if before > budget.input_budget and not tool_plan:
                 from fastapi import HTTPException
 
                 raise HTTPException(
@@ -1091,6 +1173,28 @@ async def prepare_v2_request(
                     detail=f'Context exceeds the input budget ({before}/{budget.input_budget} tokens). {description}',
                 ) from exc
             log.warning('V2 compaction failed within input budget; preserving request: %s', type(exc).__name__)
+    if tool_plan:
+        try:
+            original = await tool_plan.finish(original)
+        except asyncio.CancelledError:
+            raise
+        except CompactionFailure as exc:
+            from fastapi import HTTPException
+
+            await emit_event(
+                metadata,
+                'tool_result_compaction',
+                {
+                    'mode': 'v2',
+                    'model': model_id,
+                    'action': 'tool_result_compaction',
+                    'done': True,
+                    'error': True,
+                    'description': str(exc),
+                },
+            )
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        tokens, source = estimate_payload_tokens(original), None
     # A prefill must remain the final assistant message for the provider to continue it.
     if (
         settings.reminder_enabled
@@ -1110,6 +1214,15 @@ async def prepare_v2_request(
             state['reminder_message'] = reminder
     state['last_request_fingerprint'] = request_fingerprint(original)
     state['last_usage'] = usage_data(tokens, budget, model_id, source=source)
+    single_limit, batch_limit = tool_limits(budget.context_window, settings)
+    state['last_usage'].update(
+        tool_budget_enabled=settings.tool_budget_enabled,
+        tool_result_percent=settings.tool_result_percent,
+        tool_batch_percent=settings.tool_batch_percent,
+        tool_result_limit=single_limit,
+        tool_batch_limit=batch_limit,
+        last_tool_batch=state.get('last_tool_batch'),
+    )
     state['last_compacted'] = did_compact
     await emit_event(metadata, 'context_usage', state['last_usage'])
     return original
@@ -1129,8 +1242,13 @@ async def _history_payload(snapshot: dict, model_id: str, models: dict | None = 
     reasoning_format = get_reasoning_format(model)
     include_images = as_dict(as_dict(as_dict(model.get('info')).get('meta')).get('capabilities')).get('vision', True)
     raw = branch_messages(snapshot['messages_map'], snapshot.get('current_id'))
+    from open_webui.utils.tool_result_sources import injected_message
+
     messages = []
     for message in raw:
+        sidecars = message.get('tool_results') or as_dict(message.get('meta')).get('tool_results') or []
+        if sidecars:
+            messages.append(injected_message(sidecars, message['id']))
         if message.get('role') == 'assistant' and message.get('output'):
             converted = convert_output_to_messages(
                 message['output'],
@@ -1138,6 +1256,7 @@ async def _history_payload(snapshot: dict, model_id: str, models: dict | None = 
                 reasoning_format=reasoning_format,
                 flatten_tool_images=True,
                 include_tool_images=include_images,
+                include_tool_result_refs=True,
             )
             messages.extend({**m, '_context_message_id': message['id']} for m in converted)
         else:
@@ -1196,7 +1315,63 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
                 break
     stored = await load_stored_models(model_id, models)
     budget = resolve_budget(settings, model_id, models, payload, stored)
+    from open_webui.utils.tool_result_budget import ToolBudgetPlan, tool_limits
+
+    branch_id = snapshot.get('current_id')
+    last_batch = None
+    if settings.tool_budget_enabled:
+        raw_user = next((m for m in reversed(raw) if m.get('role') == 'user'), None)
+        summary_stored = (
+            stored
+            if not settings.summary_model or settings.summary_model == model_id
+            else await load_stored_models(settings.summary_model, models)
+        )
+        plan = ToolBudgetPlan(
+            None,
+            None,
+            payload,
+            raw_user,
+            {'message_id': branch_id},
+            model_id,
+            models,
+            settings,
+            budget,
+            {'chat_id': chat.id},
+            branch_id=branch_id,
+            stored_summary_models=summary_stored,
+        )
+        payload = await plan.load_cached_only(payload)
+        statuses = [
+            entry
+            for message in raw
+            for entry in message.get('statusHistory', message.get('status_history', [])) or []
+            if entry.get('action') == 'tool_result_compaction'
+            and entry.get('model') == model_id
+            and entry.get('done')
+            and entry.get('batch_id')
+            and not entry.get('error')
+        ]
+        if statuses:
+            last = statuses[-1]['batch_id']
+            by_result = {
+                (item.get('result_id') or item.get('output_id') or item.get('call_id')): item
+                for item in statuses
+                if item['batch_id'] == last
+            }
+            last_batch = {
+                'batch_id': last,
+                'results': list(by_result.values()),
+                'original_tokens': sum(item.get('original_tokens', 0) for item in by_result.values()),
+                'processed_tokens': sum(item.get('processed_tokens', 0) for item in by_result.values()),
+            }
+    single_limit, batch_limit = tool_limits(budget.context_window, settings)
     return {
         **usage_data(estimate_payload_tokens(payload), budget, model_id, source='estimated:stored-history'),
-        'branch_id': snapshot.get('current_id'),
+        'branch_id': branch_id,
+        'tool_budget_enabled': settings.tool_budget_enabled,
+        'tool_result_percent': settings.tool_result_percent,
+        'tool_batch_percent': settings.tool_batch_percent,
+        'tool_result_limit': single_limit,
+        'tool_batch_limit': batch_limit,
+        'last_tool_batch': last_batch,
     }

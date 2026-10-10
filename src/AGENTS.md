@@ -68,6 +68,12 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 - Render compaction lifecycle events in the corresponding response's localized status history,
   including when tool status updates are disabled. `/status` shows backend budget details; do not
   confuse cumulative billing tokens with the automatic trigger.
+- Expose V2 tool budgets as admin-only settings (enabled by default within V2, 10% individual/30%
+  batch of backend-resolved `C`; integer `1 <= individual <= batch <= 100`). Preserve inactive values.
+  Render `tool_result_compaction` summary/excerpt status even when tool statuses are disabled, and
+  use backend metadata for counts. Original-result viewing uses authenticated, branch-scoped bounded
+  pages from `/api/v1/chats/{chat_id}/tool-results/{result_id}`; render text without HTML execution,
+  handle stale requests/errors and distinguish summaries, incomplete excerpts and exact rereads.
 - `/compact` follows the global mode and stays disabled during generation. Maintain Chinese and
   English labels, parameter validation feedback, inherited values and narrow-screen controls.
 - See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).

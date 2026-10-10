@@ -76,6 +76,7 @@ from open_webui.tools.builtin import (
     query_knowledge_bases,
     query_knowledge_files,
     read_memory_path,
+    read_tool_result,
     replace_memory_content,
     replace_note_content,
     search_calendar_events,
@@ -523,12 +524,41 @@ def get_attached_knowledge(model: dict, metadata: dict) -> list[dict]:
 
 
 async def get_builtin_tools(
-    request: Request, extra_params: dict, features: dict = None, model: dict = None, is_note_chat: bool = False
+    request: Request,
+    extra_params: dict,
+    features: dict = None,
+    model: dict = None,
+    is_note_chat: bool = False,
+    *,
+    auxiliary_only: bool = False,
 ) -> dict[str, dict]:
     """
     Get built-in tools for native function calling.
-    Only returns tools when BOTH the global config is enabled AND the model capability allows it.
+    Feature tools follow their global config and model capability. The auxiliary
+    original-result reader follows trusted saved V2 budget state independently.
     """
+    from open_webui.utils.tool_result_sources import tool_budget_active
+
+    metadata = extra_params.get('__metadata__') or {}
+    reader_enabled = (
+        tool_budget_active(request, metadata) and metadata.get('params', {}).get('function_calling') == 'native'
+    )
+    if auxiliary_only:
+        if not reader_enabled:
+            return {}
+        function = await get_async_tool_function_and_apply_extra_params(
+            read_tool_result,
+            {'__request__': request, '__user__': extra_params.get('__user__', {}), '__metadata__': metadata},
+            get_builtin_function_introspection(read_tool_result),
+        )
+        return {
+            'read_tool_result': {
+                'tool_id': 'builtin:read_tool_result',
+                'callable': function,
+                'spec': get_builtin_tool_spec(read_tool_result),
+                'type': 'builtin',
+            }
+        }
     tools_dict = {}
     builtin_functions = []
     features = features or {}
@@ -586,7 +616,8 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('user_input', True):
         builtin_functions.append(ask_user)
 
-    metadata = extra_params.get('__metadata__') or {}
+    if reader_enabled:
+        builtin_functions.append(read_tool_result)
     chat_files = metadata.get('files') or extra_params.get('__files__') or []
     has_chat_files = any(
         isinstance(item, dict)

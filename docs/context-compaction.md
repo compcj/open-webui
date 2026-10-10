@@ -49,6 +49,10 @@ defaults when persistent configuration is enabled; editing `.env` does not repla
 | 预算提醒 / Budget reminders            | `CONTEXT_COMPACTION_V2_REMINDER_ENABLED`         | true                                                   |
 | 提醒提示词 / Reminder prompt           | `CONTEXT_COMPACTION_V2_REMINDER_PROMPT`          | 空，使用默认值 / Empty: built-in prompt                |
 | 摘要超时 / Summary timeout             | `CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS`          | 60 秒 / seconds                                        |
+| 工具预算 / Tool budgets                | `CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED`      | true (V2 saved chats only)                             |
+| 单个工具上限 / Individual tool limit   | `CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT`      | 10% of resolved `C`                                    |
+| 工具批次上限 / Tool batch limit        | `CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT`       | 30% of resolved `C`                                    |
+| 工具摘要提示词 / Tool summary prompt   | `CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT`      | Empty: built-in task-aware prompt                      |
 | 失败重试次数 / Summary retries         | `CONTEXT_COMPACTION_V2_MAX_RETRIES`              | 1                                                      |
 
 长度及输出上限必须为正整数。比例范围为 1–100（提醒可为 0），触发比例不得超过有效窗口比例；
@@ -126,9 +130,79 @@ Only single-call provider input usage for the same request fingerprint can calib
 cumulative billing totals are never treated as window occupancy. Reload queries estimate saved
 history; live request events report the prepared request.
 
+## 工具结果预算 / Tool result budgets
+
+仅在已保存 WebUI 聊天的 V2 模式且工具预算开关开启时生效；关闭、原版压缩以及关闭此开关时保持原行为。
+原始结果在下一次发送前完整保存，摘要／摘录仅用于本次模型上下文，不覆盖聊天内容。
+单个结果比例及批次比例必须是整数且满足 `1 <= individual <= batch <= 100`，按解析后的模型窗口 `C`
+计算：`S = floor(C * individual / 100)`，`Q = floor(C * batch / 100)`。
+继承模型窗口和更小的 Ollama `num_ctx` 同样影响 `C`；有效窗口比例和输出额度进一步限制可用输入 `B`。
+`C = 100000`、默认比例时，`S = 10000`，`Q = 30000`。
+
+These limits apply to saved WebUI V2 chats when enabled. Off, legacy and a disabled tool budget
+retain their previous behavior. Raw originals are saved before the next send; projections never replace
+them. Integer percentages satisfy `1 <= individual <= batch <= 100`. Individual `S` and batch `Q`
+are percentages of resolved `C`, including base-model inheritance and a smaller Ollama `num_ctx`,
+rather than percentages of the remaining input budget. Effective-window and configured-output reserves
+still constrain `B`. With `C = 100000`, defaults give `S = 10000` and `Q = 30000`.
+
+发送顺序：先应用已验证的历史检查点，再保留本次批次希望使用的额度
+`D = min(Q, sum(min(rawTokens_i, S)))`。若固定输入＋历史＋`D` 超出 `B` 或触发自动阈值，
+先压缩较早的完整历史，保护当前批次、最新用户输入和未完成调用。之后在实际剩余空间内按单个上限及批次上限
+确定性公平分配：较短结果只使用需要的额度，释放给较长结果，各调用仍保留配对结果。
+例如历史及固定输入 70000、工具批次希望保留 30000、输入预算 95000 时，先压缩历史，而不是先削减工具结果。
+最终所有消息、工具定义和多模态额度均须满足 `B`，否则给出可操作的错误。
+
+The final-send order applies a valid history checkpoint before tool projection, reserves the incoming
+batch's desired allowance `D = min(Q, sum(min(rawTokens_i, S)))`, and compacts older complete history
+first if fixed input plus history plus `D` exceeds `B` or the automatic threshold is reached. The incoming
+batch, latest user input and incomplete call groups remain protected. Deterministic max-min fair
+allocation then shares the remaining space under `S`/`Q`: short results use only what they need,
+freeing allowance for longer results, while every tool call retains a paired result. With 70000 tokens
+of fixed input/history, a desired 30000-token batch and `B = 95000`, history compaction runs before tool
+summaries. The complete final input must fit `B` or the request returns an actionable error.
+
+工具摘要使用 V2 摘要模型、输出配置、超时及重试设置，并结合当前任务保留必要证据、错误、数值与引用。
+独立工具摘要提示词留空使用默认值；较小摘要模型按可容纳的块递进总结。
+超时、空摘要、超长或无有效缩减时回退为原文摘录，明确标记不完整并提供原始结果 ID。
+原生工具、批准恢复、非原生注入工具、代码执行及保存后的重放共用此预算路径；供应商发送重试不重新执行工具。
+工具摘要缓存按模型、分支、任务、策略及实际额度隔离，源内容变化使缓存失效；数据库事务不跨模型生成。
+
+Tool summaries use the existing V2 summary model, output settings, timeout and retries with task-aware
+instructions. The dedicated tool-summary prompt defaults to built-in instructions. A smaller summary
+model uses progressive chunks. Timeout, empty, oversized or ineffective summaries fall back to exact
+source excerpts explicitly marked incomplete with a raw result ID. Excerpts prioritize status/errors,
+current task terms and source edges, with omission separators; labels and IDs count toward the cap.
+Custom tool-summary instructions have no template variables. Native tools, approval resumes,
+injected tools, code execution and saved-history replay share the budget path; provider retries never
+execute tools again. Projection caches are scoped by model, branch, task, policy and allocation, and
+source edits invalidate them. Database transactions do not span summary generation.
+
+模型的 `read_tool_result` 以及界面“查看原始工具结果”从完整原文读取有限长度的精确片段，可查询及分页。
+此类结果只缩短原文页，不再生成摘要；游标绑定原文、查询与位置。读取必须通过聊天访问权限、当前分支祖先和源内容校验，
+不能读取其他聊天／兄弟分支，也不能访问任意文件或 URL。界面按纯文本渲染，并显示加载／错误和下一页状态。
+删除聊天会同时删除 `chat_tool_result` 和 `chat_tool_result_context`。
+
+The auxiliary `read_tool_result` tool and **View original tool result** read exact bounded passages,
+with query and paging support. These pages may be resized to fit but are never summarized again.
+The HTTP reader defaults to 2048 tokens and accepts at most 8192; native reads include JSON
+positions/cursor metadata inside the allowance. Opaque cursors also bind chat/result/branch. A changed
+cursor binding returns 400; denied, missing or invalidated originals return 404. Every read verifies
+chat access, current branch
+ancestry and unchanged source content; it cannot read a different chat/sibling branch or arbitrary
+files/URLs. The UI renders plain text with loading, error and paging states. Chat deletion cleans both
+`chat_tool_result` and `chat_tool_result_context`.
+
+This extends the Codex-inspired history compaction design with WebUI's saved raw results and branch
+permissions. A single-output truncation limit alone does not reserve room for a parallel batch or
+prioritize older history; the individual/batch budgets, history-first order and exact rereads work together.
+The 10%/30% ratios are configurable project defaults.
+
 ## 查看用量和压缩进度 / Usage and compaction status
 
 在聊天中输入 `/status` 并执行可打开状态面板，查看当前模型的占用、压缩阈值、窗口和剩余预算。
+启用工具预算时还显示后端计算的单个／批次上限及最近批次原始／处理后 token 数。
+回复状态区分工具摘要、不完整摘录与精确原文片段；即使关闭普通工具状态也显示。
 面板不是默认常驻显示。模型的压缩用最大上下文长度设为 `100000`，采用默认 95%／90% 且未配置
 输出额度时，应显示窗口 `100000`、阈值 `90000`（输入预算 `95000`）；全局 `262144` 仅在模型及其
 基础模型都没有配置长度时使用。OpenAI 兼容连接的模型前缀和预设路由不改变这项优先级。
@@ -140,7 +214,10 @@ V2 自动压缩会在对应助手消息上显示“正在压缩上下文”，�
 相同历史重复发送也会重复计入；压缩不会清零已累计的用量。它可以大于模型窗口，不能据此判断单次请求超限。
 
 Run `/status` in the chat to open the status panel with the selected model's usage, trigger, window
-and remaining budget. The panel is not permanently visible by default. A model window of `100000`
+and remaining budget. Enabled tool budgets add backend-computed individual/batch limits and the last
+batch's original/processed token counts. Response statuses distinguish summaries, incomplete excerpts
+and exact passages and remain visible when ordinary tool statuses are disabled.
+The panel is not permanently visible by default. A model window of `100000`
 with default percentages and no output allowance gives a `90000` trigger and `95000` input budget.
 OpenAI connection prefixes and preset routing preserve model metadata precedence over the global
 fallback.

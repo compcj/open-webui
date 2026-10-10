@@ -1902,6 +1902,26 @@
 												>
 											</div>
 										{/if}
+										{#if contextCompactionMode === 'v2' && statusContextUsage?.tool_budget_enabled}
+											<div class="mt-1 text-[0.625rem] text-gray-400">
+												{$i18n.t('Tool limits: {{single}} per result · {{batch}} per batch', {
+													single: formatTokenCount(statusContextUsage.tool_result_limit ?? 0),
+													batch: formatTokenCount(statusContextUsage.tool_batch_limit ?? 0)
+												})}
+											</div>
+											{#if statusContextUsage.last_tool_batch}
+												<div class="mt-1 text-[0.625rem] text-gray-400">
+													{$i18n.t('Last tool batch: {{original}} → {{processed}} tokens', {
+														original: formatTokenCount(
+															statusContextUsage.last_tool_batch.original_tokens
+														),
+														processed: formatTokenCount(
+															statusContextUsage.last_tool_batch.processed_tokens
+														)
+													})}
+												</div>
+											{/if}
+										{/if}
 										{#if contextHasThreshold}
 											<div
 												class="mt-1.5 h-0.5 overflow-hidden rounded-full bg-gray-100 dark:bg-white/8"

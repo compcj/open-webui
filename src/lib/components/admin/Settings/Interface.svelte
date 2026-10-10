@@ -16,6 +16,7 @@
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
 	import { config as appConfig } from '$lib/stores';
+	import { isValidToolBudgetPercent } from '$lib/utils/context-compaction';
 
 	const dispatch = createEventDispatcher();
 
@@ -52,6 +53,10 @@
 		CONTEXT_COMPACTION_V2_TRIGGER_PERCENT: 90,
 		CONTEXT_COMPACTION_V2_REMINDER_PERCENT: 10,
 		CONTEXT_COMPACTION_V2_RECENT_TOKENS: 20000,
+		CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED: true,
+		CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT: 10,
+		CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT: 30,
+		CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT: '',
 		CONTEXT_COMPACTION_V2_MODEL: '',
 		CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS: null as number | null,
 		CONTEXT_COMPACTION_V2_SUMMARY_PROMPT: '',
@@ -75,6 +80,14 @@
 		);
 
 	const updateInterfaceHandler = async () => {
+		if (
+			!isValidToolBudgetPercent(
+				chatConfig.CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT,
+				chatConfig.CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT
+			)
+		) {
+			throw $i18n.t('Tool budget percentages must be integers: 1 ≤ individual ≤ batch ≤ 100.');
+		}
 		chatConfig.ENABLE_CONTEXT_COMPACTION = chatConfig.CONTEXT_COMPACTION_MODE !== 'off';
 		chatConfig.CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS =
 			chatConfig.CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS || null;
@@ -517,6 +530,54 @@
 							ariaLabelledbyId={labelId}
 						/>
 					</AdminSettingRow>
+					<AdminSettingRow label={$i18n.t('Tool result budgets')} let:labelId>
+						<Switch
+							bind:state={chatConfig.CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED}
+							ariaLabelledbyId={labelId}
+						/>
+					</AdminSettingRow>
+					<p class="text-xs text-gray-500 dark:text-gray-400">
+						{$i18n.t(
+							'Tool limits use the resolved model context window. Older history is compacted first; oversized results are summarized, with exact excerpts as fallback. Originals remain available.'
+						)}
+					</p>
+					{#if chatConfig.CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED}
+						<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+							<AdminSettingField label={$i18n.t('Individual tool result limit (%)')}>
+								<input
+									type="number"
+									min="1"
+									max={chatConfig.CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT}
+									step="1"
+									required
+									class={inputClass}
+									aria-label={$i18n.t('Individual tool result limit (%)')}
+									bind:value={chatConfig.CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT}
+								/>
+							</AdminSettingField>
+							<AdminSettingField label={$i18n.t('Tool batch limit (%)')}>
+								<input
+									type="number"
+									min={chatConfig.CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT}
+									max="100"
+									step="1"
+									required
+									class={inputClass}
+									aria-label={$i18n.t('Tool batch limit (%)')}
+									bind:value={chatConfig.CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT}
+								/>
+							</AdminSettingField>
+						</div>
+						<AdminSettingField label={$i18n.t('Tool result summary prompt')}>
+							<Textarea
+								className={textareaClass}
+								bind:value={chatConfig.CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT}
+								placeholder={$i18n.t(
+									'Leave empty to use the default prompt, or enter a custom prompt'
+								)}
+							/>
+						</AdminSettingField>
+					{/if}
 					<AdminSettingField label={$i18n.t('V2 summary prompt')}>
 						<Textarea
 							className={textareaClass}
