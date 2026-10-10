@@ -10,6 +10,7 @@ import equal from 'fast-deep-equal';
 import { describe, expect, it } from 'vitest';
 import * as structuredOutput from './structuredOutput';
 import * as messageAttachments from './messageAttachments';
+import * as contextCompaction from '$lib/utils/context-compaction';
 
 const translations = JSON.parse(
 	readFileSync(new URL('../../../i18n/locales/zh-CN/translation.json', import.meta.url), 'utf8')
@@ -21,6 +22,7 @@ const dependencies: Record<string, any> = {
 	'fast-deep-equal': { default: equal },
 	'./structuredOutput': structuredOutput,
 	'./messageAttachments': messageAttachments,
+	'$lib/utils/context-compaction': contextCompaction,
 	'$lib/utils/localizedContent': { resolveLocalizedModelName: (model: any) => model.id },
 	'$lib/stores': {
 		models,
@@ -215,8 +217,7 @@ describe('tool result status review regressions', () => {
 	});
 
 	it.each([
-		[{ done: false, method: 'original' }, '正在处理工具结果'],
-		[{ done: true, method: 'read' }, '工具结果原文片段'],
+		[{ done: false, method: 'summary' }, '正在处理工具结果'],
 		[{ done: true, method: 'original', error: true }, '工具结果处理失败。']
 	])('preserves required tool result status %o despite the preference', (status, label) => {
 		expect(renderStatus([{ action: 'tool_result_compaction', ...status }], false, true)).toContain(
@@ -224,13 +225,57 @@ describe('tool result status review regressions', () => {
 		);
 	});
 
-	it('preserves original-result statuses when ordinary tool statuses are enabled', () => {
+	it('suppresses original-result statuses when ordinary tool statuses are enabled', () => {
 		expect(
 			renderStatus(
 				[{ action: 'tool_result_compaction', done: true, method: 'original' }],
 				true,
 				true
 			)
-		).toContain('已保留原始工具结果');
+		).not.toContain('已保留原始工具结果');
+	});
+});
+
+describe('tool result notifications belong to their original reply', () => {
+	it.each([true, false])(
+		'hides original/read/reused notifications and raw buttons with status preference %s',
+		(preference) => {
+			for (const status of [
+				{ method: 'original', done: true },
+				{ method: 'original', done: false },
+				{ method: 'read', done: true },
+				{ method: 'summary', done: true, reused: true }
+			]) {
+				const html = renderStatus(
+					[{ action: 'tool_result_compaction', result_id: 'raw', ...status }],
+					preference,
+					true
+				);
+				expect(html).not.toContain('已保留原始工具结果');
+				expect(html).not.toContain('工具结果原文片段');
+				expect(html).not.toContain('工具结果已生成摘要');
+				expect(html).not.toContain('查看原始工具结果');
+			}
+		}
+	);
+	it('hides a prior reply notification while retaining a current reply summary and raw link', () => {
+		const event = {
+			action: 'tool_result_compaction',
+			method: 'summary',
+			done: true,
+			result_id: 'raw'
+		};
+		expect(renderStatus([{ ...event, source_message_id: 'earlier' }], true, true)).not.toContain(
+			'查看原始工具结果'
+		);
+		expect(renderStatus([{ ...event, source_message_id: 'earlier' }], true, true)).not.toContain(
+			'工具结果已生成摘要'
+		);
+		expect(renderStatus([{ ...event, source_message_id: 'a' }], false, true)).toContain(
+			'工具结果已生成摘要'
+		);
+		expect(renderStatus([{ ...event, source_message_id: 'a' }], false, true)).toContain(
+			'查看原始工具结果'
+		);
 	});
 });

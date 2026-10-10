@@ -1146,6 +1146,28 @@ async def get_event_emitter(request_info, update_db=True):
         if internal and event_data.get('type') == 'notification':
             return
 
+        if event_data.get('type') == 'tool_result_compaction':
+            status = event_data.get('data') or {}
+            source_id = status.get('source_message_id')
+            if source_id and source_id != message_id:
+                return
+            if not status.get('error') and (status.get('method') in {'original', 'read'} or status.get('reused')):
+                return
+
+        if save_to_chat and event_data.get('type') == 'context_usage':
+            usage = event_data.get('data') or {}
+            accounting = usage.get('tool_budget_accounting') if usage.get('mode') == 'v2' else None
+            if accounting and not await Chats.save_tool_budget_accounting(chat_id, message_id, accounting):
+                # Report a metadata write failure without changing original tool
+                # data or turning silent accounting into a compaction notice.
+                event_data = {
+                    **event_data,
+                    'data': {
+                        **usage,
+                        'accounting_error': 'Tool-budget accounting could not be saved; reload the chat and retry.',
+                    },
+                }
+
         room = f'user:{user_id}'
         # Local rooms are authoritative; Redis may have listeners on another instance.
         if WEBSOCKET_MANAGER == 'redis' or room in sio.manager.rooms.get('/', {}):

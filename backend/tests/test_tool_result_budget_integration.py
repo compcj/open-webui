@@ -76,6 +76,10 @@ async def test_engine_persists_reuses_and_reads_exact_original(database):
             request, SimpleNamespace(id='owner', role='user'), payload, {}, 'model', {'model': {}}
         )
         assert generate.await_count == 1
+    notices = [data for kind, data in events if kind == 'tool_result_compaction']
+    assert len(notices) == 2 and [item['done'] for item in notices] == [False, True]
+    assert all(item['source_message_id'] == 'a' for item in notices)
+    assert notices[0]['operation_id'] == notices[1]['operation_id']
     assert first == second and payload['messages'][-1]['content'] == db.text
     cached = await db.store.list_contexts('chat', 'model', 'a')
     assert len(cached) == 1
@@ -236,7 +240,7 @@ async def test_partial_cached_spans_survive_finish_and_retry(database, kind):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind,name', [('read', 'reader_alias'), ('native', 'read_tool_result')])
-async def test_under_budget_exact_read_finish_retains_page_and_read_event(database, kind, name):
+async def test_under_budget_exact_read_finish_retains_page_without_notification(database, kind, name):
     db = database
     v2 = importlib.import_module('open_webui.utils.context_compaction_v2')
     tool = importlib.import_module('open_webui.utils.tool_result_budget')
@@ -280,7 +284,7 @@ async def test_under_budget_exact_read_finish_retains_page_and_read_event(databa
         result = await plan.finish(await plan.load(payload))
         retry = await plan.finish(result)
     assert result['messages'][0]['content'] == text == retry['messages'][0]['content']
-    assert events and all(event['method'] == 'read' and event['done'] for _, event in events)
+    assert events == []
     assert plan.last_batch['results'][0]['method'] == 'read'
     assert db.text[page['start'] : page['end']] == page['text']
     store.save_result.assert_not_awaited()
@@ -319,10 +323,10 @@ async def test_smaller_summary_model_sends_bounded_progressive_chunks(database, 
         resolved = v2.resolve_budget(settings, 'summary', models, form_data)
         assert 0 < resolved.output_reserve < resolved.effective_context_window
         assert v2.estimate_payload_tokens(form_data) <= resolved.input_budget
-        if explicit_cap:
-            assert resolved.output_reserve <= explicit_cap
-        if setting_cap:
-            assert resolved.output_reserve <= setting_cap
+        expected = max(
+            resolved.context_window * settings.summary_output_percent // 100, setting_cap or explicit_cap or 0
+        )
+        assert resolved.output_reserve == expected
         summary = tool._prefix('Observed value is 42. NEEDLE evidence. ' * 2000, resolved.output_reserve)
         return {'choices': [{'message': {'content': summary}}]}
 

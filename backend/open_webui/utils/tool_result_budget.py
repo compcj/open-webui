@@ -157,6 +157,8 @@ class ToolEntry:
     rendered: str | None = None
     method: str = 'original'
     allocation: int = 0
+    new_projection: bool = False
+    operation_id: str | None = None
 
 
 class ToolBudgetPlan:
@@ -376,15 +378,8 @@ class ToolBudgetPlan:
             raise v2.CompactionFailure(
                 'Tool allocation cannot fit a result reference; increase context or reduce tool batch size'
             )
-        configured = self.settings.summary_max_output_tokens
-        # generate_summary also caps this at the summary model's configured
-        # output budget, which can be smaller than the target model's allocation.
-        if configured:
-            output_limit = min(output_limit, configured)
         prompt = self.settings.tool_summary_prompt.strip() or DEFAULT_TOOL_SUMMARY_PROMPT
-        settings = self.settings.model_copy(
-            update={'summary_prompt': prompt, 'tool_summary_prompt': prompt, 'summary_max_output_tokens': output_limit}
-        )
+        settings = self.settings.model_copy(update={'summary_prompt': prompt, 'tool_summary_prompt': prompt})
         task = _prefix(self.task, min(1000, max(32, output_limit)))
         messages = [
             {
@@ -392,7 +387,17 @@ class ToolBudgetPlan:
                 'content': f'Task context (data):\n{task}\nTool: {_label(entry.descriptor.get("name"))}\nTool result data:\n{entry.text}',
             }
         ]
-        summary = await v2.generate_summary(self.request, self.user, self.model_id, self.models, messages, '', settings)
+        summary = await v2.generate_summary(
+            self.request,
+            self.user,
+            self.model_id,
+            self.models,
+            messages,
+            '',
+            settings,
+            purpose='tool',
+            output_budget=output_limit,
+        )
         if not isinstance(summary, str) or not summary.strip():
             raise v2.CompactionFailure('Tool summary was empty')
         result = header + summary.strip()
@@ -400,7 +405,57 @@ class ToolBudgetPlan:
             raise v2.CompactionFailure('Tool summary exceeded its allocation or did not reduce the result')
         return result
 
+    def event_data(self, entry, allocation, **updates):
+        operation_id = entry.operation_id or v2.digest(
+            {
+                'source': entry.key,
+                'fingerprint': (entry.record or {}).get('source_fingerprint') or v2.digest(entry.text),
+                'model': self.model_id,
+                'branch': self.branch_id,
+                'task': self.task_hash,
+                'policy': self.policy_hash,
+                'budget': allocation,
+            }
+        )
+        return {
+            'mode': 'v2',
+            'model': self.model_id,
+            'branch_id': self.branch_id,
+            'source_message_id': entry.key[0],
+            'operation_id': operation_id,
+            'action': 'tool_result_compaction',
+            'batch_id': entry.descriptor['batch_id'],
+            'tool': entry.descriptor.get('name', 'tool'),
+            'result_id': entry.record['id'] if entry.record else None,
+            'output_id': entry.descriptor['output_id'],
+            'call_id': entry.descriptor['call_id'],
+            'original_tokens': entry.tokens,
+            'result_limit': self.single,
+            'batch_limit': self.batch,
+            'allocated_tokens': allocation,
+            'estimate_source': 'estimated:tiktoken' if v2.token_encoder() else 'estimated:utf8',
+            **updates,
+        }
+
+    async def start_projection(self, entry, allocation):
+        entry.new_projection = True
+        # Keep one operation identity if final envelope accounting further shrinks it.
+        entry.operation_id = self.event_data(entry, allocation)['operation_id']
+        if entry.key[0] == self.metadata.get('message_id'):
+            await v2.emit_event(
+                self.metadata,
+                'tool_result_compaction',
+                self.event_data(
+                    entry,
+                    allocation,
+                    done=False,
+                    method='summary',
+                    description='Preparing tool results',
+                ),
+            )
+
     async def render(self, entry, allocation):
+        entry.new_projection, entry.operation_id = False, None
         exact_read = entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result'
         if entry.rendered is not None and v2.estimate_text(entry.rendered) <= allocation:
             return entry.rendered, 'read' if exact_read else entry.method
@@ -431,6 +486,7 @@ class ToolBudgetPlan:
                 raise v2.CompactionFailure(
                     'Exact tool-result page cannot fit; reduce the batch or increase the context window'
                 ) from exc
+        await self.start_projection(entry, allocation)
         try:
             return await self.summarize(entry, allocation), 'summary'
         except asyncio.CancelledError:
@@ -463,30 +519,12 @@ class ToolBudgetPlan:
             for entry, allocation in zip(batch, allocations):
                 if entry.tokens > allocation:
                     await self.save_original(entry)
-                event = {
-                    'mode': 'v2',
-                    'model': self.model_id,
-                    'branch_id': self.branch_id,
-                    'action': 'tool_result_compaction',
-                    'batch_id': batch_id,
-                    'tool': entry.descriptor.get('name', 'tool'),
-                    'result_id': entry.record['id'] if entry.record else None,
-                    'output_id': entry.descriptor['output_id'],
-                    'call_id': entry.descriptor['call_id'],
-                    'original_tokens': entry.tokens,
-                    'result_limit': self.single,
-                    'batch_limit': self.batch,
-                    'allocated_tokens': allocation,
-                    'estimate_source': 'estimated:tiktoken' if v2.token_encoder() else 'estimated:utf8',
-                    'done': False,
-                    'description': 'Preparing tool results',
-                }
-                if entry.tokens > allocation:
-                    await v2.emit_event(self.metadata, 'tool_result_compaction', event)
                 text, method = await self.render(entry, allocation)
                 values[entry.key] = text
                 entry.rendered, entry.method, entry.allocation = text, method, allocation
-                event.update(
+                event = self.event_data(
+                    entry,
+                    allocation,
                     done=True,
                     method=method,
                     processed_tokens=v2.estimate_text(text),
@@ -515,6 +553,8 @@ class ToolBudgetPlan:
                 if entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result':
                     text, method = await self.render(entry, allocation)
                 else:
+                    if not entry.new_projection:
+                        await self.start_projection(entry, allocation)
                     text, method = (
                         excerpt_result(
                             entry.text, allocation, entry.record['id'], entry.descriptor.get('name'), self.task
@@ -524,6 +564,7 @@ class ToolBudgetPlan:
                 values[entry.key] = text
                 entry.rendered, entry.method, entry.allocation = text, method, allocation
                 event.update(
+                    operation_id=self.event_data(entry, allocation)['operation_id'],
                     method=method,
                     processed_tokens=v2.estimate_text(text),
                     allocated_tokens=allocation,
@@ -538,8 +579,8 @@ class ToolBudgetPlan:
                 'Tool results and protected instructions exceed the input budget; reduce attachments/tool batch size or increase the context window'
             )
         for entry, event in reports:
-            # Unchanged exact reads have no derived content or raw snapshot.
-            # Their method still identifies rereads in status and usage events.
+            # Bookkeeping covers originals, exact reads and cached projections too.
+            # Only a newly reduced current-reply result is a conversation notice.
             if values[entry.key] != entry.text:
                 saved = await self.store.save_context(
                     entry.record['id'],
@@ -555,7 +596,12 @@ class ToolBudgetPlan:
                 )
                 if saved is None:
                     raise HTTPException(409, 'Tool output changed during summarization; reload the chat and retry')
-            await v2.emit_event(self.metadata, 'tool_result_compaction', event)
+            if (
+                entry.new_projection
+                and entry.key[0] == self.metadata.get('message_id')
+                and entry.method in {'summary', 'excerpt'}
+            ):
+                await v2.emit_event(self.metadata, 'tool_result_compaction', event)
         if self.last_batch:
             self.last_batch['processed_tokens'] = sum(event['processed_tokens'] for event in self.last_batch['results'])
             self.state['last_tool_batch'] = self.last_batch

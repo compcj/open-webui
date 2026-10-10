@@ -176,6 +176,7 @@ class ChatConfigForm(BaseModel):
     CONTEXT_COMPACTION_V2_RECENT_TOKENS: int = Field(default=20000, ge=0, strict=True)
     CONTEXT_COMPACTION_V2_MODEL: str = ''
     CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS: int | None = Field(default=None, gt=0, strict=True)
+    CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT: int = Field(default=5, ge=1, le=100, strict=True)
     CONTEXT_COMPACTION_V2_SUMMARY_PROMPT: str = ''
     CONTEXT_COMPACTION_V2_REMINDER_ENABLED: bool = True
     CONTEXT_COMPACTION_V2_REMINDER_PROMPT: str = ''

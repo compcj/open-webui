@@ -14,6 +14,8 @@ import hashlib
 import json
 import logging
 import math
+import re
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -183,6 +185,99 @@ def resolve_budget(settings, model_id: str, models: dict, payload: dict, stored_
         output,
         context * settings.reminder_percent // 100,
     )
+
+
+def resolve_summary_budget(
+    settings,
+    model_id: str,
+    models: dict,
+    payload: dict,
+    stored_models=None,
+    *,
+    fixed_tokens: int,
+    purpose: str = 'history',
+    output_budget: int | None = None,
+) -> Budget:
+    chain = model_chain(model_id, models, stored_models)
+    context = context_window_from_chain(chain, settings.default_context_window, payload)
+    params = inherited_params(chain)
+    inherited_output = next(
+        (n for key in ('max_completion_tokens', 'max_tokens', 'num_predict') if (n := positive_int(params.get(key)))),
+        0,
+    )
+    requested = max(
+        context * settings.summary_output_percent // 100, settings.summary_max_output_tokens or inherited_output
+    )
+    effective = context * settings.effective_window_percent // 100
+    output = min(requested, max(0, (effective - fixed_tokens) // 3))
+    if purpose == 'tool':
+        output = min(output, output_budget or 0)
+    return Budget(context, effective, effective - output, effective - output, output, 0)
+
+
+def set_summary_output(payload: dict, output_key: str, output: int) -> None:
+    # Provider defaults may have reintroduced another output parameter. Keep a
+    # single provider-appropriate limit on the actual transport body.
+    for source in (payload, as_dict(payload.get('options')), as_dict(payload.get('params'))):
+        for key in ('max_tokens', 'max_completion_tokens', 'num_predict'):
+            source.pop(key, None)
+    if output_key == 'num_predict':
+        payload.setdefault('options', {})['num_predict'] = output
+    else:
+        payload[output_key] = output
+
+
+@dataclass
+class SummaryRequestGuard:
+    """Server-created authority, never enabled by client task metadata."""
+
+    settings: CompactionSettings
+    model_id: str
+    models: dict
+    stored_models: dict
+    output_reserve: int
+    output_key: str
+    fixed_tokens: int
+    input_tokens: int
+    purpose: str = 'history'
+    output_budget: int | None = None
+    final_output_reserve: int | None = None
+
+    def enforce(self, payload: dict, model_id: str) -> dict:
+        if model_id != self.model_id:
+            raise CompactionFailure('Summary provider changed model; select a dedicated summary model')
+        tokens = estimate_payload_tokens(payload)
+        # Late provider instructions/schemas or native conversion may add overhead.
+        # Attribute any positive delta to fixed content, conservatively; source
+        # shortening never licenses more output than the original allocation.
+        fixed_tokens = self.fixed_tokens + max(0, tokens - self.input_tokens)
+        budget = resolve_summary_budget(
+            self.settings,
+            model_id,
+            self.models,
+            payload,
+            self.stored_models,
+            fixed_tokens=fixed_tokens,
+            purpose=self.purpose,
+            output_budget=self.output_budget,
+        )
+        output = min(self.output_reserve, budget.output_reserve)
+        output_key = self.output_key
+        if output_key != 'num_predict':
+            # OpenAI compatibility/reasoning conversion runs before this hook.
+            # Respect its final parameter spelling while replacing the value.
+            if 'max_completion_tokens' in payload:
+                output_key = 'max_completion_tokens'
+            elif 'max_tokens' in payload:
+                output_key = 'max_tokens'
+        set_summary_output(payload, output_key, output)
+        if output < 1 or tokens + output > budget.effective_context_window:
+            raise SummaryContextLimitError(
+                'Internal summary input tokens exceed the effective model context after provider parameters; '
+                'rebuild a smaller source fragment or choose a larger summary model'
+            )
+        self.final_output_reserve = output
+        return payload
 
 
 @lru_cache(maxsize=1)
@@ -394,6 +489,10 @@ class CompactionFailure(Exception):
     """A recoverable summary failure; caller decides whether original input fits."""
 
 
+class SummaryContextLimitError(CompactionFailure):
+    """Explicit internal context rejection that can shrink the source fragment."""
+
+
 def digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), default=str).encode('utf-8')
@@ -490,6 +589,65 @@ def source_refs(messages: list[dict]) -> list[dict]:
             }
         )
     return refs
+
+
+def tool_accounting_refs(messages: list[dict], results: list[dict]) -> list[dict]:
+    """Bind accounting to immutable ancestors and selected current-reply results.
+
+    Unlike history checkpoint coverage, a current reply's rendered content,
+    citations and other tool results can grow after a batch is sent.
+    """
+    refs = []
+    for index, message in enumerate(messages):
+        data = {key: message.get(key) for key in ('role', 'parentId', 'parent_id')}
+        ref = {'id': message['id']}
+        if index < len(messages) - 1:
+            data.update(
+                {key: message.get(key) for key in ('content', 'output', 'tool_calls', 'files', 'sources', 'embeds')}
+            )
+            data['tool_results'] = message.get('tool_results') or as_dict(message.get('meta')).get('tool_results') or []
+        else:
+            selected = {r['output_id'] for r in results if r.get('source_message_id') == message['id']}
+            sources = {}
+            for output_index, item in enumerate(message.get('output') or []):
+                if isinstance(item, dict) and item.get('type') in {
+                    'function_call_output',
+                    'open_webui:code_interpreter',
+                }:
+                    output_id = item.get('id') or f'output-{output_index}'
+                    if output_id in selected:
+                        if output_id in sources:
+                            raise CompactionFailure('Duplicate saved tool result; reload the chat and retry')
+                        sources[output_id] = digest(item)
+            for item in message.get('tool_results') or as_dict(message.get('meta')).get('tool_results') or []:
+                if isinstance(item, dict) and item.get('id') in selected:
+                    if item['id'] in sources:
+                        raise CompactionFailure('Duplicate saved tool result; reload the chat and retry')
+                    sources[item['id']] = digest(item)
+            if selected != sources.keys():
+                raise CompactionFailure('Tool result is not saved yet; reload the chat and retry')
+            ref['tool_sources'] = sources
+        ref['fingerprint'] = digest(data)
+        refs.append(ref)
+    return refs
+
+
+def tool_accounting_refs_match(refs: list[dict], messages_map: dict) -> bool:
+    if not refs or any(not isinstance(ref, dict) or not isinstance(ref.get('id'), str) for ref in refs):
+        return False
+    branch = branch_messages(messages_map, refs[-1]['id'])
+    if [m['id'] for m in branch] != [ref['id'] for ref in refs]:
+        return False
+    selected = refs[-1].get('tool_sources')
+    if not isinstance(selected, dict):
+        return False
+    try:
+        candidate = tool_accounting_refs(
+            branch, [{'source_message_id': refs[-1]['id'], 'output_id': key} for key in selected]
+        )
+        return candidate == refs
+    except (CompactionFailure, KeyError, TypeError):
+        return False
 
 
 def coverage_refs(raw: list[dict], compacted: list[dict], previous: dict | None) -> list[dict]:
@@ -679,74 +837,116 @@ def summary_units(messages: list[dict]) -> list[str | dict]:
 
 
 async def progressive_summary(
-    messages: list[dict], previous: str, settings: CompactionSettings, base_payload: dict, input_budget: int, provider
+    messages: list[dict],
+    previous: str,
+    settings: CompactionSettings,
+    base_payload: dict,
+    input_budget: int,
+    provider,
+    *,
+    budget_for=None,
+    output_key: str = 'max_tokens',
 ) -> str:
-    """Feed every source character/media block into bounded summary calls."""
+    """Feed every source character/media block into bounded summary calls.
+
+    A rejected fragment never advances the cursor. Context-limit recovery lowers
+    only the variable fragment allowance, retaining that limit for later chunks.
+    """
+    from open_webui.utils.context_compaction_dispatch import is_context_limit_error, response_error
+
     units = summary_units(messages)
     if not units:
         raise CompactionFailure('No complete history can be summarized')
     instruction = settings.summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT
     position, offset, summary = 0, 0, previous
+    source_limit = None
     while position < len(units):
-        text_parts, media_parts = [], []
-        next_position, next_offset = position, offset
+        deadline = asyncio.get_running_loop().time() + settings.timeout_seconds
 
         def payload_for(texts, media):
             text = f'Previous handoff:\n{summary}\n\nConversation data fragment (may continue):\n' + '\n'.join(texts)
             content = [{'type': 'text', 'text': text}, *media] if media else text
             return {
-                **base_payload,
+                **copy.deepcopy(base_payload),
                 'messages': [
-                    *base_payload.get('messages', []),
+                    *copy.deepcopy(base_payload.get('messages', [])),
                     {'role': 'system', 'content': instruction},
                     {'role': 'user', 'content': content},
                 ],
             }
 
-        while next_position < len(units):
-            unit = units[next_position]
-            if isinstance(unit, dict):
-                candidate = payload_for(text_parts, [*media_parts, unit])
-                if estimate_payload_tokens(candidate) > input_budget:
+        fixed_tokens = estimate_payload_tokens(payload_for([], []))
+        budget = budget_for(fixed_tokens) if budget_for else None
+        current_input_budget = budget.input_budget if budget else input_budget
+        if fixed_tokens >= current_input_budget or (budget and budget.output_reserve < 1):
+            raise CompactionFailure(
+                'The summary model context cannot fit its instructions, previous handoff and output; '
+                'choose a larger model or reduce summary instructions/output'
+            )
+        for attempt in range(settings.max_retries + 1):
+            text_parts, media_parts = [], []
+            next_position, next_offset = position, offset
+            fragment_budget = (
+                min(current_input_budget, fixed_tokens + source_limit) if source_limit else current_input_budget
+            )
+            while next_position < len(units):
+                unit = units[next_position]
+                if isinstance(unit, dict):
+                    candidate = payload_for(text_parts, [*media_parts, unit])
+                    if estimate_payload_tokens(candidate) > fragment_budget:
+                        if text_parts or media_parts:
+                            break
+                        raise CompactionFailure(
+                            'A media block cannot fit the summary model context; select a larger multimodal summary model'
+                        )
+                    media_parts.append(unit)
+                    next_position, next_offset = next_position + 1, 0
+                    continue
+                low, high, best = next_offset + 1, len(unit), None
+                while low <= high:
+                    middle = (low + high) // 2
+                    if (
+                        estimate_payload_tokens(payload_for([*text_parts, unit[next_offset:middle]], media_parts))
+                        <= fragment_budget
+                    ):
+                        best, low = middle, middle + 1
+                    else:
+                        high = middle - 1
+                if best is None:
                     if text_parts or media_parts:
                         break
                     raise CompactionFailure(
-                        'A media block cannot fit the summary model context; select a larger multimodal summary model'
+                        'The summary model context cannot fit a source fragment with its instructions and previous handoff; '
+                        'choose a larger model or reduce summary output'
                     )
-                media_parts.append(unit)
-                next_position, next_offset = next_position + 1, 0
-                continue
-            low, high, best = next_offset + 1, len(unit), None
-            while low <= high:
-                middle = (low + high) // 2
-                if (
-                    estimate_payload_tokens(payload_for([*text_parts, unit[next_offset:middle]], media_parts))
-                    <= input_budget
-                ):
-                    best, low = middle, middle + 1
-                else:
-                    high = middle - 1
-            if best is None:
-                if text_parts or media_parts:
+                text_parts.append(unit[next_offset:best])
+                if best < len(unit):
+                    next_offset = best
                     break
-                raise CompactionFailure(
-                    'The summary model context is too small for its instructions and previous summary; choose a larger model or reduce summary output'
-                )
-            text_parts.append(unit[next_offset:best])
-            if best < len(unit):
-                next_offset = best
-                break
-            next_position, next_offset = next_position + 1, 0
-        payload = payload_for(text_parts, media_parts)
-        for attempt in range(settings.max_retries + 1):
+                next_position, next_offset = next_position + 1, 0
+            payload = payload_for(text_parts, media_parts)
+            if budget:
+                set_summary_output(payload, output_key, budget.output_reserve)
             try:
-                response = await asyncio.wait_for(provider(payload), timeout=settings.timeout_seconds)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                response = await asyncio.wait_for(provider(payload), timeout=remaining)
+                error = response_error(response)
+                if error:
+                    if is_context_limit_error(error):
+                        raise SummaryContextLimitError(str(error))
+                    raise CompactionFailure('Summary provider returned an error; retry or select another summary model')
                 result = response_text(response)
                 if not result:
                     raise CompactionFailure('Summary model returned no final content')
-                if estimate_text(result) >= input_budget:
-                    raise CompactionFailure('Summary model returned an oversized handoff')
+                result_tokens = estimate_text(result)
+                if result_tokens > (budget.output_reserve if budget else input_budget - 1):
+                    raise CompactionFailure(
+                        'Summary model exceeded its output allowance; retry or select another summary model'
+                    )
                 summary = result
+                position, offset = next_position, next_offset
                 break
             except asyncio.CancelledError:
                 raise
@@ -757,7 +957,20 @@ async def progressive_summary(
                     raise CompactionFailure(
                         'Summary request timed out or failed; retry or select another summary model'
                     ) from exc
-        position, offset = next_position, next_offset
+                if is_context_limit_error(getattr(exc, 'detail', exc)):
+                    actual_fragment = estimate_payload_tokens(payload) - fixed_tokens
+                    tightened = actual_fragment // 2
+                    if tightened < 1:
+                        raise CompactionFailure(
+                            'Summary instructions or an indivisible media block exceed the provider context; '
+                            'choose a larger summary model or reduce its instructions'
+                        ) from exc
+                    source_limit = min(source_limit, tightened) if source_limit else tightened
+    original_tokens = estimate_text(previous) + sum(
+        estimate_content([unit]) if isinstance(unit, dict) else estimate_text(unit) for unit in units
+    )
+    if estimate_text(summary) >= original_tokens:
+        raise CompactionFailure('Summary did not reduce context; reduce summary output or select another summary model')
     return summary
 
 
@@ -820,93 +1033,122 @@ def request_tokens(payload: dict, state: dict) -> tuple[int, str | None]:
 
 
 async def generate_summary(
-    request, user, model_id: str, models: dict, messages: list[dict], previous: str, settings: CompactionSettings
+    request,
+    user,
+    model_id: str,
+    models: dict,
+    messages: list[dict],
+    previous: str,
+    settings: CompactionSettings,
+    *,
+    purpose: str = 'history',
+    output_budget: int | None = None,
 ) -> str:
     from open_webui.utils.chat import generate_chat_completion
     from open_webui.utils.payload import apply_params_to_form_data, resolve_system_prompt
 
+    if purpose not in {'history', 'tool'}:
+        raise ValueError('Summary purpose must be history or tool')
+    if purpose == 'tool' and (output_budget is None or positive_int(output_budget) != output_budget):
+        raise CompactionFailure('Tool summary requires a positive output allowance')
     summary_id = settings.summary_model or model_id
     if summary_id not in models:
         raise CompactionFailure('Configured summary model is unavailable; choose an available model')
     stored = await load_stored_models(summary_id, models)
-    params = inherited_params(model_chain(summary_id, models, stored))
-    tool_summary = (
-        settings.tool_summary_prompt
-        and settings.summary_prompt == settings.tool_summary_prompt
-        and settings.summary_max_output_tokens is not None
+    chain = model_chain(summary_id, models, stored)
+    params = inherited_params(chain)
+    output_key = (
+        'num_predict'
+        if any(entry.get('owned_by') == 'ollama' for entry in chain)
+        else 'max_completion_tokens'
+        if 'max_completion_tokens' in params
+        else 'max_tokens'
     )
-    if tool_summary:
-        configured_caps = [
-            n for key in ('max_tokens', 'max_completion_tokens', 'num_predict') if (n := positive_int(params.get(key)))
-        ]
-        if configured_caps:
-            settings = settings.model_copy(
-                update={'summary_max_output_tokens': min(settings.summary_max_output_tokens, *configured_caps)}
-            )
-    if settings.summary_max_output_tokens is not None:
-        openai_output_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
-        for key in ('max_tokens', 'max_completion_tokens', 'num_predict'):
-            params.pop(key, None)
-        output_key = 'num_predict' if models[summary_id].get('owned_by') == 'ollama' else openai_output_key
-        params[output_key] = settings.summary_max_output_tokens
+    if chain[0].get('direct') and output_key != 'num_predict':
+        # Browser RPC skips the server reasoning-model parameter adapter. The
+        # request-local descriptor retains the provider ID before connection
+        # prefixes were added; do not resolve a private model/base to infer it.
+        provider_id = str(as_dict(chain[0].get('openai')).get('id') or summary_id).lower()
+        gpt_version = re.match(r'^gpt-(\d+)', provider_id)
+        if re.match(r'^o\d+', provider_id) or (gpt_version and int(gpt_version.group(1)) >= 5):
+            output_key = 'max_completion_tokens'
     payload = {'model': summary_id, 'messages': [], 'stream': False, 'metadata': {'task': 'context_compaction_v2'}}
     system = await resolve_system_prompt(
-        params.get('system'), metadata=getattr(request.state, 'metadata', {}), user=user
+        params.get('system'), metadata=copy.deepcopy(getattr(request.state, 'metadata', {})), user=user
     )
     if system:
         payload['messages'].append({'role': 'system', 'content': system})
     payload = apply_params_to_form_data(payload, models[summary_id], params)
-    budget = resolve_budget(settings, summary_id, models, payload, stored)
-    if tool_summary:
-        # A target-model tool allocation can exceed this model's entire window.
-        # Reserve space for fixed instructions, a maximum-sized previous handoff,
-        # and the next source fragment as well as generated output. The initial
-        # previous text is included in the probe; normal tool summaries start empty.
-        overhead = estimate_payload_tokens(
-            {
-                **payload,
-                'messages': [
-                    *payload.get('messages', []),
-                    {'role': 'system', 'content': settings.summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT},
-                    {
-                        'role': 'user',
-                        'content': f'Previous handoff:\n{previous}\n\nConversation data fragment (may continue):\n',
-                    },
-                ],
-            }
-        )
-        ceiling = (budget.effective_context_window - overhead) // 3
-        if ceiling <= 0:
-            raise CompactionFailure('The summary model context cannot fit its instructions and a tool fragment')
-        output_limit = min(settings.summary_max_output_tokens, ceiling)
-        settings = settings.model_copy(update={'summary_max_output_tokens': output_limit})
-        if models[summary_id].get('owned_by') == 'ollama':
-            payload['options'][output_key] = output_limit
-        else:
-            payload[output_key] = output_limit
-        budget = resolve_budget(settings, summary_id, models, payload, stored)
-    # Use a separate request state: providers mutate metadata/model/bypass flags.
-    # Those mutations must never leak into the user/tool generation request.
-    summary_request = copy.copy(request)
-    if hasattr(request, 'scope'):
-        from starlette.requests import Request
 
-        scope = {**request.scope, 'state': dict(request.scope.get('state') or {})}
-        summary_request = Request(scope, receive=request.receive)
-    else:
-        summary_request.state = copy.copy(request.state)
-    summary_request.state.metadata = {
-        **as_dict(getattr(request.state, 'metadata', {})),
-        'task': 'context_compaction_v2',
-    }
+    current_fixed_tokens = 0
+
+    def budget_for(fixed_tokens):
+        nonlocal current_fixed_tokens
+        current_fixed_tokens = fixed_tokens
+        return resolve_summary_budget(
+            settings,
+            summary_id,
+            models,
+            payload,
+            stored,
+            fixed_tokens=fixed_tokens,
+            purpose=purpose,
+            output_budget=output_budget,
+        )
 
     async def provider(body):
+        # Fresh independent request state for every attempt: provider model,
+        # metadata, parameter and guard mutations cannot leak to the chat or next chunk.
+        summary_request = copy.copy(request)
+        if hasattr(request, 'scope'):
+            from starlette.requests import Request
+
+            state = {
+                key: value
+                for key, value in (request.scope.get('state') or {}).items()
+                if key not in {'context_compaction', 'context_compaction_summary'}
+            }
+            scope = {**request.scope, 'state': state}
+            summary_request = Request(scope, receive=request.receive)
+        else:
+            summary_request.state = copy.copy(request.state)
+        if hasattr(request.state, 'model'):
+            summary_request.state.model = copy.deepcopy(request.state.model)
+        summary_request.state.context_compaction = None
+        summary_request.state.metadata = {
+            **copy.deepcopy(as_dict(getattr(request.state, 'metadata', {}))),
+            'task': 'context_compaction_v2',
+        }
+        allocated = positive_int(
+            as_dict(body.get('options')).get(output_key) if output_key == 'num_predict' else body.get(output_key)
+        )
+        guard = SummaryRequestGuard(
+            settings,
+            summary_id,
+            models,
+            stored,
+            allocated,
+            output_key,
+            current_fixed_tokens,
+            estimate_payload_tokens(body),
+            purpose,
+            output_budget,
+        )
+        summary_request.state.context_compaction_summary = guard
         with internal_compaction():
-            return await generate_chat_completion(
+            response = await generate_chat_completion(
                 summary_request, form_data=copy.deepcopy(body), user=user, bypass_system_prompt=True
             )
+        if (
+            guard.final_output_reserve is not None
+            and estimate_text(response_text(response)) > guard.final_output_reserve
+        ):
+            raise CompactionFailure('Summary model exceeded its output allowance after provider parameters')
+        return response
 
-    return await progressive_summary(messages, previous, settings, payload, budget.input_budget, provider)
+    return await progressive_summary(
+        messages, previous, settings, payload, 0, provider, budget_for=budget_for, output_key=output_key
+    )
 
 
 def _protected_indices(messages: list[dict], raw: list[dict], latest: int) -> set[int]:
@@ -1223,6 +1465,16 @@ async def prepare_v2_request(
         tool_batch_limit=batch_limit,
         last_tool_batch=state.get('last_tool_batch'),
     )
+    if tool_plan and tool_plan.last_batch:
+        refs = tool_accounting_refs(raw, tool_plan.last_batch['results'])
+        state['last_usage']['tool_budget_accounting'] = {
+            'model': model_id,
+            'branch_id': current_id,
+            'recorded_at': time.time_ns(),
+            'source_refs': refs,
+            'source_fingerprint': digest(refs),
+            'last_tool_batch': copy.deepcopy(tool_plan.last_batch),
+        }
     state['last_compacted'] = did_compact
     await emit_event(metadata, 'context_usage', state['last_usage'])
     return original
@@ -1341,6 +1593,29 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
             stored_summary_models=summary_stored,
         )
         payload = await plan.load_cached_only(payload)
+        accounting = [
+            entry
+            for message in raw
+            if isinstance(
+                entry := as_dict(as_dict(message.get('meta')).get('tool_budget_accounting')).get(model_id), dict
+            )
+            and entry.get('model') == model_id
+            and entry.get('branch_id') in branch_ids
+        ]
+        if accounting:
+            newest = max(accounting, key=lambda item: positive_int(item.get('recorded_at')) or 0)
+            refs = newest.get('source_refs')
+            if (
+                isinstance(refs, list)
+                and refs
+                and all(
+                    isinstance(ref, dict) and ref.get('id') in branch_ids and isinstance(ref.get('fingerprint'), str)
+                    for ref in refs
+                )
+                and digest(refs) == newest.get('source_fingerprint')
+                and tool_accounting_refs_match(refs, snapshot['messages_map'])
+            ):
+                last_batch = copy.deepcopy(as_dict(newest.get('last_tool_batch'))) or None
         statuses = [
             entry
             for message in raw
@@ -1351,7 +1626,7 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
             and entry.get('batch_id')
             and not entry.get('error')
         ]
-        if statuses:
+        if statuses and not accounting:
             last = statuses[-1]['batch_id']
             by_result = {
                 (item.get('result_id') or item.get('output_id') or item.get('call_id')): item

@@ -106,8 +106,10 @@ class ToolBudgetEngineTests(IsolatedCase):
         original = copy.deepcopy(payload)
         calls = []
 
-        async def summarize(req, user, model, models, messages, previous, settings):
-            if settings.tool_summary_prompt and settings.tool_summary_prompt == settings.summary_prompt:
+        async def summarize(
+            req, user, model, models, messages, previous, settings, *, purpose='history', output_budget=None
+        ):
+            if purpose == 'tool':
                 calls.append('tool')
                 return 'Search succeeded. Exact resource: https://example.test/page.'
             calls.append('history')
@@ -178,14 +180,24 @@ class ToolBudgetAcceptanceTests(IsolatedCase):
             msg['tool_call_id'] = f'c{i}'
             msg['_tool_result_refs'][0].update(call_id=f'c{i}', output_id=f'out{i}')
             payload['messages'].append(msg)
+        # Accounting validates selected immutable raw results after the send;
+        # the fixture must persist the same three outputs as the request.
+        raw_map['a2']['output'] = [
+            {
+                'id': f'out{i}',
+                'call_id': f'c{i}',
+                'type': 'function_call_output',
+                'status': 'completed',
+                'output': template['content'],
+            }
+            for i in range(3)
+        ]
         order = []
 
-        async def generate(req, user, model, models, messages, previous, settings):
-            order.append(
-                'tool'
-                if settings.tool_summary_prompt and settings.summary_prompt == settings.tool_summary_prompt
-                else 'history'
-            )
+        async def generate(
+            req, user, model, models, messages, previous, settings, *, purpose='history', output_budget=None
+        ):
+            order.append('tool' if purpose == 'tool' else 'history')
             return 'Observed facts and resource identifiers.'
 
         with patch.object(v2, 'generate_summary', side_effect=generate):
@@ -302,7 +314,7 @@ class ToolProjectionIdentityTests(IsolatedCase):
         store = SimpleNamespace(list_contexts=AsyncMock(return_value=[]), save_result=AsyncMock())
         with (
             patch.object(tool, 'get_tool_result_store', return_value=store),
-            patch.object(v2, 'emit_event', AsyncMock()),
+            patch.object(v2, 'emit_event', AsyncMock()) as emit,
         ):
             plan = tool.ToolBudgetPlan(
                 None,
@@ -319,3 +331,68 @@ class ToolProjectionIdentityTests(IsolatedCase):
             result = asyncio.run(plan.finish(asyncio.run(plan.load(payload))))
         assert result['messages'][0]['content'] == 'short'
         store.save_result.assert_not_awaited()
+        emit.assert_not_awaited()
+        assert plan.state['last_tool_batch']['results'][0]['method'] == 'original'
+
+
+class ToolNotificationTests(IsolatedCase):
+    setup_engine = v2_test_helpers.EngineTests.setup_engine
+    make_batch = ToolBudgetEngineTests.make_batch
+
+    def test_only_current_new_projections_emit_status(self):
+        for historical, cached in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(historical=historical, cached=cached):
+                v2, tool, request, payload, history, service, events = self.make_batch(context=40000)
+                state = request.state.context_compaction
+                metadata = {**state['metadata'], 'message_id': 'new-reply' if historical else 'a2'}
+                if cached:
+                    service.get_context.return_value = {'text': 'Existing handoff', 'method': 'summary'}
+                plan = tool.ToolBudgetPlan(
+                    request,
+                    None,
+                    payload,
+                    {},
+                    metadata,
+                    'model',
+                    {'model': {}},
+                    state['settings'],
+                    v2.resolve_budget(state['settings'], 'model', {'model': {}}, payload),
+                    state,
+                )
+                with patch.object(v2, 'generate_summary', AsyncMock(return_value='Observed evidence.')):
+                    result = asyncio.run(plan.finish(payload))
+                notices = [event for kind, event in events if kind == 'tool_result_compaction']
+                assert len(notices) == (0 if historical or cached else 2)
+                assert state['last_tool_batch']['results'][0]['method'] == 'summary'
+                assert result['messages'][-1]['content'] != payload['messages'][-1]['content']
+                if notices:
+                    assert notices[0]['source_message_id'] == notices[1]['source_message_id'] == 'a2'
+                    assert notices[0]['operation_id'] == notices[1]['operation_id']
+                    assert not notices[0]['done'] and notices[1]['done']
+                    events.clear()
+                    asyncio.run(plan.finish(result))
+                    assert not events
+
+    def test_same_source_budget_has_stable_operation_identity(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=40000)
+        state = request.state.context_compaction
+        identities = []
+        for _ in range(2):
+            plan = tool.ToolBudgetPlan(
+                request,
+                None,
+                payload,
+                {},
+                state['metadata'],
+                'model',
+                {'model': {}},
+                state['settings'],
+                v2.resolve_budget(state['settings'], 'model', {'model': {}}, payload),
+                state,
+            )
+            with patch.object(v2, 'generate_summary', AsyncMock(return_value='Observed evidence.')):
+                asyncio.run(plan.finish(payload))
+            identities.append(
+                [data['operation_id'] for kind, data in events if kind == 'tool_result_compaction' and data['done']][-1]
+            )
+        assert identities[0] == identities[1]

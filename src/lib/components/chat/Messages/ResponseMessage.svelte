@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isVisibleToolResultStatus, mergeCompactionStatus } from '$lib/utils/context-compaction';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
 	import { functions as localizedFunctions } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
@@ -201,15 +202,17 @@
 	$: localizedModelName = model ? resolveLocalizedModelName(model, $i18n.language) : message.model;
 	$: model = $models.find((m) => m.id === message.model);
 
-	$: statusEntries = (
-		message?.statusHistory ?? [...(message?.status ? [message?.status] : [])]
-	).filter(
-		(status) =>
-			status?.action === 'context_compaction' ||
-			(status?.action === 'tool_result_compaction' &&
-				(!status?.done || status?.error || status?.method !== 'original')) ||
-			(model?.info?.meta?.capabilities?.status_updates ?? true)
-	);
+	$: statusEntries = (message?.statusHistory ?? [...(message?.status ? [message?.status] : [])])
+		.reduce((entries: any[], status: any) => mergeCompactionStatus(entries, status), [])
+		.filter((status: any) => {
+			if (status?.action === 'tool_result_compaction') {
+				return isVisibleToolResultStatus(status, messageId, history.messages);
+			}
+			return (
+				status?.action === 'context_compaction' ||
+				(model?.info?.meta?.capabilities?.status_updates ?? true)
+			);
+		});
 	$: hasVisibleStatus = statusEntries.length > 0 && !(statusEntries.at(-1)?.hidden ?? false);
 	$: visibleResponseContent =
 		getOutputText(message.output) || removeAllDetails(message.content ?? '');

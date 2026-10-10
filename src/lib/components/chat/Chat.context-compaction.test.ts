@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
 import { ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import * as contextCompaction from '$lib/utils/context-compaction';
 
 // Exercise the real socket handler without starting services or the editor.
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
@@ -15,7 +16,7 @@ const declarations = parse(source)
 const createChat = () => {
 	const toast = { loading: vi.fn(() => 'toast'), success: vi.fn(), error: vi.fn() };
 	const body = `
-		const { toast } = dependencies;
+		const { toast, mergeCompactionStatus, isVisibleToolResultStatus } = dependencies;
 		const console = { log: () => {} };
 		const tick = async () => {};
 		const $i18n = { t: text => text };
@@ -37,7 +38,7 @@ const createChat = () => {
 			transpileModule(body, {
 				compilerOptions: { target: ScriptTarget.ES2022 }
 			}).outputText
-		)({ toast })
+		)({ toast, ...contextCompaction })
 	};
 };
 const status = (done = false, extra = {}) => ({
@@ -110,5 +111,38 @@ describe('tool result status lifecycle', () => {
 		expect(chat.history.messages.reply.statusHistory).toEqual([data]);
 		expect(chat.history.messages.reply.content).toBe('');
 		expect(chat.usage()).toBeNull();
+	});
+});
+
+describe('tool notification identity', () => {
+	const toolEvent = (data: any) => ({
+		chat_id: 'chat',
+		message_id: 'reply',
+		data: { type: 'tool_result_compaction', data: { action: 'tool_result_compaction', ...data } }
+	});
+	it('updates one operation and does not regress completion on a delayed progress event', async () => {
+		const chat = createChat();
+		const start = {
+			source_message_id: 'reply',
+			operation_id: 'operation',
+			method: 'summary',
+			done: false
+		};
+		const done = { ...start, done: true, processed_tokens: 200 };
+		for (const data of [start, done, done, start]) await chat.event(toolEvent(data));
+		expect(chat.history.messages.reply.statusHistory).toEqual([
+			{ action: 'tool_result_compaction', ...done }
+		]);
+	});
+	it('does not add original/read/cached or another reply statuses to this response', async () => {
+		const chat = createChat();
+		for (const data of [
+			{ method: 'original', done: true },
+			{ method: 'read', done: true },
+			{ method: 'summary', done: true, reused: true },
+			{ method: 'summary', done: true, source_message_id: 'older' }
+		])
+			await chat.event(toolEvent(data));
+		expect(chat.history.messages.reply.statusHistory).toEqual([]);
 	});
 });

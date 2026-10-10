@@ -59,6 +59,7 @@
 		CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT: '',
 		CONTEXT_COMPACTION_V2_MODEL: '',
 		CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS: null as number | null,
+		CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT: 5,
 		CONTEXT_COMPACTION_V2_SUMMARY_PROMPT: '',
 		CONTEXT_COMPACTION_V2_REMINDER_ENABLED: true,
 		CONTEXT_COMPACTION_V2_REMINDER_PROMPT: '',
@@ -80,6 +81,10 @@
 		);
 
 	const updateInterfaceHandler = async () => {
+		const summaryPercent = chatConfig.CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT;
+		if (!Number.isInteger(summaryPercent) || summaryPercent < 1 || summaryPercent > 100) {
+			throw $i18n.t('Summary output percentage must be an integer between 1 and 100.');
+		}
 		if (
 			!isValidToolBudgetPercent(
 				chatConfig.CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT,
@@ -158,6 +163,7 @@
 				getChatConfig(localStorage.token)
 			]);
 			taskConfig.TASK_MODEL_PARAMS = taskConfig.TASK_MODEL_PARAMS ?? {};
+			chatConfig.CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT ??= 5;
 
 			workspaceModels = await getBaseModels(localStorage.token);
 			baseModels = await getModels(localStorage.token, null, false);
@@ -488,8 +494,27 @@
 						/>
 					</AdminSettingField>
 					<AdminSettingField
+						label={$i18n.t('Summary output budget (%)')}
+						description={$i18n.t(
+							'Percentage of the summary model context window. The larger of this budget and the token setting is used; model capacity and tool allocations may reduce it.'
+						)}
+					>
+						<input
+							type="number"
+							min="1"
+							max="100"
+							step="1"
+							required
+							class={inputClass}
+							aria-label={$i18n.t('Summary output budget (%)')}
+							bind:value={chatConfig.CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
 						label={$i18n.t('Summary output limit (tokens)')}
-						description={$i18n.t('Leave empty to inherit the summary model output limit.')}
+						description={$i18n.t(
+							'Leave empty to inherit the summary model output limit, then compare it with the percentage budget.'
+						)}
 					>
 						<input
 							type="number"

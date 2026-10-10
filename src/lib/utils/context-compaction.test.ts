@@ -1,3 +1,4 @@
+import * as compaction from './context-compaction';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	getCompactionMode,
@@ -97,5 +98,26 @@ describe('compaction browser connection requests', () => {
 			model_item: direct,
 			session_id: 'owned-session'
 		});
+	});
+});
+
+describe('legacy tool notification ownership', () => {
+	const old = { id: 'old', output: [{ id: 'out', call_id: 'call', type: 'function_call_output' }] };
+	const current = {
+		id: 'new',
+		meta: { tool_results: [{ id: 'sidecar', call_id: 'side-call', text: 'original' }] }
+	};
+	const messages = { old, new: current };
+	const notice = { action: 'tool_result_compaction', method: 'summary', done: true };
+	it('keeps old records with the original reply and hides copied records on a later reply', () => {
+		const status = { ...notice, output_id: 'out', call_id: 'call' };
+		expect(compaction.isVisibleToolResultStatus(status, 'old', messages)).toBe(true);
+		expect(compaction.isVisibleToolResultStatus(status, 'new', messages)).toBe(false);
+	});
+	it('resolves injected sidecars and preserves records without sufficient identity', () => {
+		const status = { ...notice, output_id: 'sidecar', call_id: 'side-call' };
+		expect(compaction.isVisibleToolResultStatus(status, 'old', messages)).toBe(false);
+		expect(compaction.isVisibleToolResultStatus(status, 'new', messages)).toBe(true);
+		expect(compaction.isVisibleToolResultStatus(notice, 'old', messages)).toBe(true);
 	});
 });

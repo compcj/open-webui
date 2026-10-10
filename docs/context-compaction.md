@@ -35,25 +35,26 @@ V2 parameters have no personal or per-chat overrides.
 Environment variables use the same names as API fields. Saved admin values override environment
 defaults when persistent configuration is enabled; editing `.env` does not replace stored settings.
 
-| 界面设置 / Setting                     | API / environment field                          | 默认值 / Default                                       |
-| -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| 模式 / Mode                            | `CONTEXT_COMPACTION_MODE`                        | 未设置，兼容旧开关 / Unset; legacy flag fallback       |
-| 全局缺省上下文长度 / Default window    | `CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW`      | 262144 tokens                                          |
-| 有效窗口比例 / Effective window        | `CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT` | 95%                                                    |
-| 自动压缩触发比例 / Trigger             | `CONTEXT_COMPACTION_V2_TRIGGER_PERCENT`          | 90%                                                    |
-| 提醒时剩余预算比例 / Reminder distance | `CONTEXT_COMPACTION_V2_REMINDER_PERCENT`         | 总长度的 10% / 10% of the window                       |
-| 近期原文预算 / Recent original context | `CONTEXT_COMPACTION_V2_RECENT_TOKENS`            | 20000 tokens                                           |
-| 摘要模型 / Summary model               | `CONTEXT_COMPACTION_V2_MODEL`                    | 空，使用当前模型 / Empty: current model                |
-| 摘要输出上限 / Summary output limit    | `CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS`        | 空，继承摘要模型配置 / Empty: inherit summary model    |
-| 摘要提示词 / Summary prompt            | `CONTEXT_COMPACTION_V2_SUMMARY_PROMPT`           | 空，使用独立 V2 默认提示词 / Empty: built-in V2 prompt |
-| 预算提醒 / Budget reminders            | `CONTEXT_COMPACTION_V2_REMINDER_ENABLED`         | true                                                   |
-| 提醒提示词 / Reminder prompt           | `CONTEXT_COMPACTION_V2_REMINDER_PROMPT`          | 空，使用默认值 / Empty: built-in prompt                |
-| 摘要超时 / Summary timeout             | `CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS`          | 60 秒 / seconds                                        |
-| 工具预算 / Tool budgets                | `CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED`      | true (V2 saved chats only)                             |
-| 单个工具上限 / Individual tool limit   | `CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT`      | 10% of resolved `C`                                    |
-| 工具批次上限 / Tool batch limit        | `CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT`       | 30% of resolved `C`                                    |
-| 工具摘要提示词 / Tool summary prompt   | `CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT`      | Empty: built-in task-aware prompt                      |
-| 失败重试次数 / Summary retries         | `CONTEXT_COMPACTION_V2_MAX_RETRIES`              | 1                                                      |
+| 界面设置 / Setting                       | API / environment field                          | 默认值 / Default                                       |
+| ---------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| 模式 / Mode                              | `CONTEXT_COMPACTION_MODE`                        | 未设置，兼容旧开关 / Unset; legacy flag fallback       |
+| 全局缺省上下文长度 / Default window      | `CONTEXT_COMPACTION_DEFAULT_CONTEXT_WINDOW`      | 262144 tokens                                          |
+| 有效窗口比例 / Effective window          | `CONTEXT_COMPACTION_V2_EFFECTIVE_WINDOW_PERCENT` | 95%                                                    |
+| 自动压缩触发比例 / Trigger               | `CONTEXT_COMPACTION_V2_TRIGGER_PERCENT`          | 90%                                                    |
+| 提醒时剩余预算比例 / Reminder distance   | `CONTEXT_COMPACTION_V2_REMINDER_PERCENT`         | 总长度的 10% / 10% of the window                       |
+| 近期原文预算 / Recent original context   | `CONTEXT_COMPACTION_V2_RECENT_TOKENS`            | 20000 tokens                                           |
+| 摘要模型 / Summary model                 | `CONTEXT_COMPACTION_V2_MODEL`                    | 空，使用当前模型 / Empty: current model                |
+| 摘要输出上限 / Summary output limit      | `CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS`        | 空，继承摘要模型配置 / Empty: inherit summary model    |
+| 摘要输出比例 / Summary output percentage | `CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT`   | 摘要模型窗口的 5% / 5% of the summary model window     |
+| 摘要提示词 / Summary prompt              | `CONTEXT_COMPACTION_V2_SUMMARY_PROMPT`           | 空，使用独立 V2 默认提示词 / Empty: built-in V2 prompt |
+| 预算提醒 / Budget reminders              | `CONTEXT_COMPACTION_V2_REMINDER_ENABLED`         | true                                                   |
+| 提醒提示词 / Reminder prompt             | `CONTEXT_COMPACTION_V2_REMINDER_PROMPT`          | 空，使用默认值 / Empty: built-in prompt                |
+| 摘要超时 / Summary timeout               | `CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS`          | 60 秒 / seconds                                        |
+| 工具预算 / Tool budgets                  | `CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED`      | true (V2 saved chats only)                             |
+| 单个工具上限 / Individual tool limit     | `CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT`      | 10% of resolved `C`                                    |
+| 工具批次上限 / Tool batch limit          | `CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT`       | 30% of resolved `C`                                    |
+| 工具摘要提示词 / Tool summary prompt     | `CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT`      | Empty: built-in task-aware prompt                      |
+| 失败重试次数 / Summary retries           | `CONTEXT_COMPACTION_V2_MAX_RETRIES`              | 1                                                      |
 
 长度及输出上限必须为正整数。比例范围为 1–100（提醒可为 0），触发比例不得超过有效窗口比例；
 近期原文预算可为 0，但必须小于全局有效窗口。超时为 1–600 秒，重试为 0–5 次。
@@ -70,13 +71,16 @@ user input and unfinished tool groups remain protected and must still fit with i
 V2 默认提示词保留目标、约束、决定、已完成工作、失败、待办及必要文件／工具引用。
 自定义摘要提示词与原版独立，历史由后端附加为资料，不需要原版模板变量。
 提醒提示词可使用 `{remaining_tokens}`、`{threshold}`、`{input_budget}`；不会因提醒本身使请求超出预算。
-摘要输出上限留空时没有额外固定输出预留，单独指定摘要模型时使用该模型的参数和上下文长度。
+摘要 token 配置留空时继承摘要模型的输出配置，再与默认 5% 的百分比额度取较大值；两者都未显式配置时仍使用百分比额度。
+实际输出还受模型容量及工具分配额度约束，详见下文“摘要请求预算”。普通聊天的输出预留规则不变。
 
 The V2 summary preserves goals, constraints, decisions, progress, failures, next steps and necessary
 references. Custom summary instructions are independent of the legacy template; history is appended
 as data. Reminder variables include `{remaining_tokens}`, `{threshold}` and `{input_budget}`.
-A reminder is omitted if it would exceed the input budget. An empty summary output limit inherits
-the chosen summary model's configured limit, without an additional fixed reserve.
+A reminder is omitted if it would exceed the input budget. An empty summary token setting inherits
+the summary model's output setting, then takes the larger of that value and the percentage allowance
+(default 5%). Model capacity and tool allocations can lower the actual output. Ordinary chat output
+reservations stay unchanged; see Summary request budgets below.
 
 ## 预算提醒位置与缓存 / Reminder placement and caching
 
@@ -140,6 +144,60 @@ content has a conservative allowance. Provider tokenizers differ, so the UI labe
 Only single-call provider input usage for the same request fingerprint can calibrate an estimate;
 cumulative billing totals are never treated as window occupancy. Reload queries estimate saved
 history; live request events report the prepared request.
+
+## 摘要请求预算 / Summary request budgets
+
+此规则仅用于 V2 历史摘要和工具摘要，不改变上面的普通聊天输入预算。管理员在 V2 设置中调整
+“摘要输出预算比例”，默认 5%，必须为 1–100 的整数；不增加个人或会话覆盖。
+百分比以摘要模型自身解析后的窗口为分母，不能使用当前聊天模型窗口或剩余输入空间替代。
+
+These rules apply only to internal V2 history/tool summaries. The admin-only **Summary output budget (%)**
+defaults to 5 and accepts integers 1–100. Its denominator is the resolved summary model window,
+including base inheritance, global fallback and a smaller Ollama `num_ctx`, rather than the chat
+model window or remaining input. Ordinary chat budgets above are unchanged.
+
+```text
+Cs = resolved summary model context window
+Es = floor(Cs * effective_window_percent / 100)
+P  = floor(Cs * summary_output_percent / 100)
+A  = explicit summary token setting, else inherited summary model output setting, else 0
+R  = max(P, A)
+F  = fixed model/summary instructions + request framing + previous handoff, counted per chunk
+O  = min(R, floor((Es - F) / 3))
+summary input budget = Es - O
+```
+
+百分比额度和绝对值配置取较大值，不是互相取较小值；安全容量约束才会下调实际额度。
+工具摘要还必须受本次结果分配额度限制，来源、读取标识及其他包装先从额度中扣除。
+实际 `O` 写入供应商对应输出参数；没有固定的 8192 tokens 上限。窗口／固定内容变化时重新计算。
+
+The percentage and absolute settings take the larger value; capacity safeguards may then reduce it.
+Tool summaries also respect their actual result allocation after source/read identifiers and envelope
+overhead are deducted. The provider receives an explicit output cap `O`; there is no fixed 8192-token
+summary ceiling. Each chunk recalculates fixed overhead and available capacity.
+
+以摘要窗口 100000、有效比例 95%、摘要比例 5%，且固定内容未触发进一步下调为例：
+For a 100000-token summary window, 95% effective window and 5% output ratio, before any further
+capacity/tool restriction:
+
+| 绝对配置 / Absolute setting   | 实际输出额度 / Output allowance | 摘要输入预算 / Summary input budget |
+| ----------------------------- | ------------------------------: | ----------------------------------: |
+| 未设置或 2000 / Unset or 2000 |                            5000 |                               90000 |
+| 8000                          |                            8000 |                               87000 |
+
+摘要在供应商参数应用后仍执行独立的发送前预算检查，同时保留防止递归压缩的内部保护。
+输入计数包含完整系统提示、上一段摘要、当前文本片段及多模态额度；成功后才推进原文游标。
+供应商明确报上下文超限时，当前可变片段额度减半，从同一位置重新组装请求，并让后续分块沿用收紧后的额度。
+次数和超时沿用 V2 重试设置；不会反复发送相同的超限请求，也不会重执行工具。
+固定指令、已有摘要或单个不可拆媒体块仍无法容纳时，提示调整模型／配置；取消立即停止，原始内容保持完整。
+
+A separate trusted final-send guard checks summary requests after provider parameters while retaining
+recursion protection. Counts include all instructions, previous handoff, source fragments and media
+allowances. The source cursor advances only after success. Explicit provider context overflow halves
+the current variable fragment allowance, rebuilds from the same cursor, and keeps that smaller limit
+for subsequent chunks. Existing V2 retry/timeout settings apply; tools are never executed again.
+If fixed instructions, prior handoff or an indivisible media block cannot fit, an actionable error
+asks for a model/configuration change. Cancellation stops immediately and preserves original data.
 
 ## 工具结果预算 / Tool result budgets
 
@@ -213,7 +271,11 @@ The 10%/30% ratios are configurable project defaults.
 
 在聊天中输入 `/status` 并执行可打开状态面板，查看当前模型的占用、压缩阈值、窗口和剩余预算。
 启用工具预算时还显示后端计算的单个／批次上限及最近批次原始／处理后 token 数。
-回复状态区分工具摘要、不完整摘录与精确原文片段；即使关闭普通工具状态也显示。
+对话仅提示本轮工具结果新发生的摘要／不完整摘录及必要错误，即使关闭普通工具状态也显示。
+保留原文、精确回读及复用缓存不额外产生压缩提示，但仍计入状态面板中的预算和用量统计。
+完整批次统计独立保存，刷新后按模型、分支和源内容校验后恢复；不会仅凭可见提示统计，也不会把旧批次当成最新批次。
+以前的有效压缩记录和“查看原始工具结果”按钮保留在原回复，不在当前回复重复显示；刷新、续调及批准恢复按
+操作身份合并进度和完成结果。旧聊天按输出／调用身份识别归属，无法确定身份的旧记录保留原位，不删除历史。
 面板不是默认常驻显示。模型的压缩用最大上下文长度设为 `100000`，采用默认 95%／90% 且未配置
 输出额度时，应显示窗口 `100000`、阈值 `90000`（输入预算 `95000`）；全局 `262144` 仅在模型及其
 基础模型都没有配置长度时使用。OpenAI 兼容连接的模型前缀和预设路由不改变这项优先级。
@@ -226,8 +288,14 @@ V2 自动压缩会在对应助手消息上显示“正在压缩上下文”，�
 
 Run `/status` in the chat to open the status panel with the selected model's usage, trigger, window
 and remaining budget. Enabled tool budgets add backend-computed individual/batch limits and the last
-batch's original/processed token counts. Response statuses distinguish summaries, incomplete excerpts
-and exact passages and remain visible when ordinary tool statuses are disabled.
+batch's original/processed token counts. Only newly summarized/excerpted current-reply tool results
+and necessary errors show conversation notices, even with ordinary tool statuses disabled. Retained
+originals, exact reads and cache reuse are silent but still counted. Complete batch statistics are
+separately persisted and restored after model/branch/source validation, including silent and mixed
+batches; visible notices alone do not determine the latest batch. Valid earlier notices and raw-view
+buttons stay on their original replies; refresh, continuation and approvals merge progress/completion
+by operation identity. Legacy output/call identity identifies misplaced records; unknown legacy
+records remain in place and no stored history is deleted.
 The panel is not permanently visible by default. A model window of `100000`
 with default percentages and no output allowance gives a `90000` trigger and `95000` input budget.
 OpenAI connection prefixes and preset routing preserve model metadata precedence over the global
@@ -245,7 +313,7 @@ that accumulated usage, so it can exceed the model window without any individual
 
 V2 按完整轮次保留近期原文；较长工具循环可在完成的调用／结果组之间压缩，保护最新真实用户输入和未完成调用。
 不会截断原始消息。压缩后的摘要作为历史资料注入，不提升为系统指令。摘要模型容量较小时，按可容纳的块递进总结。
-单个不能容纳的源消息不能静默截断，按失败处理。
+文本可分片递进处理但不会遗漏原文；固定内容或不可拆媒体块无法容纳时按失败处理。
 
 独立的 `chat_context_checkpoint` 表记录聊天、模型、分支锚点、覆盖消息／输出、内容指纹、摘要与版本。
 写入时重新核验源内容并检查版本，编辑或并发修改不允许覆盖有效检查点；原始聊天表保留完整内容。
@@ -254,21 +322,24 @@ V2 按完整轮次保留近期原文；较长工具循环可在完成的调用�
 
 V2 keeps complete turns and may compact completed tool groups within a long turn. The latest real
 user input and unfinished calls stay intact. Summaries are historical data, not elevated system
-instructions. Smaller summary models use progressive chunks; a source item that cannot fit is
-reported as a failure rather than silently truncated. Independent checkpoints validate source
+instructions. Smaller summary models use progressive chunks without omitting source text; fixed
+content or indivisible media that cannot fit is reported as a failure rather than silently truncated. Independent checkpoints validate source
 fingerprints and versions when written, isolate models and branches, and preserve raw history.
 Chat deletion also removes V2 checkpoints.
 
 - 摘要超时、空结果、没有有效缩减或无法满足最终预算时，原请求仍在 `B` 内则保留原历史继续并提示；
   超出 `B` 则明确报错，需重试或调整模型、附件或配置。
-- 供应商明确返回上下文超限时，只有响应内容尚未输出才强制压缩并重试发送一次，不重新执行工具。
+- 普通聊天发送明确超限时，只有响应内容尚未输出才强制压缩并重试发送一次，不重新执行工具。
+- 生成摘要的请求明确超限时，按上文缩小源片段重试，次数采用摘要重试配置，不递归触发聊天压缩。
 - 取消或并发冲突不破坏原始历史与上一个有效检查点。
 - 手动压缩通过聊天输入区 `/compact`，按当前模式执行，生成过程中不可手动压缩，访问权限保持不变。
 
 Timeouts, empty summaries, no effective reduction and an over-budget result are failures. A request
 that still fits `B` proceeds unchanged with a warning; otherwise an actionable error asks for a retry
 or configuration/input adjustment. Explicit provider context-limit errors may trigger one forced
-compaction/send retry only before any content is delivered, without repeating tools. Cancellation
+compaction/send retry only before any content is delivered, without repeating tools. Summary-request
+overflow instead shrinks source fragments under the configured summary retry count, without recursive
+chat compaction. Cancellation
 and conflicting writes preserve raw history and the last valid checkpoint. `/compact` follows the
 selected mode and is unavailable while a response is active.
 

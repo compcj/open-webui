@@ -31,6 +31,11 @@ CONFIG_FIELDS = {
         'chat.context_compaction.v2.max_output_tokens',
         None,
     ),
+    'CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT': (
+        'summary_output_percent',
+        'chat.context_compaction.v2.summary_output_percent',
+        5,
+    ),
     'CONTEXT_COMPACTION_V2_SUMMARY_PROMPT': ('summary_prompt', 'chat.context_compaction.v2.summary_prompt', ''),
     'CONTEXT_COMPACTION_V2_REMINDER_ENABLED': ('reminder_enabled', 'chat.context_compaction.v2.reminder_enabled', True),
     'CONTEXT_COMPACTION_V2_REMINDER_PROMPT': ('reminder_prompt', 'chat.context_compaction.v2.reminder_prompt', ''),
@@ -69,6 +74,7 @@ class CompactionSettings(BaseModel):
     recent_tokens: int = Field(strict=True, default=20000, ge=0)
     summary_model: str = ''
     summary_max_output_tokens: int | None = Field(strict=True, default=None, gt=0)
+    summary_output_percent: int = Field(strict=True, default=5, ge=1, le=100)
     summary_prompt: str = ''
     reminder_enabled: bool = True
     reminder_prompt: str = ''

@@ -2236,6 +2236,7 @@ CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS = (
     if os.getenv('CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS')
     else None
 )
+CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT', '5'))
 CONTEXT_COMPACTION_V2_SUMMARY_PROMPT = os.getenv('CONTEXT_COMPACTION_V2_SUMMARY_PROMPT', '')
 CONTEXT_COMPACTION_V2_REMINDER_ENABLED = os.getenv('CONTEXT_COMPACTION_V2_REMINDER_ENABLED', 'True').lower() == 'true'
 CONTEXT_COMPACTION_V2_REMINDER_PROMPT = os.getenv('CONTEXT_COMPACTION_V2_REMINDER_PROMPT', '')
@@ -3195,6 +3196,7 @@ DEFAULT_CONFIG = {
     'chat.context_compaction.v2.recent_tokens': CONTEXT_COMPACTION_V2_RECENT_TOKENS,
     'chat.context_compaction.v2.model': CONTEXT_COMPACTION_V2_MODEL,
     'chat.context_compaction.v2.max_output_tokens': CONTEXT_COMPACTION_V2_MAX_OUTPUT_TOKENS,
+    'chat.context_compaction.v2.summary_output_percent': CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT,
     'chat.context_compaction.v2.summary_prompt': CONTEXT_COMPACTION_V2_SUMMARY_PROMPT,
     'chat.context_compaction.v2.reminder_enabled': CONTEXT_COMPACTION_V2_REMINDER_ENABLED,
     'chat.context_compaction.v2.reminder_prompt': CONTEXT_COMPACTION_V2_REMINDER_PROMPT,

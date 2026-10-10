@@ -37,7 +37,8 @@ async def test_socket_persists_lifecycle_but_not_usage(kind, persist):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('embedded,normalized', [(True, True), (True, False), (False, True)])
-async def test_status_survives_reload_in_both_history_stores(tmp_path, embedded, normalized):
+@pytest.mark.parametrize('tool_operation', [False, True])
+async def test_status_survives_reload_in_both_history_stores(tmp_path, embedded, normalized, tool_operation):
     base = declarative_base()
 
     class Chat(base):
@@ -92,6 +93,10 @@ async def test_status_survives_reload_in_both_history_stores(tmp_path, embedded,
     previous = {'action': 'web_search', 'done': True}
     start = {'action': 'context_compaction', 'done': False}
     done = {'action': 'context_compaction', 'done': True, 'before_tokens': 90000, 'after_tokens': 20000}
+    if tool_operation:
+        start.update(action='tool_result_compaction', operation_id='op', source_message_id='a', method='summary')
+        done.update(action='tool_result_compaction', operation_id='op', source_message_id='a', method='summary')
+    expected = [previous, done] if tool_operation else [previous, start, done]
     try:
         async with engine.begin() as connection:
             await connection.run_sync(base.metadata.create_all)
@@ -101,18 +106,39 @@ async def test_status_survives_reload_in_both_history_stores(tmp_path, embedded,
             if normalized:
                 session.add(ChatMessage(id='chat-a', content='original', status_history=[previous]))
             await session.commit()
-        for status in (start, done):
+        for status in (start, done, done, start) if tool_operation else (start, done):
             result = await namespace['add_message_status_to_chat_by_id_and_message_id'](table, 'chat', 'a', status)
             assert result is not None
         async with sessions() as session:
             chat = await session.get(Chat, 'chat')
             if embedded:
                 message = chat.chat['history']['messages']['a']
-                assert message['statusHistory'] == [previous, start, done]
+                assert message['statusHistory'] == expected
                 assert message['content'] == 'original'
             if normalized:
                 message = await session.get(ChatMessage, 'chat-a')
-                assert message.status_history == [previous, start, done]
+                assert message.status_history == expected
                 assert message.content == 'original'
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'data',
+    [
+        {'method': 'original', 'done': True},
+        {'method': 'read', 'done': True},
+        {'method': 'summary', 'done': True, 'source_message_id': 'older'},
+        {'method': 'summary', 'done': False, 'source_message_id': 'older'},
+    ],
+)
+async def test_socket_rejects_non_notifications_before_emit_and_save(data):
+    chats = SimpleNamespace(add_message_status_to_chat_by_id_and_message_id=AsyncMock())
+    sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
+    namespace = dict(Chats=chats, sio=sio, WEBSOCKET_MANAGER='', is_saved_chat_id=lambda id: id == 'chat')
+    load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
+    emitter = await namespace['get_event_emitter']({'user_id': 'owner', 'chat_id': 'chat', 'message_id': 'a'})
+    await emitter({'type': 'tool_result_compaction', 'data': {'action': 'tool_result_compaction', **data}})
+    sio.emit.assert_not_awaited()
+    chats.add_message_status_to_chat_by_id_and_message_id.assert_not_awaited()

@@ -1,3 +1,4 @@
+import copy
 import time
 import uuid
 from collections import Counter
@@ -23,6 +24,7 @@ from sqlalchemy import (
     delete,
     func,
     select,
+    update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -227,7 +229,13 @@ class ChatMessageTable:
         if 'embeds' in data:
             message.embeds = data.get('embeds')
         if 'meta' in data:
-            message.meta = data.get('meta')
+            meta = copy.deepcopy(data.get('meta'))
+            accounting = (message.meta or {}).get('tool_budget_accounting')
+            if accounting:
+                # Only the dedicated accounting writer may replace this map.
+                # A delayed completion/browser dual-write can carry an older copy.
+                meta = {**(meta or {}), 'tool_budget_accounting': copy.deepcopy(accounting)}
+            message.meta = meta
         if 'done' in data:
             message.done = data['done']
         if 'status_history' in data or 'statusHistory' in data:
@@ -267,6 +275,20 @@ class ChatMessageTable:
             updated_at=now,
         )
 
+    @staticmethod
+    async def _lock_message_writes(db: AsyncSession, composite_ids: list[str]) -> None:
+        if db.bind.dialect.name == 'sqlite' and composite_ids:
+            # SQLite ignores SELECT FOR UPDATE. A no-op write acquires its write
+            # lock before the read, also when a shared session has already begun.
+            # An incompatible prior read snapshot fails safely instead of overwriting.
+            with db.no_autoflush:
+                await db.execute(
+                    update(ChatMessage)
+                    .where(ChatMessage.id.in_(composite_ids))
+                    .values(updated_at=ChatMessage.updated_at)
+                    .execution_options(synchronize_session=False)
+                )
+
     async def upsert_message(
         self,
         message_id: str,
@@ -281,7 +303,13 @@ class ChatMessageTable:
             # Use composite ID: {chat_id}-{message_id}
             composite_id = f'{chat_id}-{message_id}'
 
-            message = await db.get(ChatMessage, composite_id)
+            await self._lock_message_writes(db, [composite_id])
+            message = await db.get(
+                ChatMessage,
+                composite_id,
+                populate_existing=True,
+                with_for_update=db.bind.dialect.name == 'postgresql',
+            )
             if message:
                 self._apply_message_data(message, data, now)
             else:
@@ -304,8 +332,14 @@ class ChatMessageTable:
 
         async with get_async_db_context(db) as db:
             now = int(time.time())
+            composite_ids = [f'{chat_id}-{message_id}' for message_id in messages]
+            await self._lock_message_writes(db, composite_ids)
             result = await db.execute(
-                select(ChatMessage).filter(ChatMessage.id.in_([f'{chat_id}-{message_id}' for message_id in messages]))
+                select(ChatMessage)
+                .filter(ChatMessage.id.in_(composite_ids))
+                .order_by(ChatMessage.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
             existing_by_id = {row.id: row for row in result.scalars().all()}
 

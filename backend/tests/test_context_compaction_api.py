@@ -398,3 +398,22 @@ async def test_tool_budget_admin_config_validates_persists_and_preserves_omissio
             '/config', headers={'authorization': 'user'}, json={'CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED': True}
         )
         assert unauthorized.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_summary_output_percent_admin_round_trip_and_old_client_omission(config_app):
+    import httpx
+
+    app, values = config_app
+    key = 'CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        headers = {'authorization': 'admin'}
+        assert (await client.get('/config', headers=headers)).json()[key] == 5
+        assert (await client.post('/config', headers={'authorization': 'user'}, json={key: 7})).status_code == 403
+        assert (await client.post('/config', headers=headers, json={key: 7})).json()[key] == 7
+        assert (await client.post('/config', headers=headers, json={'ENABLE_CONTEXT_COMPACTION': False})).json()[
+            key
+        ] == 7
+        assert values['chat.context_compaction.v2.summary_output_percent'] == 7
+        for invalid in (0, 101, True, '5', 1.5):
+            assert (await client.post('/config', headers=headers, json={key: invalid})).status_code == 422

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isVisibleToolResultStatus, mergeCompactionStatus } from '$lib/utils/context-compaction';
 	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-sonner';
 
@@ -1593,10 +1594,11 @@
 					type === 'context_compaction' ||
 					type === 'tool_result_compaction'
 				) {
-					if (message?.statusHistory) {
-						message.statusHistory.push(data);
-					} else {
-						message.statusHistory = [data];
+					if (
+						type !== 'tool_result_compaction' ||
+						isVisibleToolResultStatus(data, event.message_id, history.messages)
+					) {
+						message.statusHistory = mergeCompactionStatus(message.statusHistory ?? [], data);
 					}
 					if (type === 'context_compaction') {
 						handleContextCompactionStatus(data);

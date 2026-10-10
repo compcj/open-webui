@@ -280,25 +280,28 @@ status updates are disabled. Use synthetic history/provider replies for automate
 
 New regression locations:
 
-| Boundary                                                                                       | Tests                                                                                                                                           |
-| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Budget formulas, CJK, multimodal, grouping, summary failures and replay                        | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
-| Tail reminders, continuation deduplication, budget accounting and assistant prefills           | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
-| Responses conversion preserves stable instructions and trailing reminders                      | `backend/tests/test_openai_responses_payload.py`                                                                                                |
-| Checkpoint CAS, source edits, branch/model isolation and migration round trip                  | `backend/tests/test_context_compaction_v2_storage.py`                                                                                           |
-| Chat/model checkpoint cleanup with SQLite cascades disabled                                    | `backend/tests/test_context_compaction_cleanup.py`                                                                                              |
-| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata                  | `backend/tests/test_context_compaction_api.py`                                                                                                  |
-| Original algorithm, legacy threshold caps and off/V2 raw replay                                | `backend/tests/test_context_compaction_legacy.py`                                                                                               |
-| Provider context errors, bounded retry and streaming visibility                                | `backend/tests/test_context_compaction_dispatch.py`                                                                                             |
-| OpenAI preset/prefix routing with persisted 100000 window and 90000 trigger                    | `backend/tests/test_context_compaction_model_routing.py`                                                                                        |
-| Compaction socket events and status persistence in both chat stores                            | `backend/tests/test_context_compaction_status.py`                                                                                               |
-| Chat lifecycle events, branch isolation and localized response status                          | `src/lib/components/chat/Chat.context-compaction.test.ts`, `src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts`        |
-| Tool percentage validation, authenticated raw pages and stale viewer requests                  | `src/lib/utils/tool-results.test.ts`, `src/lib/components/chat/Messages/ResponseMessage/ToolResultViewer.test.ts`                               |
-| Native/approved/injected/code provenance, reader registration and untrusted metadata stripping | `backend/tests/test_tool_result_adapters.py`                                                                                                    |
-| Raw/cache identity races, source/branch validation, exact paging, ASGI ACL and migration       | `backend/tests/test_tool_result_storage.py`, `backend/tests/test_context_compaction_cleanup.py`, `backend/tests/test_context_compaction_api.py` |
-| Real storage + budget orchestration replay and exact-reader shrinking                          | `backend/tests/test_tool_result_budget_integration.py`                                                                                          |
-| History-first tool reservation, fair caps, summaries/excerpts and exact reread budgeting       | `backend/tests/test_tool_result_budget.py`                                                                                                      |
-| Mode compatibility, model inheritance and stale model/branch usage rejection                   | `src/lib/utils/context-compaction.test.ts`                                                                                                      |
+| Boundary                                                                                                        | Tests                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Budget formulas, CJK, multimodal, grouping, summary failures and replay                                         | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
+| Internal summary percentage/absolute budgets, final-send guards, lossless shrinking retries and state isolation | `backend/tests/test_context_compaction_summary_safety.py`                                                                                       |
+| Admin summary percentage validation and request payload                                                         | `src/lib/components/admin/Settings/Interface.context-compaction.test.ts`                                                                        |
+| Tail reminders, continuation deduplication, budget accounting and assistant prefills                            | `backend/tests/test_context_compaction_v2.py`                                                                                                   |
+| Responses conversion preserves stable instructions and trailing reminders                                       | `backend/tests/test_openai_responses_payload.py`                                                                                                |
+| Checkpoint CAS, source edits, branch/model isolation and migration round trip                                   | `backend/tests/test_context_compaction_v2_storage.py`                                                                                           |
+| Chat/model checkpoint cleanup with SQLite cascades disabled                                                     | `backend/tests/test_context_compaction_cleanup.py`                                                                                              |
+| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata                                   | `backend/tests/test_context_compaction_api.py`                                                                                                  |
+| Original algorithm, legacy threshold caps and off/V2 raw replay                                                 | `backend/tests/test_context_compaction_legacy.py`                                                                                               |
+| Provider context errors, bounded retry and streaming visibility                                                 | `backend/tests/test_context_compaction_dispatch.py`                                                                                             |
+| OpenAI preset/prefix routing with persisted 100000 window and 90000 trigger                                     | `backend/tests/test_context_compaction_model_routing.py`                                                                                        |
+| Compaction socket filtering, operation upserts and status persistence in both chat stores                       | `backend/tests/test_context_compaction_status.py`                                                                                               |
+| Chat lifecycle events, notification ownership/deduplication and localized response status                       | `src/lib/components/chat/Chat.context-compaction.test.ts`, `src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts`        |
+| Tool percentage validation, authenticated raw pages and stale viewer requests                                   | `src/lib/utils/tool-results.test.ts`, `src/lib/components/chat/Messages/ResponseMessage/ToolResultViewer.test.ts`                               |
+| Native/approved/injected/code provenance, reader registration and untrusted metadata stripping                  | `backend/tests/test_tool_result_adapters.py`                                                                                                    |
+| Raw/cache identity races, source/branch validation, exact paging, ASGI ACL and migration                        | `backend/tests/test_tool_result_storage.py`, `backend/tests/test_context_compaction_cleanup.py`, `backend/tests/test_context_compaction_api.py` |
+| Durable silent/mixed accounting, source validation, dual-store reload and concurrent single/bulk writes         | `backend/tests/test_tool_budget_accounting.py`                                                                                                  |
+| Real storage + budget orchestration replay and exact-reader shrinking                                           | `backend/tests/test_tool_result_budget_integration.py`                                                                                          |
+| History-first tool reservation, fair caps, summaries/excerpts and exact reread budgeting                        | `backend/tests/test_tool_result_budget.py`                                                                                                      |
+| Mode compatibility, model inheritance and stale model/branch usage rejection                                    | `src/lib/utils/context-compaction.test.ts`                                                                                                      |
 
 Set `DATA_DIR`, `STATIC_DIR`, `DATABASE_URL`, and a synthetic `WEBUI_SECRET_KEY` to a disposable
 directory before any real model/router/application imports. For helper checks, use
@@ -309,11 +312,12 @@ synthetic auth/storage dependencies, not a complete application. Provider tests 
 
 ```sh
 python -m pytest backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_v2_storage.py backend/tests/test_context_compaction_api.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_context_compaction_legacy.py backend/tests/test_context_compaction_cleanup.py -q
+python -m pytest backend/tests/test_context_compaction_summary_safety.py -q
 python -m pytest backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_status.py backend/tests/test_openai_responses_payload.py backend/tests/test_web_tool_citations.py backend/tests/test_image_tool_context.py -q
-python -m pytest backend/tests/test_tool_result_budget.py backend/tests/test_tool_result_budget_integration.py backend/tests/test_tool_result_storage.py backend/tests/test_tool_result_adapters.py backend/tests/test_context_compaction_status.py -q
+python -m pytest backend/tests/test_tool_result_budget.py backend/tests/test_tool_result_budget_integration.py backend/tests/test_tool_budget_accounting.py backend/tests/test_tool_result_storage.py backend/tests/test_tool_result_adapters.py backend/tests/test_context_compaction_status.py -q
 python -m pytest backend/tests -q
 npm run test:frontend -- --run --dir src src/lib/utils/tool-results.test.ts src/lib/components/chat/Messages/ResponseMessage/ToolResultViewer.test.ts
-npm run test:frontend -- --run --dir src src/lib/utils/context-compaction.test.ts src/lib/components/chat/Chat.context-compaction.test.ts src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts
+npm run test:frontend -- --run --dir src src/lib/components/admin/Settings/Interface.context-compaction.test.ts src/lib/utils/context-compaction.test.ts src/lib/components/chat/Chat.context-compaction.test.ts src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts
 npm run test:frontend -- --run --dir src
 npm run check
 ```
@@ -353,12 +357,21 @@ git diff --check
 Also check any other changed Python/frontend files with the same targeted tools, and validate Markdown
 relative links. Do not count a no-tests result, formatting, or AST isolation as a full runtime check.
 Compare existing `npm run check` failures against the same base revision before attributing them to V2.
+The summary-safety baseline at `b9033189f` has 6808 errors and 197 warnings in 344 files; compare normalized
+file/message diagnostics as well as totals. Record actual results and any untested live provider/browser
+paths in the delivery report. Use an explicit disposable `--basetemp` if system temp ACLs prevent pytest
+fixtures. Summary percentage configuration and optional event fields require no schema migration;
+keep the existing storage migration checks below for their original revisions.
 
 Manual acceptance with an isolated running application and test model connection:
 
 1. Start with the legacy enable flag both false and true and no mode; verify off/legacy mapping.
    Select each mode, reload settings, and verify inactive-mode values remain. A non-admin cannot
-   save config. Test invalid percentages and a summary output limit that leaves no usable input.
+   save config. Test invalid percentages. Save/reload summary output percentage (default 5) and the
+   optional absolute token setting; omitted API fields must preserve stored values. For a 100000-token
+   summary model and 95% effective window, no absolute cap or 2000 gives 5000 output/90000 input;
+   8000 gives 8000/87000 before further capacity/tool constraints. Oversized output settings must be
+   lowered by the per-chunk safety ceiling; impossible fixed/media content must fail without data loss.
 2. Edit a model's `meta.context_window`, clear it to inherit, change the base model, export/import,
    and verify effective length. Confirm provider requests contain no context metadata parameter.
 3. Exercise saved chats with Chinese history, attachments, retrieval, skills and tool schemas.
@@ -378,6 +391,10 @@ Manual acceptance with an isolated running application and test model connection
    over-budget requests show a recoverable error. Manual `/compact` is blocked while generating. For browser-direct models, require the caller's own
    socket for manual summary dispatch and verify stored-history usage still loads before reconnect.
    A direct model ID/base pointer must not load a private server model's parameters.
+   Inspect internal summary sends after provider defaults/parameter conversion: output must be explicit
+   and full input must fit its own summary-model budget. Simulate context errors in exceptions and HTTP
+   responses; verify the retry has a smaller source fragment at the same cursor, later chunks retain
+   the smaller limit, all original text is eventually processed, and cancellation writes no checkpoint.
 7. Check settings/model forms and status UI in Chinese/English, narrow screens, light/dark mode,
    keyboard focus and input errors. Synthetic component/browser tests supplement this walkthrough;
    live provider behavior still needs an available configured model.
@@ -395,8 +412,15 @@ Tool-result budget acceptance extends the walkthrough above:
    Verify raw results stay unchanged, checkpoints do not restore covered output, and overflow retries
    do not execute tools again. Try a smaller summary model and timeout/empty/oversized summaries;
    excerpts must be exact, explicitly incomplete, and include a readable raw ID inside the cap.
-4. Disable ordinary model tool statuses. Verify tool summaries/excerpts stay visible in English and
-   Chinese. Open the original viewer with keyboard navigation on narrow/light/dark layouts; check
+4. With ordinary model tool statuses both enabled and disabled, verify current new summaries/excerpts
+   and necessary errors stay visible in English/Chinese. Original results, exact rereads and cached
+   projections must add no compaction notice. Start a later turn: prior notices/raw-view buttons stay
+   on the original reply, and refresh/approval/continuation merges one operation's progress/completion.
+   Verify `/status` keeps all-original, exact-read and mixed batches after reload, and that a new silent
+   batch replaces older summary statistics. Later assistant output, periodic browser saves and delayed
+   normalized single/bulk writes must preserve the newest snapshot; source
+   edits and sibling branches must not reuse it.
+   Test legacy events with output/call provenance and unknown legacy records. Open the original viewer with keyboard navigation on narrow/light/dark layouts; check
    plain-text escaping, loading/error/retry, search and bounded paging. Editing source content,
    switching to sibling branches and accessing another chat must invalidate or deny raw reads.
 5. Call `read_tool_result` repeatedly and verify exact bounded JSON pages, positions/cursors and no

@@ -75,10 +75,18 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
   confuse cumulative billing tokens with the automatic trigger.
 - Expose V2 tool budgets as admin-only settings (enabled by default within V2, 10% individual/30%
   batch of backend-resolved `C`; integer `1 <= individual <= batch <= 100`). Preserve inactive values.
-  Render `tool_result_compaction` summary/excerpt status even when tool statuses are disabled, and
-  use backend metadata for counts. Original-result viewing uses authenticated, branch-scoped bounded
+  Render only new current-reply `tool_result_compaction` summary/excerpt operations and necessary
+  errors, even when tool statuses are disabled. Original/exact-read/cache bookkeeping is silent.
+  Filter by `source_message_id`; legacy output/call IDs may prove another owner, while unknown legacy
+  records stay in place. Apply the same filter to raw-view buttons. Upsert `operation_id` progress/results
+  without regressing completed operations; preserve valid records on earlier replies. Read full batch
+  counts from backend usage, including after refresh, rather than counting visible notices. Original-result viewing uses authenticated, branch-scoped bounded
   pages from `/api/v1/chats/{chat_id}/tool-results/{result_id}`; render text without HTML execution,
   handle stale requests/errors and distinguish summaries, incomplete excerpts and exact rereads.
+- Expose `CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT` as an admin-only integer 1–100, default 5.
+  Its denominator is the resolved summary-model window. Explain that percentage tokens and the
+  explicit/inherited absolute output setting take the larger value, then capacity/tool limits may lower
+  the actual allowance. Ordinary chat output reservations are unchanged. Keep Chinese/English in sync.
 - `/compact` follows the global mode and stays disabled during generation. Maintain Chinese and
   English labels, parameter validation feedback, inherited values and narrow-screen controls.
 - See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).

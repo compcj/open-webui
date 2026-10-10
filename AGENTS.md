@@ -76,6 +76,13 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
   batch caps fairly. Preserve raw results, call/result pairing and checkpoint source identities.
   Tool summaries/excerpts are request projections; exact raw rereads remain exact and branch-scoped.
   Off/legacy/disabled behavior is unchanged; retries must never execute tools again.
+- Keep tool budget accounting separate from conversation notices. Only newly summarized/excerpted
+  results belonging to the current reply emit compaction notices; original/exact/cached results remain
+  in usage accounting, including after reload. Persist complete batch statistics separately from notices;
+  validate their model, branch and source identity. Preserve source-reply records and deduplicate progress.
+- Internal V2 summaries keep recursion protection and an independent final-send budget guard. Resolve
+  the summary model's own window, reserve bounded output, and shrink source chunks on explicit overflow;
+  ordinary chat budgets remain independent. Never discard raw history or rerun tools on summary retries.
 - Trace model `meta.context_window`, admin settings, provider sends, continuation flows and usage
   events together. See [feature guide](docs/context-compaction.md), scoped frontend/backend rules,
   and [verification commands](docs/DEVELOPMENT.md#context-compaction-verification).

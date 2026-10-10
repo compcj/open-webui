@@ -120,7 +120,8 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 - Persist compaction lifecycle events in message status history, including the normalized
   `chat_message.status_history` read path, so reloads retain progress/results without altering input.
 - Count final input, tools and multimodal allowances with an explicit source. Calibrate only matched
-  single-call input usage, never cumulative billing totals. Reserve configured output only.
+  single-call input usage, never cumulative billing totals. Ordinary chat reserves configured output
+  only; internal V2 summaries use their separate percentage/absolute output calculation below.
 - Append dynamic budget reminders after the existing messages/tool results, preserving their order
   and the stable prefix. Continuations replace the previous request-local reminder, never persist it
   in raw history. Responses conversion must keep late system messages in `input`, not overwrite
@@ -143,8 +144,28 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
   `read_tool_result` passages may be resized but never summarized. Register this auxiliary tool only
   from trusted saved-chat V2 state. Raw reads require chat access, current branch ancestry and unchanged
   sources. Cache projections by model/branch/task/policy/budget; no transaction spans model generation.
-  Persist tool-result status metadata, clean both tool tables on chat deletion, and preserve off/legacy
+  Account for all results but emit notices only for newly summarized/excerpted current-reply results.
+  Originals, exact reads and cached projections are silent; historical results never notify on a later
+  reply. Include source message and stable operation identity, and upsert progress/completion in both
+  embedded and normalized status stores without regressing a completed operation. Retain old records.
+  Persist full batch accounting separately in message metadata, preserving it through later tool/assistant
+  updates, browser whole-history saves and normalized single/bulk writes. Serialize or guard the final
+  write so a stale payload cannot replace a newer snapshot. Restore `/status` from a
+  model/branch/source-validated snapshot, including silent and mixed
+  batches; never infer complete accounting from only visible notices.
+  Clean both tool tables on chat deletion, and preserve off/legacy
   and disabled-tool-budget behavior. Neither projection nor overflow retry re-executes tools.
+- Internal history/tool summaries share an explicit purpose and trusted request-state budget guard;
+  do not infer purpose from prompt text or enable guards from client task metadata. Resolve summary
+  window `Cs`, effective window `Es`, `P=floor(Cs*summary_output_percent/100)` (default 5%, integer
+  1–100), and `A` from explicit summary output then inherited model output then zero. Choose
+  `R=max(P,A)`, and per chunk `O=min(R,floor((Es-F)/3))` where `F` includes fixed instructions/framing
+  and previous handoff. Tool summaries additionally cap `O` at their allocation minus reference overhead.
+  Send an explicit provider output cap and require full input <= `Es-O`, including after provider
+  parameters are applied. Keep this non-recursive and detach mutable summary request state.
+  Explicit context overflow rebuilds at the same source cursor with half the variable fragment budget,
+  retains that smaller budget for later chunks, and uses existing timeout/retry limits. Advance the
+  cursor only after success; reject fixed/media content that cannot fit. Never truncate raw history.
 - On timeout/empty/no-reduction/oversized summaries, continue unchanged only when the request fits
   its input budget; otherwise return an actionable error. Retry explicit provider overflow once
   only before content is delivered; never re-execute tools. Cancellation preserves valid history.

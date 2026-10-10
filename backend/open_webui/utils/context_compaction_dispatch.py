@@ -39,10 +39,13 @@ def is_context_limit_error(error: Any) -> bool:
 
 
 async def apply_context_compaction(request, user, payload: dict, metadata: dict | None, model_id: str) -> dict:
-    from open_webui.utils.context_compaction_v2 import is_internal_compaction, prepare_v2_request
+    from open_webui.utils.context_compaction_v2 import SummaryRequestGuard, is_internal_compaction, prepare_v2_request
 
     state = getattr(request.state, 'context_compaction', None)
-    if state and state.get('mode') == 'v2' and not is_internal_compaction():
+    summary_guard = getattr(request.state, 'context_compaction_summary', None)
+    if isinstance(summary_guard, SummaryRequestGuard):
+        payload = summary_guard.enforce(payload, model_id)
+    elif state and state.get('mode') == 'v2' and not is_internal_compaction():
         # Provider-owned conversation history cannot be measured or compacted locally.
         payload.pop('previous_response_id', None)
         models = request.app.state.MODELS

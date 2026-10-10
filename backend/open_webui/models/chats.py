@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import time
@@ -14,7 +15,7 @@ from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
-from open_webui.models.chat_context_checkpoints import ChatContextCheckpoint
+from open_webui.models.chat_context_checkpoints import ChatContextCheckpoint, read_snapshot_in_session
 from open_webui.models.chat_tool_results import ChatToolResult, ChatToolResultContext
 from open_webui.models.folders import Folders
 from open_webui.models.tags import Tag, TagModel, Tags
@@ -735,7 +736,23 @@ class ChatTable:
                 updated = {**stored, **chat}
                 if 'history' in chat:
                     # The caller built its history from an earlier read; merge so messages saved since then survive.
-                    updated['history'] = self.merge_history(stored.get('history'), chat['history'])
+                    existing_history = copy.deepcopy(stored.get('history') or {})
+                    messages = existing_history.setdefault('messages', {})
+                    incoming_ids = list((chat['history'] or {}).get('messages') or {})
+                    if incoming_ids:
+                        rows = await session.execute(
+                            select(ChatMessage.id, ChatMessage.meta).where(
+                                ChatMessage.chat_id == id,
+                                ChatMessage.id.in_([f'{id}-{message_id}' for message_id in incoming_ids]),
+                            )
+                        )
+                        for row_id, row_meta in rows:
+                            accounting = (row_meta or {}).get('tool_budget_accounting')
+                            if accounting:
+                                message_id = row_id[len(id) + 1 :]
+                                message = messages.setdefault(message_id, {})
+                                message['meta'] = {**(message.get('meta') or {}), 'tool_budget_accounting': accounting}
+                    updated['history'] = self.merge_history(existing_history, chat['history'])
 
                 updated = self._clean_null_bytes(updated)
                 chat_item.chat = updated
@@ -921,6 +938,14 @@ class ChatTable:
         }
 
         for message_id, message in merged.items():
+            accounting = ((existing.get(message_id) or {}).get('meta') or {}).get('tool_budget_accounting')
+            if accounting:
+                message['meta'] = {**(message.get('meta') or {}), 'tool_budget_accounting': copy.deepcopy(accounting)}
+            elif 'tool_budget_accounting' in (message.get('meta') or {}):
+                # Browser payloads cannot create server accounting snapshots.
+                message['meta'] = {
+                    key: value for key, value in message['meta'].items() if key != 'tool_budget_accounting'
+                }
             parent_id = message.get('parentId')
             if parent_id in merged:
                 merged[parent_id]['childrenIds'].append(message_id)
@@ -980,6 +1005,18 @@ class ChatTable:
         messages = history.setdefault('messages', {})
 
         if message_id in messages:
+            accounting = (messages[message_id].get('meta') or {}).get('tool_budget_accounting')
+            if accounting and 'meta' in message:
+                # Server accounting must survive subsequent tool/assistant meta
+                # updates and cannot be replaced by a stale browser message.
+                message = {
+                    **message,
+                    'meta': {
+                        **(messages[message_id].get('meta') or {}),
+                        **(message.get('meta') or {}),
+                        'tool_budget_accounting': accounting,
+                    },
+                }
             messages[message_id] = {
                 **messages[message_id],
                 **message,
@@ -1166,6 +1203,11 @@ class ChatTable:
                 self._repair_chat_current_id(chat)
 
                 history = chat.get('history', {})
+                normalized = await session.get(ChatMessage, f'{id}-{message_id}')
+                accounting = (normalized.meta or {}).get('tool_budget_accounting') if normalized else None
+                if accounting:
+                    existing = history.setdefault('messages', {}).setdefault(message_id, {})
+                    existing['meta'] = {**(existing.get('meta') or {}), 'tool_budget_accounting': accounting}
                 saved_message = self.upsert_message_to_history(history, message_id, message)
                 chat['history'] = history
                 chat_item.chat = chat  # chat is a fresh dict when the column was empty
@@ -1238,6 +1280,74 @@ class ChatTable:
         except Exception:
             return None
 
+    async def save_tool_budget_accounting(self, id: str, message_id: str, accounting: dict) -> bool:
+        """Atomically save complete batch accounting apart from visible statuses."""
+        from open_webui.utils.context_compaction_v2 import branch_messages, digest, tool_accounting_refs_match
+
+        if (
+            not isinstance(accounting, dict)
+            or not isinstance(accounting.get('model'), str)
+            or not accounting['model']
+            or accounting.get('branch_id') != message_id
+            or not isinstance(accounting.get('recorded_at'), int)
+            or accounting['recorded_at'] <= 0
+            or not isinstance(accounting.get('source_refs'), list)
+            or not accounting['source_refs']
+            or not isinstance(accounting.get('last_tool_batch'), dict)
+            or digest(accounting['source_refs']) != accounting.get('source_fingerprint')
+        ):
+            return False
+        try:
+            async with get_async_db_context() as session:
+                if session.bind.dialect.name == 'sqlite':
+                    # SQLite SELECT FOR UPDATE is a no-op. Acquire its write lock
+                    # before reading so competing snapshots cannot overwrite newer accounting.
+                    await session.execute(text('BEGIN IMMEDIATE'))
+                chat_item = await session.get(
+                    Chat,
+                    id,
+                    populate_existing=True,
+                    with_for_update=session.bind.dialect.name == 'postgresql',
+                )
+                if chat_item is None:
+                    return False
+                snapshot = await read_snapshot_in_session(session, id, lock=True)
+                chain = branch_messages(snapshot['messages_map'], message_id) if snapshot else []
+                if (
+                    not chain
+                    or [ref.get('id') for ref in accounting['source_refs']] != [message['id'] for message in chain]
+                    or not tool_accounting_refs_match(accounting['source_refs'], snapshot['messages_map'])
+                ):
+                    return False
+                message = await session.get(
+                    ChatMessage,
+                    f'{id}-{message_id}',
+                    populate_existing=True,
+                    with_for_update=session.bind.dialect.name == 'postgresql',
+                )
+                chat = copy.deepcopy(chat_item.chat or {})
+                embedded = (chat.get('history') or {}).get('messages', {}).get(message_id)
+                if message is None and embedded is None:
+                    return False
+                meta = {**((embedded or {}).get('meta') or {}), **((message.meta if message else None) or {})}
+                entries = dict(meta.get('tool_budget_accounting') or {})
+                previous = entries.get(accounting['model']) or {}
+                if previous.get('recorded_at', 0) > accounting['recorded_at']:
+                    return False
+                entries[accounting['model']] = copy.deepcopy(accounting)
+                meta['tool_budget_accounting'] = entries
+                if message is not None:
+                    message.meta = copy.deepcopy(meta)
+                if embedded is not None:
+                    embedded['meta'] = copy.deepcopy(meta)
+                    chat_item.chat = chat
+                    flag_modified(chat_item, 'chat')
+                await session.commit()
+                return True
+        except Exception:
+            log.warning('Unable to persist tool-budget accounting for a saved message', exc_info=True)
+            return False
+
     async def add_message_status_to_chat_by_id_and_message_id(
         self, id: str, message_id: str, status: dict
     ) -> ChatModel | None:
@@ -1257,7 +1367,7 @@ class ChatTable:
                 self._repair_chat_current_id(chat)
                 history = chat.get('history', {})
 
-                # Reloads prefer normalized messages. Append to both stores in
+                # Reloads prefer normalized messages. Update both stores in
                 # this transaction so socket statuses survive reload/continuation.
                 message = await session.get(
                     ChatMessage,
@@ -1271,7 +1381,22 @@ class ChatTable:
                     or (embedded_message or {}).get('statusHistory')
                     or []
                 )
-                status_history.append(status)
+                operation_id = status.get('operation_id') if status.get('action') == 'tool_result_compaction' else None
+                matching = next(
+                    (
+                        i
+                        for i, previous in enumerate(status_history)
+                        if operation_id
+                        and previous.get('action') == 'tool_result_compaction'
+                        and previous.get('operation_id') == operation_id
+                        and previous.get('source_message_id') == status.get('source_message_id')
+                    ),
+                    None,
+                )
+                if matching is None:
+                    status_history.append(status)
+                elif not (status_history[matching].get('done') and not status.get('done')):
+                    status_history[matching] = {**status_history[matching], **status}
                 if message is not None:
                     message.status_history = status_history
                     message.updated_at = int(time.time())

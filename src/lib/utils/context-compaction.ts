@@ -88,6 +88,12 @@ export interface ToolResultStatus {
 	allocated_tokens?: number;
 	estimate_source?: string;
 	branch_id?: string;
+	source_message_id?: string;
+	operation_id?: string;
+	output_id?: string;
+	call_id?: string;
+	reused?: boolean;
+	error?: boolean;
 	done: boolean;
 }
 
@@ -97,3 +103,53 @@ export const isValidToolBudgetPercent = (single: number, batch: number): boolean
 	single >= 1 &&
 	single <= batch &&
 	batch <= 100;
+
+// Old chats retain their records; only positive provenance hides a misplaced one.
+export const isVisibleToolResultStatus = (
+	status: any,
+	messageId: string,
+	messages: Record<string, any> = {}
+): boolean => {
+	if (status?.source_message_id && status.source_message_id !== messageId) return false;
+	if (!status?.source_message_id && (status?.output_id || status?.call_id)) {
+		const owners = Object.entries(messages)
+			.filter(([, message]) => {
+				const output = Array.isArray(message?.output) ? message.output : [];
+				const sidecars = message?.tool_results ?? message?.meta?.tool_results ?? [];
+				const items = [
+					...output.flatMap((item: any, index: number) =>
+						['function_call_output', 'open_webui:code_interpreter'].includes(item?.type)
+							? [{ ...item, id: item.id || `output-${index}` }]
+							: []
+					),
+					...(Array.isArray(sidecars) ? sidecars : [])
+				];
+				return items.some(
+					(item: any) =>
+						(!status.output_id || item?.id === status.output_id) &&
+						(!status.call_id || (item?.call_id || item?.id) === status.call_id)
+				);
+			})
+			.map(([id]) => id);
+		if (owners.length && !owners.includes(messageId)) return false;
+	}
+	if (status?.error) return true;
+	if (status?.reused || ['original', 'read'].includes(status?.method)) return false;
+	return ['summary', 'excerpt'].includes(status?.method) || (!status?.done && !status?.method);
+};
+
+export const mergeCompactionStatus = (history: any[], status: any): any[] => {
+	const result = [...history];
+	const index =
+		status?.action === 'tool_result_compaction' && status?.operation_id
+			? result.findIndex(
+					(entry) =>
+						entry?.action === 'tool_result_compaction' &&
+						entry.operation_id === status.operation_id &&
+						entry.source_message_id === status.source_message_id
+				)
+			: -1;
+	if (index < 0) result.push(status);
+	else if (!(result[index]?.done && !status?.done)) result[index] = { ...result[index], ...status };
+	return result;
+};
