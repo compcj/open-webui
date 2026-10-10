@@ -65,6 +65,9 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
   usage; never substitute cumulative billing totals for V2 occupancy.
 - Browser-direct manual compaction sends the selected descriptor and current socket ID; usage queries
   send the descriptor without depending on socket readiness. Keep server-model requests compatible.
+- Render compaction lifecycle events in the corresponding response's localized status history,
+  including when tool status updates are disabled. `/status` shows backend budget details; do not
+  confuse cumulative billing tokens with the automatic trigger.
 - `/compact` follows the global mode and stays disabled during generation. Maintain Chinese and
   English labels, parameter validation feedback, inherited values and narrow-screen controls.
 - See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).

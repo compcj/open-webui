@@ -195,11 +195,14 @@
 	$: localizedModelName = model ? resolveLocalizedModelName(model, $i18n.language) : message.model;
 	$: model = $models.find((m) => m.id === message.model);
 
-	$: statusEntries = message?.statusHistory ?? [...(message?.status ? [message?.status] : [])];
-	$: hasVisibleStatus =
-		(model?.info?.meta?.capabilities?.status_updates ?? true) &&
-		statusEntries.length > 0 &&
-		!(statusEntries.at(-1)?.hidden ?? false);
+	$: statusEntries = (
+		message?.statusHistory ?? [...(message?.status ? [message?.status] : [])]
+	).filter(
+		(status) =>
+			status?.action === 'context_compaction' ||
+			(model?.info?.meta?.capabilities?.status_updates ?? true)
+	);
+	$: hasVisibleStatus = statusEntries.length > 0 && !(statusEntries.at(-1)?.hidden ?? false);
 	$: visibleResponseContent =
 		getOutputText(message.output) || removeAllDetails(message.content ?? '');
 	$: hasResponseContent = Boolean((message.content ?? '').trim() || message.output?.length);
@@ -720,9 +723,7 @@
 			<div>
 				<div class="chat-{message.role} w-full min-w-full">
 					<div>
-						{#if model?.info?.meta?.capabilities?.status_updates ?? true}
-							<StatusHistory statusHistory={message?.statusHistory} />
-						{/if}
+						<StatusHistory statusHistory={statusEntries} />
 
 						{#if message?.embeds && message.embeds.length > 0}
 							<div

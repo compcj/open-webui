@@ -1256,10 +1256,26 @@ class ChatTable:
                 self._repair_chat_current_id(chat)
                 history = chat.get('history', {})
 
-                if message_id in history.get('messages', {}):
-                    status_history = history['messages'][message_id].get('statusHistory', [])
-                    status_history.append(status)
-                    history['messages'][message_id]['statusHistory'] = status_history
+                # Reloads prefer normalized messages. Append to both stores in
+                # this transaction so socket statuses survive reload/continuation.
+                message = await session.get(
+                    ChatMessage,
+                    f'{id}-{message_id}',
+                    populate_existing=True,
+                    with_for_update=session.bind.dialect.name == 'postgresql',
+                )
+                embedded_message = history.get('messages', {}).get(message_id)
+                status_history = list(
+                    (message.status_history if message and message.status_history is not None else None)
+                    or (embedded_message or {}).get('statusHistory')
+                    or []
+                )
+                status_history.append(status)
+                if message is not None:
+                    message.status_history = status_history
+                    message.updated_at = int(time.time())
+                if embedded_message is not None:
+                    embedded_message['statusHistory'] = status_history
 
                 chat['history'] = history
                 chat_item.chat = chat

@@ -89,8 +89,15 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 - Browser-direct compaction uses request-local model descriptors. Manual summaries require the
   authenticated user's own live socket; stored-history usage queries have no dispatch side effect.
   Never resolve private server model parameters through a direct descriptor's ID or base-model pointer.
+- Persist compaction lifecycle events in message status history, including the normalized
+  `chat_message.status_history` read path, so reloads retain progress/results without altering input.
 - Count final input, tools and multimodal allowances with an explicit source. Calibrate only matched
   single-call input usage, never cumulative billing totals. Reserve configured output only.
+- Append dynamic budget reminders after the existing messages/tool results, preserving their order
+  and the stable prefix. Continuations replace the previous request-local reminder, never persist it
+  in raw history. Responses conversion must keep late system messages in `input`, not overwrite
+  leading `instructions`. Omit optional reminders when they exceed the input budget or would
+  displace an assistant prefill (`continue_final_message`).
 - Preserve latest real user input, runtime instructions, incomplete calls and call/result pairing.
   Compact complete groups, never truncate raw messages. Persist completed continuation outputs
   before checkpoint validation, and prevent replay from restoring already covered tool output.

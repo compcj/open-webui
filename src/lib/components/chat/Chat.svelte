@@ -1588,14 +1588,15 @@
 			if (message) {
 				const data = event?.data?.data ?? null;
 
-				if (type === 'status') {
+				if (type === 'status' || type === 'context_compaction') {
 					if (message?.statusHistory) {
 						message.statusHistory.push(data);
 					} else {
 						message.statusHistory = [data];
 					}
-				} else if (type === 'context_compaction') {
-					handleContextCompactionStatus(data);
+					if (type === 'context_compaction') {
+						handleContextCompactionStatus(data);
+					}
 				} else if (type === 'chat:active') {
 					if (!data?.active) {
 						taskIds = null;

@@ -1,6 +1,7 @@
 """Pure V2 contracts; imports deliberately avoid application/database startup."""
 
 import asyncio
+import copy
 import importlib
 import sys
 import unittest
@@ -502,15 +503,72 @@ class EngineReuseTests(IsolatedCase):
         self.assertEqual(store.save_checkpoint.await_count, 0)
         self.assertTrue(any(data.get('error') and 'reduce' in data.get('description', '') for _, data in events))
 
-    def test_reminder_is_counted_in_final_usage(self):
+    def test_reminder_preserves_message_prefix_and_is_counted_in_final_usage(self):
         m, request, payload, store, events = self.setup_engine(context=40000)
+        original = copy.deepcopy(payload)
         request.state.context_compaction['settings'] = request.state.context_compaction['settings'].model_copy(
             update={'reminder_enabled': True, 'reminder_percent': 100}
         )
         result = asyncio.run(m.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
-        self.assertTrue(result['messages'][0]['content'].startswith('Context budget reminder:'))
+        self.assertEqual(result['messages'][:-1], original['messages'])
+        self.assertEqual(result['messages'][-1]['role'], 'system')
+        self.assertTrue(result['messages'][-1]['content'].startswith('Context budget reminder:'))
+        self.assertEqual(payload, original)
         self.assertEqual(request.state.context_compaction['last_usage']['tokens'], m.estimate_payload_tokens(result))
         self.assertEqual(store.save_checkpoint.await_count, 0)
+
+    def test_tool_continuations_replace_old_reminder_after_complete_tool_results(self):
+        m, request, payload, store, events = self.setup_engine(context=40000)
+        snapshot = copy.deepcopy(store.read_snapshot.return_value)
+        request.state.context_compaction['settings'] = request.state.context_compaction['settings'].model_copy(
+            update={'reminder_enabled': True, 'reminder_percent': 100}
+        )
+        result = asyncio.run(m.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        expected_messages = list(payload['messages'])
+        for call_id in ('first', 'second'):
+            previous_reminder = request.state.context_compaction['reminder_message']
+            tool_group = [
+                {
+                    'role': 'assistant',
+                    'content': '',
+                    'tool_calls': [
+                        {'id': call_id, 'type': 'function', 'function': {'name': 'search', 'arguments': '{}'}}
+                    ],
+                },
+                {'role': 'tool', 'tool_call_id': call_id, 'content': 'new evidence ' * 50},
+            ]
+            expected_messages.extend(tool_group)
+            followup = {**result, 'messages': [*result['messages'], *tool_group]}
+            result = asyncio.run(m.prepare_v2_request(request, None, followup, {}, 'model', {'model': {}}))
+            self.assertEqual(result['messages'][:-1], expected_messages)
+            self.assertEqual(result['messages'][-1], request.state.context_compaction['reminder_message'])
+            self.assertNotIn(previous_reminder, result['messages'])
+            self.assertEqual(
+                request.state.context_compaction['last_usage']['tokens'], m.estimate_payload_tokens(result)
+            )
+        self.assertEqual(store.read_snapshot.return_value, snapshot)
+        self.assertEqual(store.save_checkpoint.await_count, 0)
+
+    def test_reminder_is_omitted_when_it_would_exceed_input_budget(self):
+        m, request, payload, store, events = self.setup_engine(context=40000)
+        request.state.context_compaction['settings'] = request.state.context_compaction['settings'].model_copy(
+            update={'reminder_enabled': True, 'reminder_percent': 100, 'reminder_prompt': 'long reminder ' * 40000}
+        )
+        result = asyncio.run(m.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        self.assertEqual(result, payload)
+        self.assertNotIn('reminder_message', request.state.context_compaction)
+        self.assertEqual(request.state.context_compaction['last_usage']['tokens'], m.estimate_payload_tokens(result))
+
+    def test_reminder_does_not_displace_assistant_prefill(self):
+        m, request, payload, store, events = self.setup_engine(context=40000)
+        request.state.context_compaction['settings'] = request.state.context_compaction['settings'].model_copy(
+            update={'reminder_enabled': True, 'reminder_percent': 100}
+        )
+        payload['messages'].append({'role': 'assistant', 'content': 'Continue this answer'})
+        payload.update(continue_final_message=True, add_generation_prompt=False)
+        result = asyncio.run(m.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        self.assertEqual(result, payload)
+        self.assertNotIn('reminder_message', request.state.context_compaction)
 
 
 class ProviderSummaryTests(IsolatedCase):

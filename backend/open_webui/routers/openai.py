@@ -1297,7 +1297,9 @@ def convert_to_responses_payload(payload: dict) -> dict:
             input_items.extend(_normalize_stored_item(item) for item in stored_output)
             continue
 
-        if role == 'system':
+        # Only leading system messages become top-level instructions. Keep later
+        # instructions (including V2 budget reminders) in their original input position.
+        if role == 'system' and not input_items:
             if isinstance(content, str):
                 system_content = content
             elif isinstance(content, list):

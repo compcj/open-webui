@@ -5,13 +5,29 @@
 	import Search from '$lib/components/icons/Search.svelte';
 	import { t } from 'i18next';
 
+	/** @type {any} Socket status payloads vary by action. */
 	export let status = null;
 	export let done = false;
 </script>
 
 {#if !status?.hidden}
 	<div class="status-description flex items-center gap-2 py-0.5 w-full text-left">
-		{#if status?.action === 'web_search' && (status?.urls || status?.items)}
+		{#if status?.action === 'context_compaction'}
+			<div
+				role="status"
+				class="{!done && !status?.done
+					? 'shimmer'
+					: ''} text-gray-500 dark:text-gray-500 text-[0.9375rem] text-wrap"
+			>
+				{#if status?.error}
+					{$i18n.t('Context compaction failed. Original history is preserved.')}
+				{:else if status?.done}
+					{$i18n.t('Context compacted')}
+				{:else}
+					{$i18n.t('Compacting context')}
+				{/if}
+			</div>
+		{:else if status?.action === 'web_search' && (status?.urls || status?.items)}
 			<WebSearchResults {status}>
 				<div class="flex flex-col justify-center -space-y-0.5">
 					<div

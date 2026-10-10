@@ -1091,13 +1091,19 @@ async def prepare_v2_request(
                     detail=f'Context exceeds the input budget ({before}/{budget.input_budget} tokens). {description}',
                 ) from exc
             log.warning('V2 compaction failed within input budget; preserving request: %s', type(exc).__name__)
-    if settings.reminder_enabled and budget.threshold - tokens < budget.reminder_distance:
+    # A prefill must remain the final assistant message for the provider to continue it.
+    if (
+        settings.reminder_enabled
+        and not original.get('continue_final_message')
+        and budget.threshold - tokens < budget.reminder_distance
+    ):
         variables = usage_data(tokens, budget, model_id)
         prompt = settings.reminder_prompt.strip() or DEFAULT_REMINDER_PROMPT
         for key, value in variables.items():
             prompt = prompt.replace('{' + key + '}', str(value))
         reminder = {'role': 'system', 'content': prompt}
-        reminded = {**original, 'messages': [reminder, *original.get('messages', [])]}
+        # Keep changing budget values after the stable history prefix and complete tool groups.
+        reminded = {**original, 'messages': [*original.get('messages', []), reminder]}
         # A reminder is optional; never push an otherwise valid request over B.
         if estimate_payload_tokens(reminded) <= budget.input_budget:
             original, tokens, source = reminded, estimate_payload_tokens(reminded), None

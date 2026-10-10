@@ -231,17 +231,27 @@ key and report it separately from mocked checks; never include the key or respon
 ### Context compaction verification
 
 Use Node 22 and Python 3.11/3.12. The V2 guide is [context-compaction.md](context-compaction.md).
+For manual acceptance, configure an OpenAI-compatible model window of 100000 and open `/status`:
+with default ratios and no output reserve the window/trigger must be 100000/90000. Check the
+compaction progress/result on its response, reload persistence, and visibility when model tool
+status updates are disabled. Use synthetic history/provider replies for automated threshold tests.
+
 New regression locations:
 
-| Boundary                                                                      | Tests                                                 |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Budget formulas, CJK, multimodal, grouping, summary failures and replay       | `backend/tests/test_context_compaction_v2.py`         |
-| Checkpoint CAS, source edits, branch/model isolation and migration round trip | `backend/tests/test_context_compaction_v2_storage.py` |
-| Chat/model checkpoint cleanup with SQLite cascades disabled                   | `backend/tests/test_context_compaction_cleanup.py`    |
-| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata | `backend/tests/test_context_compaction_api.py`        |
-| Original algorithm, legacy threshold caps and off/V2 raw replay               | `backend/tests/test_context_compaction_legacy.py`     |
-| Provider context errors, bounded retry and streaming visibility               | `backend/tests/test_context_compaction_dispatch.py`   |
-| Mode compatibility, model inheritance and stale model/branch usage rejection  | `src/lib/utils/context-compaction.test.ts`            |
+| Boundary                                                                             | Tests                                                                                                                                    |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Budget formulas, CJK, multimodal, grouping, summary failures and replay              | `backend/tests/test_context_compaction_v2.py`                                                                                            |
+| Tail reminders, continuation deduplication, budget accounting and assistant prefills | `backend/tests/test_context_compaction_v2.py`                                                                                            |
+| Responses conversion preserves stable instructions and trailing reminders            | `backend/tests/test_openai_responses_payload.py`                                                                                         |
+| Checkpoint CAS, source edits, branch/model isolation and migration round trip        | `backend/tests/test_context_compaction_v2_storage.py`                                                                                    |
+| Chat/model checkpoint cleanup with SQLite cascades disabled                          | `backend/tests/test_context_compaction_cleanup.py`                                                                                       |
+| Admin config/HTTP round trip, chat/model ACL, active-response guard, metadata        | `backend/tests/test_context_compaction_api.py`                                                                                           |
+| Original algorithm, legacy threshold caps and off/V2 raw replay                      | `backend/tests/test_context_compaction_legacy.py`                                                                                        |
+| Provider context errors, bounded retry and streaming visibility                      | `backend/tests/test_context_compaction_dispatch.py`                                                                                      |
+| OpenAI preset/prefix routing with persisted 100000 window and 90000 trigger          | `backend/tests/test_context_compaction_model_routing.py`                                                                                 |
+| Compaction socket events and status persistence in both chat stores                  | `backend/tests/test_context_compaction_status.py`                                                                                        |
+| Chat lifecycle events, branch isolation and localized response status                | `src/lib/components/chat/Chat.context-compaction.test.ts`, `src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts` |
+| Mode compatibility, model inheritance and stale model/branch usage rejection         | `src/lib/utils/context-compaction.test.ts`                                                                                               |
 
 Set `DATA_DIR`, `STATIC_DIR`, `DATABASE_URL`, and a synthetic `WEBUI_SECRET_KEY` to a disposable
 directory before any real model/router/application imports. For helper checks, use
@@ -252,8 +262,9 @@ synthetic auth/storage dependencies, not a complete application. Provider tests 
 
 ```sh
 python -m pytest backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_v2_storage.py backend/tests/test_context_compaction_api.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_context_compaction_legacy.py backend/tests/test_context_compaction_cleanup.py -q
+python -m pytest backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_status.py backend/tests/test_openai_responses_payload.py backend/tests/test_web_tool_citations.py backend/tests/test_image_tool_context.py -q
 python -m pytest backend/tests -q
-npm run test:frontend -- --run --dir src src/lib/utils/context-compaction.test.ts
+npm run test:frontend -- --run --dir src src/lib/utils/context-compaction.test.ts src/lib/components/chat/Chat.context-compaction.test.ts src/lib/components/chat/Messages/ResponseMessage.context-compaction.test.ts
 npm run test:frontend -- --run --dir src
 npm run check
 ```
@@ -301,6 +312,11 @@ Manual acceptance with an isolated running application and test model connection
 3. Exercise saved chats with Chinese history, attachments, retrieval, skills and tool schemas.
    Observe source-labelled backend usage, switch models and verify the badge updates. Off sends
    full history; legacy still honors its threshold overrides; V2 does not use those overrides.
+   Enter the reminder range and inspect Chat Completions/Responses payloads: the reminder is last,
+   earlier messages/tool pairs remain ordered, and Responses `instructions` remain unchanged.
+   Continue through two tool calls and confirm only the latest reminder follows the results.
+   Check final usage includes it, oversized reminders are omitted, and assistant prefills remain last.
+   Compare provider cache usage where available; stable prefixes do not guarantee cache hits.
 4. Compress twice, reload, edit an old branch, fork and run two models concurrently. Check original
    messages remain, summaries stay isolated and edited sources cannot reuse a stale checkpoint.
 5. Run long tools, approval pause/resume and code execution across compaction. Keep calls/results

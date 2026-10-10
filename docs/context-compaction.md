@@ -74,6 +74,31 @@ as data. Reminder variables include `{remaining_tokens}`, `{threshold}` and `{in
 A reminder is omitted if it would exceed the input budget. An empty summary output limit inherits
 the chosen summary model's configured limit, without an additional fixed reserve.
 
+## 预算提醒位置与缓存 / Reminder placement and caching
+
+预算提醒作为临时 `system` 消息追加在本次请求的消息列表末尾，位于已有历史及工具结果之后，
+不改变原消息顺序，也不插入工具调用与结果之间。工具续调先移除上一次提醒，再根据最新预算在末尾生成新提醒；
+提醒不写入原始聊天历史。使用 Responses API 时，提醒保留在 `input` 末尾，不提升到顶层 `instructions`，
+也不覆盖原有系统提示。
+
+提醒中的剩余 tokens 会变化，将它放在尾部可以保持前面的系统提示和历史前缀稳定，减少提醒造成的缓存失配。
+这不保证供应商缓存命中；实际压缩替换历史、改变工具定义或系统提示等仍会影响前缀复用。
+参见 [OpenAI 前缀缓存说明](https://developers.openai.com/api/docs/guides/prompt-caching)。
+提醒计入最终输入占用；若添加后会超过输入预算，或请求使用 `continue_final_message` 续写最后一条助手消息，
+则跳过这条可选提醒，以保留预算和续写语义。
+
+Budget reminders are temporary `system` messages appended after the existing conversation and tool
+results. They preserve message order and never separate a tool call from its result. A tool
+continuation removes the previous reminder and appends an updated one; reminders are not saved in
+raw chat history. Responses API conversion keeps the reminder at the end of `input`, leaving the
+original top-level `instructions` intact.
+
+Keeping changing token counts at the end preserves the earlier instruction/history prefix and
+reduces avoidable cache misses. Cache hits still depend on the provider; compaction and changes to
+tool definitions or instructions can change that prefix. The reminder counts toward final input
+usage and is omitted if it would exceed the input budget or displace the final assistant message in
+a `continue_final_message` prefill request.
+
 ## 预算公式与计数 / Budget calculation
 
 1. `C` = 当前模型 `meta.context_window` → 基础模型 → 全局缺省值。
@@ -100,6 +125,33 @@ content has a conservative allowance. Provider tokenizers differ, so the UI labe
 Only single-call provider input usage for the same request fingerprint can calibrate an estimate;
 cumulative billing totals are never treated as window occupancy. Reload queries estimate saved
 history; live request events report the prepared request.
+
+## 查看用量和压缩进度 / Usage and compaction status
+
+在聊天中输入 `/status` 并执行可打开状态面板，查看当前模型的占用、压缩阈值、窗口和剩余预算。
+面板不是默认常驻显示。模型的压缩用最大上下文长度设为 `100000`，采用默认 95%／90% 且未配置
+输出额度时，应显示窗口 `100000`、阈值 `90000`（输入预算 `95000`）；全局 `262144` 仅在模型及其
+基础模型都没有配置长度时使用。OpenAI 兼容连接的模型前缀和预设路由不改变这项优先级。
+
+V2 自动压缩会在对应助手消息上显示“正在压缩上下文”，然后显示成功或失败状态。状态历史随聊天保存，
+刷新后仍可查看；即使该模型关闭工具状态更新，压缩状态也会显示。它们是界面状态，不会添加到模型输入或
+替换原始消息。若窗口或阈值与预期不同，先核对 `/status` 中的实际值、所选模型及其基础模型、管理员模式，
+并区分单次输入估算与累计计费用量。回复下方用量 tooltip 的 `input_tokens` 是该条回复涉及的多次调用的累计输入量，
+相同历史重复发送也会重复计入；压缩不会清零已累计的用量。它可以大于模型窗口，不能据此判断单次请求超限。
+
+Run `/status` in the chat to open the status panel with the selected model's usage, trigger, window
+and remaining budget. The panel is not permanently visible by default. A model window of `100000`
+with default percentages and no output allowance gives a `90000` trigger and `95000` input budget.
+OpenAI connection prefixes and preset routing preserve model metadata precedence over the global
+fallback.
+
+Automatic V2 compaction shows progress and success/failure in the corresponding assistant message.
+These statuses are saved across reloads and remain visible when model tool-status updates are
+disabled. They are UI metadata, not model input or replacements for raw messages. To diagnose an
+unexpected trigger, check `/status`, the selected/base model and administrator mode, and distinguish
+input estimates from cumulative billed tokens. The reply usage tooltip's `input_tokens` sums input
+across model calls for that reply, including history resent on each call. Compaction does not reset
+that accumulated usage, so it can exceed the model window without any individual request exceeding it.
 
 ## 历史、并发与故障 / History, concurrency and failures
 
