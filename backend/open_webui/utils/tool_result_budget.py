@@ -11,7 +11,7 @@ import asyncio
 import copy
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 
@@ -27,6 +27,12 @@ Merge previous fragments faithfully when the input is split. Keep the result wit
 
 def get_tool_result_store():
     from open_webui.utils.tool_result_store import get_tool_result_store as get_store
+
+    return get_store()
+
+
+def get_tool_selection_store():
+    from open_webui.models.chat_tool_result_selections import get_tool_selection_store as get_store
 
     return get_store()
 
@@ -159,6 +165,10 @@ class ToolEntry:
     allocation: int = 0
     new_projection: bool = False
     operation_id: str | None = None
+    state: str = 'legacy'
+    context_id: str | None = None
+    reused_projection: bool = False
+    reduction_reasons: list[str] = field(default_factory=list)
 
 
 class ToolBudgetPlan:
@@ -202,27 +212,30 @@ class ToolBudgetPlan:
                 if not all(key) or not isinstance(ref.get('text'), str):
                     continue
                 text = ref['text']
-                if not text or not any(text in parent[field] for parent, field in _text_slots(message)):
+                if text and not any(text in parent[field] for parent, field in _text_slots(message)):
                     continue
                 descriptor = {**ref, 'message_id': key[0]}
                 self.entries.setdefault(key, ToolEntry(key, descriptor, text, v2.estimate_text(text)))
         self.store = get_tool_result_store() if self.entries else None
-        active = [
-            entry.descriptor['batch_id']
-            for entry in self.entries.values()
-            if entry.key[0] == metadata.get('message_id')
-        ]
-        self.incoming_batch = active[-1] if active else None
+        self.selections = get_tool_selection_store() if self.entries else None
+        self.selection_rows = []
+        self.loaded = False
         self.last_batch = None
+        self.last_accounting = None
+
+    @staticmethod
+    def batch_key(entry):
+        return (entry.key[0], entry.descriptor['batch_id'])
 
     def indices(self, payload, *, incoming_only=False):
-        result = set()
-        for index, message in enumerate(payload.get('messages', [])):
-            for ref in message.get('_tool_result_refs') or []:
-                entry = self.entries.get(_identity(ref, message))
-                if entry and (not incoming_only or entry.descriptor['batch_id'] == self.incoming_batch):
-                    result.add(index)
-        return result
+        incoming = {self.batch_key(e) for e in self.entries.values() if e.state == 'pending'}
+        return {
+            index
+            for index, message in enumerate(payload.get('messages', []))
+            for ref in message.get('_tool_result_refs') or []
+            if (entry := self.entries.get(_identity(ref, message)))
+            and (not incoming_only or self.batch_key(entry) in incoming)
+        }
 
     def replace(self, payload, values: dict[tuple, str]):
         result = copy.deepcopy(payload)
@@ -292,35 +305,42 @@ class ToolBudgetPlan:
         }
         return [entry for key, entry in self.entries.items() if key in keys]
 
-    def batches(self, payload):
+    def batches(self, payload, *, pending_only=False):
         batches = {}
         for entry in self.live_entries(payload):
-            batches.setdefault(entry.descriptor['batch_id'], []).append(entry)
+            if not pending_only or entry.state == 'pending':
+                batches.setdefault(self.batch_key(entry), []).append(entry)
         return batches
 
     async def load(self, payload):
+        """One resolver for sends and status: never infer adoption from a cache."""
         if not self.entries:
+            self.loaded = True
             return payload
-        contexts = await self.store.list_contexts(self.state['chat_id'], self.model_id, self.branch_id)
+        self.selection_rows = await self.selections.list_selections(
+            self.state['chat_id'], self.model_id, self.branch_id
+        )
         values = {}
-        for entry in self.entries.values():
-            valid = [
-                item
-                for item in contexts
-                if (item.get('message_id'), item.get('output_id')) == entry.key
-                and item.get('source_hash') == v2.digest(entry.text)
-                and item.get('task_hash') == self.task_hash
-                and item.get('policy_hash') == self.policy_hash
-                and 0 < item.get('budget', 0) <= self.single
-                and isinstance(item.get('text'), str)
-                and v2.estimate_text(item['text']) <= item['budget']
-            ]
-            if valid:
-                cached = max(valid, key=lambda item: item['budget'])
-                entry.record = {'id': cached['result_id']}
-                entry.rendered, entry.method, entry.allocation = cached['text'], cached['method'], cached['budget']
-                values[entry.key] = cached['text']
-        return self.replace(payload, values)
+        for row in self.selection_rows:
+            entry = self.entries.get((row['message_id'], row['output_id']))
+            if not entry:
+                continue
+            if row.get('source_hash') and row['source_hash'] != v2.digest(entry.text):
+                raise HTTPException(409, 'Tool output changed after injection; reload and retry')
+            entry.state = row['state']
+            if entry.state == 'prepared':
+                entry.rendered = row['text']
+                entry.method = row.get('method', 'original')
+                entry.context_id = row.get('context_id')
+                entry.allocation = row.get('allocation', v2.estimate_text(row['text']))
+                if row.get('result_id'):
+                    entry.record = {'id': row['result_id']}
+                values[entry.key] = row['text']
+        self.loaded = True
+        self.last_accounting = await self.selections.latest_accounting(
+            self.state['chat_id'], self.model_id, self.branch_id
+        )
+        return self.replace(payload, values) if values else payload
 
     async def save_original(self, entry):
         # Complete raw output is already persisted by the tool executor. A
@@ -330,45 +350,30 @@ class ToolBudgetPlan:
             raise HTTPException(409, 'Tool output changed or is not saved on this branch; reload the chat and retry')
 
     async def load_cached_only(self, payload):
-        """Read-only replay for /status; never creates snapshots or invokes a model."""
-        if not self.entries:
-            return payload
-        contexts = await self.store.list_contexts(self.state['chat_id'], self.model_id, self.branch_id)
+        return await self.load(payload)
+
+    def committed_batch_tokens(self, key):
+        return sum(
+            v2.estimate_text(row['text'])
+            for row in self.selection_rows
+            if row['state'] == 'prepared' and (row['message_id'], row['batch_id']) == key
+        )
+
+    def planning_payload(self, payload):
+        """Measure capped new text; immutable historical projections remain fixed."""
         values = {}
-        for context in contexts:
-            key = (context.get('message_id'), context.get('output_id'))
-            if (
-                key in self.entries
-                and context.get('task_hash') == self.task_hash
-                and context.get('policy_hash') == self.policy_hash
-                and isinstance(context.get('text'), str)
-                and 0 < context.get('budget', 0) <= self.single
-                and v2.estimate_text(context['text']) <= context['budget']
-            ):
-                values[key] = context['text']
-        return self.replace(payload, values)
+        for key, batch in self.batches(payload, pending_only=True).items():
+            available = max(0, self.batch - self.committed_batch_tokens(key))
+            allocations = fair_allocate([e.tokens for e in batch], available, self.single)
+            values.update((e.key, _prefix(e.text, allowance)) for e, allowance in zip(batch, allocations))
+        return self.replace(payload, values) if values else payload
 
     def reserve(self, payload):
-        """Actual fixed input plus bounded desired batches, before new summaries."""
-        if not self.live_entries(payload):
-            return v2.estimate_payload_tokens(payload)
-        empty = self.replace(payload, {e.key: '' for e in self.live_entries(payload)})
-        desired = sum(
-            min(
-                self.batch,
-                sum(
-                    min(v2.estimate_text(e.rendered) if e.rendered is not None else e.tokens, self.single)
-                    for e in batch
-                ),
-            )
-            for batch in self.batches(payload).values()
-        )
-        return v2.estimate_payload_tokens(empty) + desired
+        return v2.estimate_payload_tokens(self.planning_payload(payload))
 
     def desired_tokens(self, payload):
-        return self.reserve(payload) - v2.estimate_payload_tokens(
-            self.replace(payload, {e.key: '' for e in self.live_entries(payload)})
-        )
+        empty = self.replace(payload, {e.key: '' for e in self.live_entries(payload) if e.state == 'pending'})
+        return max(0, self.reserve(payload) - v2.estimate_payload_tokens(empty))
 
     async def summarize(self, entry, allocation):
         result_id = entry.record['id']
@@ -433,6 +438,7 @@ class ToolBudgetPlan:
             'result_limit': self.single,
             'batch_limit': self.batch,
             'allocated_tokens': allocation,
+            'reduction_reasons': list(entry.reduction_reasons),
             'estimate_source': 'estimated:tiktoken' if v2.token_encoder() else 'estimated:utf8',
             **updates,
         }
@@ -455,7 +461,6 @@ class ToolBudgetPlan:
             )
 
     async def render(self, entry, allocation):
-        entry.new_projection, entry.operation_id = False, None
         exact_read = entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result'
         if entry.rendered is not None and v2.estimate_text(entry.rendered) <= allocation:
             return entry.rendered, 'read' if exact_read else entry.method
@@ -496,113 +501,318 @@ class ToolBudgetPlan:
                 entry.text, allocation, entry.record['id'], entry.descriptor.get('name'), self.task
             ), 'excerpt'
 
-    async def finish(self, payload):
-        entries = self.live_entries(payload)
-        if not entries:
-            return payload
-        empty = self.replace(payload, {e.key: '' for e in entries})
-        remaining = max(0, self.budget.input_budget - v2.estimate_payload_tokens(empty))
-        batches = self.batches(payload)
-        desired = [min(self.batch, sum(min(e.tokens, self.single) for e in batch)) for batch in batches.values()]
-        batch_allocations = fair_allocate(desired, remaining, self.batch)
-        values, reports = {}, []
-        # Leave room for tokenization changes at text/JSON boundaries. The final
-        # complete request is still measured and, if needed, shrunk once more.
-        for batch_index, (batch_id, batch) in enumerate(batches.items()):
-            allocations = fair_allocate([e.tokens for e in batch], batch_allocations[batch_index], self.single)
-            batch_report = {
-                'batch_id': batch_id,
-                'original_tokens': sum(e.tokens for e in batch),
-                'processed_tokens': 0,
-                'results': [],
-            }
-            for entry, allocation in zip(batch, allocations):
-                if entry.tokens > allocation:
-                    await self.save_original(entry)
-                text, method = await self.render(entry, allocation)
-                values[entry.key] = text
-                entry.rendered, entry.method, entry.allocation = text, method, allocation
-                event = self.event_data(
-                    entry,
-                    allocation,
-                    done=True,
-                    method=method,
-                    processed_tokens=v2.estimate_text(text),
-                    description='Tool result summarized'
-                    if method == 'summary'
-                    else 'Tool result excerpt; incomplete'
-                    if method == 'excerpt'
-                    else 'Tool result ready',
-                )
-                batch_report['processed_tokens'] += event['processed_tokens']
-                batch_report['results'].append(event)
-                reports.append((entry, event))
-            self.last_batch = batch_report
+    async def cache_projection(self, entry, text, method, allocation):
+        """Return the canonical cache winner before using any generated text."""
+        if text == entry.text:
+            entry.context_id = None
+            return text, method
+        saved = await self.store.save_context(
+            entry.record['id'],
+            model_id=self.model_id,
+            branch_id=self.branch_id,
+            task_hash=self.task_hash,
+            policy_hash=self.policy_hash,
+            budget=allocation,
+            text=text,
+            method=method,
+            original_tokens=entry.tokens,
+            processed_tokens=v2.estimate_text(text),
+        )
+        if not saved or not isinstance(saved.get('text'), str) or not saved.get('id'):
+            raise HTTPException(409, 'Tool output changed during summarization; reload the chat and retry')
+        if v2.estimate_text(saved['text']) > allocation:
+            raise HTTPException(409, 'A competing tool projection exceeds this allocation; retry with saved history')
+        entry.context_id = saved['id']
+        entry.reused_projection = entry.reused_projection or saved['text'] != text or saved['method'] != method
+        return saved['text'], saved['method']
+
+    async def exact_or_excerpt(self, entry, allowance):
+        if entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result':
+            from open_webui.utils.tool_result_store import resize_tool_result_page
+
+            page = await resize_tool_result_page(
+                self.user,
+                self.state['chat_id'],
+                json.loads(entry.text),
+                branch_id=self.branch_id,
+                max_tokens=allowance,
+            )
+            return json.dumps(page, ensure_ascii=False, separators=(',', ':')), 'read'
+        return excerpt_result(
+            entry.text, allowance, entry.record['id'], entry.descriptor.get('name'), self.task
+        ), 'excerpt'
+
+    async def fit_final_payload(self, payload, values, pending):
         result = self.replace(payload, values)
-        excess = v2.estimate_payload_tokens(result) - self.budget.input_budget
-        if excess > 0:
-            # Envelopes and repeated occurrences can make reservation estimates
-            # optimistic. Reallocate from actual payload size; never drop a call.
-            adjustable = sorted(reports, key=lambda pair: -v2.estimate_text(values[pair[0].key]))
-            for entry, event in adjustable:
-                if not entry.record:
-                    await self.save_original(entry)
-                    event['result_id'] = entry.record['id']
-                before = v2.estimate_payload_tokens(result)
-                allocation = max(0, v2.estimate_text(values[entry.key]) - excess - 16)
-                if entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result':
-                    text, method = await self.render(entry, allocation)
+        # Only new results are adjustable. Search by the cost of the full wire
+        # envelope, not an assumed one-to-one relation between text and input.
+        for entry in sorted(pending, key=lambda e: -v2.estimate_text(values[e.key])):
+            if v2.estimate_payload_tokens(result) <= self.budget.input_budget:
+                break
+            if not entry.record:
+                await self.save_original(entry)
+            high = min(self.single, v2.estimate_text(values[entry.key]) - 1)
+            low, best_fit, best_reduction = 1, None, None
+            before = v2.estimate_payload_tokens(result)
+            while low <= high:
+                middle = (low + high) // 2
+                try:
+                    text, method = await self.exact_or_excerpt(entry, middle)
+                except (v2.CompactionFailure, HTTPException):
+                    low = middle + 1
+                    continue
+                candidate = self.replace(result, {entry.key: text})
+                cost = v2.estimate_payload_tokens(candidate)
+                if cost < before and (best_reduction is None or cost < best_reduction[0]):
+                    best_reduction = (cost, text, method, middle)
+                if cost <= self.budget.input_budget:
+                    best_fit = (cost, text, method, middle)
+                    low = middle + 1
                 else:
-                    if not entry.new_projection:
-                        await self.start_projection(entry, allocation)
-                    text, method = (
-                        excerpt_result(
-                            entry.text, allocation, entry.record['id'], entry.descriptor.get('name'), self.task
-                        ),
-                        'excerpt',
-                    )
+                    high = middle - 1
+            chosen = best_fit or best_reduction
+            if chosen:
+                _, text, method, allocation = chosen
+                entry.reduction_reasons.append('final_payload_fit')
+                if method == 'excerpt' and not entry.new_projection:
+                    await self.start_projection(entry, allocation)
+                text, method = await self.cache_projection(entry, text, method, allocation)
                 values[entry.key] = text
                 entry.rendered, entry.method, entry.allocation = text, method, allocation
-                event.update(
-                    operation_id=self.event_data(entry, allocation)['operation_id'],
-                    method=method,
-                    processed_tokens=v2.estimate_text(text),
-                    allocated_tokens=allocation,
-                    description='Tool result excerpt; incomplete' if method == 'excerpt' else 'Tool result ready',
-                )
                 result = self.replace(payload, values)
-                excess -= before - v2.estimate_payload_tokens(result)
-                if excess <= 0:
-                    break
         if v2.estimate_payload_tokens(result) > self.budget.input_budget:
             raise v2.CompactionFailure(
                 'Tool results and protected instructions exceed the input budget; reduce attachments/tool batch size or increase the context window'
             )
-        for entry, event in reports:
-            # Bookkeeping covers originals, exact reads and cached projections too.
-            # Only a newly reduced current-reply result is a conversation notice.
-            if values[entry.key] != entry.text:
-                saved = await self.store.save_context(
-                    entry.record['id'],
-                    model_id=self.model_id,
-                    branch_id=self.branch_id,
-                    task_hash=self.task_hash,
-                    policy_hash=self.policy_hash,
-                    budget=entry.allocation,
-                    text=values[entry.key],
-                    method=entry.method,
-                    original_tokens=entry.tokens,
-                    processed_tokens=event['processed_tokens'],
+        return result
+
+    async def finish(self, payload):
+        try:
+            return await self._finish(payload)
+        except (Exception, asyncio.CancelledError) as exc:
+            for entry in self.entries.values():
+                if entry.new_projection and entry.key[0] == self.metadata.get('message_id'):
+                    await v2.emit_event(
+                        self.metadata,
+                        'tool_result_compaction',
+                        self.event_data(
+                            entry,
+                            entry.allocation,
+                            done=True,
+                            error=True,
+                            cancelled=isinstance(exc, asyncio.CancelledError),
+                            description='Tool result preparation cancelled'
+                            if isinstance(exc, asyncio.CancelledError)
+                            else 'Tool result preparation failed; retry using saved tool outputs',
+                        ),
+                    )
+            raise
+
+    async def _finish(self, payload):
+        if not self.loaded:
+            payload = await self.load(payload)
+        entries = self.live_entries(payload)
+        pending = [e for e in entries if e.state == 'pending']
+        values = {}
+        remaining_entries = list(pending)
+        batches = self.batches(payload, pending_only=True)
+        while remaining_entries:
+            empty = self.replace(payload, {**values, **{e.key: '' for e in remaining_entries}})
+            remaining = max(0, self.budget.input_budget - v2.estimate_payload_tokens(empty))
+            groups = [(key, [e for e in batch if e in remaining_entries]) for key, batch in batches.items()]
+            groups = [(key, batch) for key, batch in groups if batch]
+            available = {
+                key: max(
+                    0,
+                    self.batch
+                    - self.committed_batch_tokens(key)
+                    - sum(v2.estimate_text(values[e.key]) for e in batches[key] if e.key in values),
                 )
-                if saved is None:
-                    raise HTTPException(409, 'Tool output changed during summarization; reload the chat and retry')
-            if (
-                entry.new_projection
-                and entry.key[0] == self.metadata.get('message_id')
-                and entry.method in {'summary', 'excerpt'}
-            ):
-                await v2.emit_event(self.metadata, 'tool_result_compaction', event)
-        if self.last_batch:
-            self.last_batch['processed_tokens'] = sum(event['processed_tokens'] for event in self.last_batch['results'])
-            self.state['last_tool_batch'] = self.last_batch
+                for key, _ in groups
+            }
+            desired = [min(available[key], sum(min(e.tokens, self.single) for e in batch)) for key, batch in groups]
+            batch_allocations = fair_allocate(desired, remaining, self.batch)
+            allocations = {}
+            for (key, batch), allowance in zip(groups, batch_allocations):
+                allocations.update(
+                    (e.key, n) for e, n in zip(batch, fair_allocate([e.tokens for e in batch], allowance, self.single))
+                )
+            over = [e for e in remaining_entries if e.tokens > allocations[e.key]]
+            if not over:
+                for entry in remaining_entries:
+                    entry.rendered = entry.text
+                    entry.method = (
+                        'read'
+                        if entry.descriptor.get('kind') == 'read' or entry.descriptor.get('name') == 'read_tool_result'
+                        else 'original'
+                    )
+                    entry.allocation = allocations[entry.key]
+                    values[entry.key] = entry.text
+                break
+            entry = max(over, key=lambda e: e.tokens)
+            key = self.batch_key(entry)
+            allocation = allocations[entry.key]
+            if entry.tokens > self.single:
+                entry.reduction_reasons.append('single_limit')
+            if sum(min(e.tokens, self.single) for e in remaining_entries if self.batch_key(e) == key) > available[key]:
+                entry.reduction_reasons.append('batch_limit')
+            if remaining < sum(desired):
+                entry.reduction_reasons.append('input_space')
+            await self.save_original(entry)
+            entry.allocation = allocation
+            text, method = await self.render(entry, allocation)
+            text, method = await self.cache_projection(entry, text, method, allocation)
+            values[entry.key] = text
+            entry.rendered, entry.method = text, method
+            remaining_entries.remove(entry)
+        result = await self.fit_final_payload(payload, values, pending)
+        reports = []
+        for key, batch in batches.items():
+            previous = {
+                (item.get('source_message_id'), item.get('output_id')): item
+                for row in self.selection_rows
+                if (row['message_id'], row['batch_id']) == key
+                for item in (row.get('batch_report') or {}).get('results', [])
+            }
+            for row in self.selection_rows:
+                old_key = (row['message_id'], row['output_id'])
+                if (
+                    row['state'] == 'prepared'
+                    and (row['message_id'], row['batch_id']) == key
+                    and old_key not in previous
+                ):
+                    previous[old_key] = {
+                        'source_message_id': row['message_id'],
+                        'output_id': row['output_id'],
+                        'call_id': row['call_id'],
+                        'batch_id': row['batch_id'],
+                        'model': self.model_id,
+                        'mode': 'v2',
+                        'done': True,
+                        'method': row['method'],
+                        'reused': True,
+                        'result_id': row.get('result_id'),
+                        'original_tokens': row['original_tokens'],
+                        'processed_tokens': v2.estimate_text(row['text']),
+                        'allocated_tokens': row['allocation'],
+                    }
+            for entry in batch:
+                previous[entry.key] = self.event_data(
+                    entry,
+                    entry.allocation,
+                    done=True,
+                    method=entry.method,
+                    processed_tokens=v2.estimate_text(entry.rendered),
+                    description='Tool result summarized'
+                    if entry.method == 'summary'
+                    else 'Tool result excerpt; incomplete'
+                    if entry.method == 'excerpt'
+                    else 'Tool result ready',
+                )
+            results = list(previous.values())
+            reports.append(
+                {
+                    'batch_id': key[1],
+                    'source_message_id': key[0],
+                    'complete': True,
+                    'limits_at_decision': {
+                        'context_window': self.budget.context_window,
+                        'input_budget': self.budget.input_budget,
+                        'result_limit': self.single,
+                        'batch_limit': self.batch,
+                    },
+                    'original_tokens': sum(item['original_tokens'] for item in results),
+                    'processed_tokens': sum(item['processed_tokens'] for item in results),
+                    'results': results,
+                }
+            )
+        choices = [
+            {
+                'descriptor': e.descriptor,
+                'context_id': e.context_id,
+                'method': e.method,
+                'allocation': e.allocation if e.state != 'legacy' else e.tokens,
+                'original_tokens': e.tokens,
+                'processed_tokens': v2.estimate_text(e.rendered if e.rendered is not None else e.text),
+            }
+            for e in entries
+            if e.state != 'prepared'
+        ]
+        if choices or self.selection_rows:
+
+            def validate(rows, fresh_ids):
+                expected_ids = {r['id'] for r in self.selection_rows if r['state'] == 'prepared' and r.get('id')}
+                if not expected_ids <= {r['id'] for r in rows}:
+                    return False
+                candidate = self.replace(result, {(r['message_id'], r['output_id']): r['text'] for r in rows})
+                if v2.estimate_payload_tokens(candidate) > self.budget.input_budget:
+                    return False
+                # Concurrent winners may be longer than our candidate. Recheck
+                # the batch allowance too before freezing any fresh member.
+                grouped = {}
+                for row in rows:
+                    grouped.setdefault((row['message_id'], row['batch_id']), []).append(row)
+                for members in grouped.values():
+                    fresh = sum(v2.estimate_text(r['text']) for r in members if r['id'] in fresh_ids)
+                    fixed = sum(v2.estimate_text(r['text']) for r in members if r['id'] not in fresh_ids)
+                    if fresh > max(0, self.batch - fixed):
+                        return False
+                return True
+
+            canonical = await self.selections.prepare_selections(
+                self.state['chat_id'],
+                self.model_id,
+                branch_id=self.branch_id,
+                choices=choices,
+                batch_reports=reports,
+                validate=validate,
+                expected_sources=self.selection_rows,
+            )
+            if canonical is None:
+                raise HTTPException(409, 'Tool output changed while preparing input; retry using saved history')
+            winner_values = {(row['message_id'], row['output_id']): row['text'] for row in canonical}
+            result = self.replace(result, winner_values)
+            if v2.estimate_payload_tokens(result) > self.budget.input_budget:
+                raise HTTPException(
+                    409, 'A competing prepared version exceeds this request budget; retry using saved history'
+                )
+            for row in canonical:
+                entry = self.entries[(row['message_id'], row['output_id'])]
+                reused = entry.reused_projection or (row['text'] != entry.rendered and entry.rendered is not None)
+                entry.state = 'prepared'
+                entry.rendered, entry.method, entry.context_id = (
+                    row['text'],
+                    row.get('method', 'original'),
+                    row.get('context_id'),
+                )
+                entry.allocation = row.get('allocation', entry.allocation)
+                if entry.new_projection and entry.key[0] == self.metadata.get('message_id'):
+                    await v2.emit_event(
+                        self.metadata,
+                        'tool_result_compaction',
+                        self.event_data(
+                            entry,
+                            row.get('allocation', entry.allocation),
+                            done=True,
+                            method=row.get('method', entry.method),
+                            reused=reused,
+                            processed_tokens=v2.estimate_text(row['text']),
+                            description='Tool result summarized'
+                            if row.get('method', entry.method) == 'summary'
+                            else 'Tool result excerpt; incomplete',
+                        ),
+                    )
+                entry.new_projection = False
+            self.last_accounting = await self.selections.latest_accounting(
+                self.state['chat_id'], self.model_id, self.branch_id
+            )
+            self.selection_rows = await self.selections.list_selections(
+                self.state['chat_id'], self.model_id, self.branch_id
+            )
+            if reports:
+                self.last_batch = (self.last_accounting or {}).get('last_tool_batch')
+                if self.last_batch:
+                    self.state['last_tool_batch'] = self.last_batch
+                else:
+                    self.state['tool_accounting_error'] = True
         return result

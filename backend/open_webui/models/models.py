@@ -7,6 +7,7 @@ from typing import Any
 
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
+from open_webui.models.chat_tool_result_selections import ChatToolResultSelection
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.misc import json_text_variants
@@ -591,6 +592,7 @@ class ModelsTable:
         try:
             async with get_async_db_context(db) as db:
                 await AccessGrants.revoke_all_access('model', id, db=db)
+                await db.execute(delete(ChatToolResultSelection).filter_by(model_id=id))
                 await db.execute(delete(Model).filter_by(id=id))
                 await db.commit()
 
@@ -605,6 +607,7 @@ class ModelsTable:
                 model_ids = [row[0] for row in result.all()]
                 for model_id in model_ids:
                     await AccessGrants.revoke_all_access('model', model_id, db=db)
+                await db.execute(delete(ChatToolResultSelection).where(ChatToolResultSelection.model_id.in_(model_ids)))
                 await db.execute(delete(Model))
                 await db.commit()
 

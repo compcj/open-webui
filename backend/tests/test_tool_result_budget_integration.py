@@ -56,6 +56,7 @@ async def test_engine_persists_reuses_and_reads_exact_original(database):
             },
         ],
     }
+    await db.selections.register_pending('chat', 'model', [descriptor(db)], branch_id='a')
     events = []
 
     async def emit(meta, kind, data):
@@ -104,7 +105,7 @@ async def test_engine_persists_reuses_and_reads_exact_original(database):
     )
     replay = await plan.load_cached_only(payload)
     assert replay['messages'][-1]['content'] == first['messages'][-1]['content']
-    # A new policy never replays a previous strategy's derived content.
+    # Policy changes affect new results only; adopted history remains exact.
     changed = settings.model_copy(update={'tool_summary_prompt': 'Changed strategy'})
     plan = budget_module.ToolBudgetPlan(
         request,
@@ -118,7 +119,7 @@ async def test_engine_persists_reuses_and_reads_exact_original(database):
         v2.resolve_budget(changed, 'model', {'model': {}}, payload),
         state,
     )
-    assert (await plan.load_cached_only(payload))['messages'][-1]['content'] == db.text
+    assert (await plan.load_cached_only(payload))['messages'][-1]['content'] == first['messages'][-1]['content']
     await edit(db, 'u', content='edited request')
     assert await db.store.list_contexts('chat', 'model', 'a') == []
 
@@ -207,7 +208,7 @@ async def test_partial_cached_spans_survive_finish_and_retry(database, kind):
     plan = make_plan()
     entry = plan.entries[('a', 'long')]
     record = await db.store.save_result('chat', entry.descriptor, branch_id='a')
-    await db.store.save_context(
+    cached = await db.store.save_context(
         record['id'],
         model_id='model',
         branch_id='a',
@@ -218,6 +219,30 @@ async def test_partial_cached_spans_survive_finish_and_retry(database, kind):
         method='summary',
         original_tokens=entry.tokens,
         processed_tokens=v2.estimate_text('cached long evidence'),
+    )
+    await db.selections.register_pending('chat', 'model', [e.descriptor for e in plan.entries.values()], branch_id='a')
+    await db.selections.prepare_selections(
+        'chat',
+        'model',
+        branch_id='a',
+        choices=[
+            {
+                'descriptor': entry.descriptor,
+                'context_id': cached['id'],
+                'method': 'summary',
+                'allocation': plan.single,
+                'original_tokens': entry.tokens,
+                'processed_tokens': v2.estimate_text(cached['text']),
+            }
+        ],
+        batch_reports=[
+            {
+                'batch_id': 'batch',
+                'source_message_id': 'a',
+                'complete': True,
+                'results': [{'source_message_id': 'a', 'output_id': 'long', 'method': 'summary'}],
+            }
+        ],
     )
     with patch.object(v2, 'emit_event', AsyncMock()), patch.object(v2, 'generate_summary', AsyncMock()) as generate:
         loaded = await plan.load(payload)
@@ -252,6 +277,18 @@ async def test_under_budget_exact_read_finish_retains_page_without_notification(
         message_id='a', output_id='read', call_id='read-call', batch_id='read-batch', name=name, kind=kind, text=text
     )
     payload = {'messages': [{'role': 'tool', 'tool_call_id': 'read-call', 'content': text, '_tool_result_refs': [ref]}]}
+    output = copy.deepcopy(db.raw['a']['output'])
+    output.append(
+        {
+            'id': 'read',
+            'type': 'function_call_output',
+            'call_id': 'read-call',
+            'output': text,
+            'tool_result': {key: ref[key] for key in ('name', 'kind', 'batch_id')},
+        }
+    )
+    await edit(db, 'a', output=output)
+    await db.selections.register_pending('chat', 'model', [ref], branch_id='a')
     settings = v2.CompactionSettings(mode='v2', default_context_window=100000)
     store = SimpleNamespace(list_contexts=AsyncMock(return_value=[]), save_result=AsyncMock(), save_context=AsyncMock())
     events = []
@@ -378,3 +415,77 @@ async def test_smaller_summary_model_sends_bounded_progressive_chunks(database, 
     )
     transcript = json.loads(fragments)
     assert transcript['content'].endswith(text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('with_new', [False, True])
+async def test_source_edit_during_preparation_rejects_stale_selected_history(database, with_new):
+    db = database
+    from fastapi import HTTPException
+    from test_tool_result_selections import candidate, choice, report
+    from open_webui.utils import context_compaction_v2 as v2
+    from open_webui.utils import tool_result_budget as tool
+    from open_webui.utils.tool_result_sources import output_descriptors
+
+    context = await candidate(db, branch='a')
+    await db.selections.register_pending('chat', 'model', [descriptor(db)], branch_id='a')
+    assert await db.selections.prepare_selections(
+        'chat', 'model', branch_id='a', choices=[choice(db, context)], batch_reports=[report(db)]
+    )
+    if with_new:
+        extra = {
+            'id': 'next',
+            'call_id': 'next-call',
+            'type': 'function_call_output',
+            'output': db.text * 8,
+            'tool_result': {'batch_id': 'next-batch', 'name': 'search', 'kind': 'native'},
+        }
+        await edit(db, 'a', output=[*db.raw['a']['output'], extra])
+        ref = {**output_descriptors(db.raw['a']['output'])['next'], 'message_id': 'a'}
+        await db.selections.register_pending('chat', 'model', [ref], branch_id='a')
+    refs = [{**ref, 'message_id': 'a'} for ref in output_descriptors(db.raw['a']['output']).values()]
+    payload = {
+        'messages': [
+            dict(
+                role='tool',
+                tool_call_id=ref['call_id'],
+                content=ref['text'],
+                _context_message_id='a',
+                _tool_result_refs=[ref],
+            )
+            for ref in refs
+        ]
+    }
+    settings = v2.CompactionSettings(mode='v2', default_context_window=6000, recent_tokens=200)
+    plan = tool.ToolBudgetPlan(
+        None,
+        None,
+        payload,
+        db.raw['u'],
+        {'message_id': 'a'},
+        'model',
+        {'model': {}},
+        settings,
+        v2.resolve_budget(settings, 'model', {'model': {}}, payload),
+        {'chat_id': 'chat'},
+    )
+    loaded = await plan.load(payload)
+    changed_output = copy.deepcopy(db.raw['a']['output'])
+    changed_output[0]['output'] = 'edited earlier tool output'
+    if with_new:
+
+        async def summarize(*args, **kwargs):
+            await edit(db, 'a', output=changed_output)
+            return 'new tool summary'
+
+        generation = patch.object(plan, 'summarize', side_effect=summarize)
+    else:
+        await edit(db, 'a', output=changed_output)
+        generation = patch.object(plan, 'summarize', AsyncMock())
+    with generation, patch.object(v2, 'emit_event', AsyncMock()):
+        with pytest.raises(HTTPException) as error:
+            await plan.finish(loaded)
+    assert error.value.status_code == 409
+    if with_new:
+        rows = await db.selections.list_selections('chat', 'model', 'a')
+        assert next(row for row in rows if row['output_id'] == 'next')['state'] == 'pending'

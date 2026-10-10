@@ -24,6 +24,7 @@ IMAGE_DATA = 'data:image/png;base64,c3ludGhldGlj'
 def runtime():
     ns = {
         'JSONCodec': json,
+        'new_tool_output_ids': [],
         'json': json,
         'log': logging.getLogger(__name__),
         'HTMLResponse': HTMLResponse,

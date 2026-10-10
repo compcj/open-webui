@@ -1666,6 +1666,7 @@ async def chat_completion(
                     'settings': settings,
                     'chat_id': metadata['chat_id'],
                     'user_message_id': metadata['user_message_id'],
+                    'model_id': form_data['model'],
                     'metadata': metadata,
                 }
             ctx = None

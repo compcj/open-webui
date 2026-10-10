@@ -19,6 +19,19 @@ class IsolatedCase(unittest.TestCase):
         self.patch = patch.dict(sys.modules, {'open_webui': package})
         self.patch.start()
         self.addCleanup(self.patch.stop)
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        tool = importlib.import_module('open_webui.utils.tool_result_budget')
+        self.enterContext(
+            patch.object(
+                tool,
+                'get_tool_selection_store',
+                return_value=SimpleNamespace(
+                    list_selections=AsyncMock(return_value=[]), latest_accounting=AsyncMock(return_value=None)
+                ),
+            )
+        )
 
 
 class ConfigurationTests(IsolatedCase):

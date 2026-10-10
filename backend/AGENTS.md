@@ -133,28 +133,43 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 - V2 checkpoints are separate from legacy summaries and validate source fingerprints plus version
   in one short transaction; no DB session may span model generation. Isolate model/branch state,
   reject stale writes, preserve original history and remove checkpoints with deleted chats.
-- V2 tool budgeting uses `utils/tool_result_budget.py`, exact provenance in `tool_result_sources.py`
-  and branch/source-validated storage in `tool_result_store.py`/`models/chat_tool_results.py`.
-  Resolve `C` with inheritance and smaller `num_ctx`; derive individual/batch caps from `C`, reserve
-  incoming desired tokens and compact older complete history before summarizing tools. Protect the
-  incoming batch/latest user/incomplete groups, allocate fairly and verify the full final input.
-  Native, approved, injected and code results keep original content and call pairing. Apply historical
-  checkpoints before tool projections; keep raw source identities for checkpoint validation.
-  Summary failure falls back to explicitly incomplete exact excerpts with a raw result ID; exact
-  `read_tool_result` passages may be resized but never summarized. Register this auxiliary tool only
-  from trusted saved-chat V2 state. Raw reads require chat access, current branch ancestry and unchanged
-  sources. Cache projections by model/branch/task/policy/budget; no transaction spans model generation.
-  Account for all results but emit notices only for newly summarized/excerpted current-reply results.
-  Originals, exact reads and cached projections are silent; historical results never notify on a later
-  reply. Include source message and stable operation identity, and upsert progress/completion in both
-  embedded and normalized status stores without regressing a completed operation. Retain old records.
-  Persist full batch accounting separately in message metadata, preserving it through later tool/assistant
-  updates, browser whole-history saves and normalized single/bulk writes. Serialize or guard the final
-  write so a stale payload cannot replace a newer snapshot. Restore `/status` from a
-  model/branch/source-validated snapshot, including silent and mixed
-  batches; never infer complete accounting from only visible notices.
-  Clean both tool tables on chat deletion, and preserve off/legacy
-  and disabled-tool-budget behavior. Neither projection nor overflow retry re-executes tools.
+- V2 tool budgeting uses `utils/tool_result_budget.py`, exact provenance in `tool_result_sources.py`,
+  snapshots/candidates in `tool_result_store.py`/`models/chat_tool_results.py`, and adopted versions in
+  `models/chat_tool_result_selections.py`. Only native/approved/injected/code execution paths register
+  new pending outputs after raw persistence; missing caches never mean new work. Empty/image-only
+  results still protect whole groups. Batch identity includes the source reply and actual call/result
+  round; approval resumes reuse it. Do not alter raw calls, citations or checkpoint source fingerprints.
+- Apply validated history checkpoints, then selected tool text. Legacy/imported outputs without a
+  selection use raw text. Only pending results compete for tool budgets; selected originals/summaries
+  remain fixed across task, policy and percentage changes. Whole-history V2 handles accumulated cost.
+  Resolve C with inheritance/smaller num_ctx. Reserve capped incoming demand using batch allowance minus
+  already selected actual text, and compact older complete history first. Retention uses the same
+  projected costs; latest user, runtime instructions, incoming batch and incomplete groups stay protected.
+  Fairly allocate, process the largest over-budget original first (call order breaks ties), and reclaim
+  actual summary savings before touching another result. Full-payload fitting counts JSON, citations,
+  repeated injection and media; search new excerpts by complete request cost, continuing across entries
+  that cannot shrink. Never alter already selected history to satisfy a per-tool cap.
+- Raw snapshot/candidate creation is not adoption. Freeze selections only after full validation and
+  immediately before transport; a manual history action or approval wait does not prepare them. A short
+  source-locked transaction revalidates every loaded source and prepared identity, including replay-only
+  sends and sibling outputs, then validates canonical full input and remaining batch caps before commit. Conflict returns a retryable error, not a tool rerun or
+  a locally losing summary. No transaction spans model generation. Original selections reference source
+  identities without duplicate bodies. Candidate contexts stay immutable; prepared versions survive
+  configuration changes, but not source/ancestor edits. Scope models/branches independently.
+- Exact `read_tool_result` pages may shrink but never summarize. The auxiliary reader is server-gated;
+  every read checks chat access, branch ancestry and unchanged sources. New cursors bind issuance anchor,
+  source, query and position, allowing validated descendants; legacy cursors check eligible ancestors.
+  Reject sibling/other-chat/source/query changes. Clean selection, raw and candidate tables on chat
+  deletion, including SQLite with cascades disabled; model cleanup includes selections/checkpoints.
+- Account for every result, but notify only new summaries/excerpts owned by the current reply. Silent
+  original/exact/reused versions still appear in full batch accounting. End progress on failure/cancel
+  with its original operation identity. Preserve source-reply notices and deduplicate both status stores.
+  Persist reports atomically with adopted versions; verify effective selection/context IDs, source reply
+  and fingerprints. Preserve winning operation metadata during overlapping commits. Replay must not
+  refresh timestamps. Status is read-only and uses the same resolver as transport; legacy/partial reports
+  must not claim completeness. Compatibility message metadata still survives later assistant/browser
+  single/bulk writes. Report C, B and T separately: remaining_tokens is distance to T, and
+  input_remaining_tokens is capacity to B. Off/legacy/disabled tool budgeting retains previous behavior.
 - Internal history/tool summaries share an explicit purpose and trusted request-state budget guard;
   do not infer purpose from prompt text or enable guards from client task metadata. Resolve summary
   window `Cs`, effective window `Es`, `P=floor(Cs*summary_output_percent/100)` (default 5%, integer

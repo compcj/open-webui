@@ -96,6 +96,18 @@ class ToolBudgetEngineTests(IsolatedCase):
             save_context=AsyncMock(return_value={'ok': True}),
         )
         mod = importlib.import_module('open_webui.utils.tool_result_budget')
+        from test_tool_result_replay import MemorySelections
+
+        selections = MemorySelections(payload=payload, snapshot=history_store.read_snapshot.return_value)
+
+        async def save_context(result_id, **kw):
+            saved = {'id': result_id + str(kw['budget']), **kw}
+            selections.contexts[saved['id']] = saved
+            return saved
+
+        service.save_context.side_effect = save_context
+        service.selections = selections
+        patch.object(mod, 'get_tool_selection_store', return_value=selections).start()
         patch.object(mod, 'get_tool_result_store', return_value=service).start()
         return v2, mod, request, payload, history_store, service, events
 
@@ -150,6 +162,26 @@ class ToolBudgetEngineTests(IsolatedCase):
         )
         unchanged = asyncio.run(v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
         assert unchanged == payload
+
+    def test_manual_history_compaction_does_not_adopt_or_summarize_pending_tools(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=40000)
+        snapshot = history.read_snapshot.return_value
+        snapshot['current_id'] = 'a2'
+        raw = v2.branch_messages(snapshot['messages_map'], 'a2')
+        with (
+            patch.object(v2, '_history_payload', AsyncMock(return_value=(payload, raw))),
+            patch.object(
+                v2, 'load_compaction_settings', AsyncMock(return_value=request.state.context_compaction['settings'])
+            ),
+            patch.object(v2, 'generate_summary', AsyncMock(return_value='History progress.')),
+        ):
+            result = asyncio.run(
+                v2.compact_v2_chat_branch(request, None, SimpleNamespace(id='chat'), 'model', {'model': {}})
+            )
+        assert result['compacted']
+        service.save_context.assert_not_awaited()
+        assert all(row['state'] == 'pending' for row in service.selections.rows.values())
+        assert not any(kind == 'tool_result_compaction' for kind, _ in events)
 
     def test_cancellation_does_not_fallback_or_write_projection(self):
         v2, tool, request, payload, history, service, events = self.make_batch(context=40000)
@@ -270,7 +302,12 @@ class ToolProjectionIdentityTests(IsolatedCase):
             ]
         }
         settings = v2.CompactionSettings()
-        with patch.object(tool, 'get_tool_result_store', return_value=SimpleNamespace()):
+        from test_tool_result_replay import MemorySelections
+
+        with (
+            patch.object(tool, 'get_tool_result_store', return_value=SimpleNamespace()),
+            patch.object(tool, 'get_tool_selection_store', return_value=MemorySelections()),
+        ):
             plan = tool.ToolBudgetPlan(
                 None,
                 None,
@@ -312,8 +349,12 @@ class ToolProjectionIdentityTests(IsolatedCase):
         )
         payload = {'messages': [{'role': 'tool', 'tool_call_id': 'c', 'content': 'short', '_tool_result_refs': [ref]}]}
         store = SimpleNamespace(list_contexts=AsyncMock(return_value=[]), save_result=AsyncMock())
+        from test_tool_result_replay import MemorySelections
+
+        selections = MemorySelections([{**ref, 'state': 'pending'}])
         with (
             patch.object(tool, 'get_tool_result_store', return_value=store),
+            patch.object(tool, 'get_tool_selection_store', return_value=selections),
             patch.object(v2, 'emit_event', AsyncMock()) as emit,
         ):
             plan = tool.ToolBudgetPlan(
@@ -345,6 +386,8 @@ class ToolNotificationTests(IsolatedCase):
                 v2, tool, request, payload, history, service, events = self.make_batch(context=40000)
                 state = request.state.context_compaction
                 metadata = {**state['metadata'], 'message_id': 'new-reply' if historical else 'a2'}
+                if historical:
+                    service.selections.payload = None
                 if cached:
                     service.get_context.return_value = {'text': 'Existing handoff', 'method': 'summary'}
                 plan = tool.ToolBudgetPlan(
@@ -363,8 +406,12 @@ class ToolNotificationTests(IsolatedCase):
                     result = asyncio.run(plan.finish(payload))
                 notices = [event for kind, event in events if kind == 'tool_result_compaction']
                 assert len(notices) == (0 if historical or cached else 2)
-                assert state['last_tool_batch']['results'][0]['method'] == 'summary'
-                assert result['messages'][-1]['content'] != payload['messages'][-1]['content']
+                if historical:
+                    assert 'last_tool_batch' not in state
+                    assert result['messages'][-1]['content'] == payload['messages'][-1]['content']
+                else:
+                    assert state['last_tool_batch']['results'][0]['method'] == 'summary'
+                    assert result['messages'][-1]['content'] != payload['messages'][-1]['content']
                 if notices:
                     assert notices[0]['source_message_id'] == notices[1]['source_message_id'] == 'a2'
                     assert notices[0]['operation_id'] == notices[1]['operation_id']
@@ -378,6 +425,7 @@ class ToolNotificationTests(IsolatedCase):
         state = request.state.context_compaction
         identities = []
         for _ in range(2):
+            service.selections.rows.clear()
             plan = tool.ToolBudgetPlan(
                 request,
                 None,

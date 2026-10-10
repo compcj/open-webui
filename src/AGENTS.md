@@ -80,7 +80,19 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
   Filter by `source_message_id`; legacy output/call IDs may prove another owner, while unknown legacy
   records stay in place. Apply the same filter to raw-view buttons. Upsert `operation_id` progress/results
   without regressing completed operations; preserve valid records on earlier replies. Read full batch
-  counts from backend usage, including after refresh, rather than counting visible notices. Original-result viewing uses authenticated, branch-scoped bounded
+  counts from backend usage, including after refresh, rather than counting visible notices. Selected
+  historical tool versions are immutable replay context; current caps only admit new results. Keep
+  original/exact/cache totals in accounting without emitting new conversation notices or changing
+  the last admission clock. Pair cancellation/failure completion with its source and operation IDs,
+  localize saved-output retry guidance, and keep errors visible even when ordinary tool statuses are off.
+  In `/status`, label `tokens / threshold` and `percent` as the automatic compaction trigger fraction;
+  distinguish configured window `C`, input budget `B`, distance to trigger `T`, and available input
+  `B - tokens`. Derive absent compatible input-remaining values only from known budget/counts;
+  otherwise omit them. Show last-batch source reply, historical/unknown provenance, saved nanosecond
+  decision time, completeness, then-effective limits, allocations and reduction reasons in compact
+  expandable details. Do not present a prior decision as a new reduction under current settings.
+  Surface backend `context_usage.accounting_error` as a statistics warning, not a tool notice.
+  Original-result viewing uses authenticated, branch-scoped bounded
   pages from `/api/v1/chats/{chat_id}/tool-results/{result_id}`; render text without HTML execution,
   handle stale requests/errors and distinguish summaries, incomplete excerpts and exact rereads.
 - Expose `CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT` as an admin-only integer 1–100, default 5.

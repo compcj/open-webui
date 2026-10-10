@@ -84,6 +84,7 @@ def annotate_output_batch(output: list[dict], call_ids: list[str]) -> None:
 
 def output_descriptors(output: list[dict]) -> dict[str, dict]:
     calls, groups, pending = {}, {}, []
+    saw_result = False
 
     def flush():
         if pending:
@@ -93,11 +94,17 @@ def output_descriptors(output: list[dict]) -> dict[str, dict]:
 
     for item in output:
         if item.get('type') == 'function_call':
+            if saw_result:
+                flush()
+                saw_result = False
             call_id = item.get('call_id') or item.get('id') or ''
             calls[call_id] = item
             pending.append(call_id)
-        elif item.get('type') != 'function_call_output':
+        elif item.get('type') == 'function_call_output':
+            saw_result = True
+        else:
             flush()
+            saw_result = False
     flush()
     refs = {}
     for index, item in enumerate(output):
@@ -149,3 +156,29 @@ def result_metadata(output: list[dict], call_id: str) -> dict:
     synthetic = {'type': 'function_call_output', 'id': '_new_result', 'call_id': call_id, 'output': []}
     ref = output_descriptors([*output, synthetic])['_new_result']
     return {key: ref[key] for key in ('batch_id', 'name', 'kind')}
+
+
+async def register_tool_results(request, metadata, model_id, *, output=None, output_ids=None, descriptors=None):
+    """Only execution paths can admit new results; a cache miss is never admission."""
+    if not tool_budget_active(request, metadata):
+        return
+    from fastapi import HTTPException
+    from open_webui.models.chat_tool_result_selections import get_tool_selection_store
+
+    message_id = metadata.get('message_id')
+    if descriptors is None:
+        selected = set(output_ids or [])
+        descriptors = [
+            dict(ref, message_id=message_id)
+            for ref in output_descriptors(output or []).values()
+            if ref['output_id'] in selected
+        ]
+    if not descriptors:
+        return
+    model_id = model_id or request.state.context_compaction.get('model_id')
+    if not model_id or not await get_tool_selection_store().register_pending(
+        metadata['chat_id'], model_id, descriptors, branch_id=message_id
+    ):
+        raise HTTPException(
+            409, 'Tool outputs are saved but could not be admitted; reload and retry without executing tools again'
+        )

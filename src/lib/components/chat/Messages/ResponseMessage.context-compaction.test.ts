@@ -279,3 +279,40 @@ describe('tool result notifications belong to their original reply', () => {
 		);
 	});
 });
+
+describe('localized tool preparation termination', () => {
+	it('renders cancellation as a completed required operation', () => {
+		expect(
+			renderStatus(
+				[
+					{
+						action: 'tool_result_compaction',
+						source_message_id: 'a',
+						done: true,
+						error: true,
+						cancelled: true
+					}
+				],
+				false,
+				true
+			)
+		).toContain('工具结果准备已取消');
+	});
+	it('localizes saved-output retry guidance rather than exposing its English description', () => {
+		const html = renderStatus(
+			[
+				{
+					action: 'tool_result_compaction',
+					source_message_id: 'a',
+					done: true,
+					error: true,
+					description: 'Tool result preparation failed; retry using saved tool outputs'
+				}
+			],
+			false,
+			true
+		);
+		expect(html).toContain('工具结果准备失败，请使用已保存的工具输出重试');
+		expect(html).not.toContain('Tool result preparation failed');
+	});
+});

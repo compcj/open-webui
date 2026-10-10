@@ -146,3 +146,44 @@ describe('tool notification identity', () => {
 		expect(chat.history.messages.reply.statusHistory).toEqual([]);
 	});
 });
+
+describe('tool preparation cancellation', () => {
+	it('closes the same operation and ignores replay accounting as a new conversation notice', async () => {
+		const chat = createChat();
+		const start = {
+			action: 'tool_result_compaction',
+			source_message_id: 'reply',
+			operation_id: 'prepare',
+			done: false
+		};
+		for (const data of [start, { ...start, done: true, error: true, cancelled: true }])
+			await chat.event({
+				chat_id: 'chat',
+				message_id: 'reply',
+				data: { type: 'tool_result_compaction', data }
+			});
+		expect(chat.history.messages.reply.statusHistory).toEqual([
+			{ ...start, done: true, error: true, cancelled: true }
+		]);
+		await chat.event({
+			chat_id: 'chat',
+			message_id: 'reply',
+			data: {
+				type: 'context_usage',
+				data: {
+					mode: 'v2',
+					model: 'model',
+					tokens: 80000,
+					last_tool_batch: {
+						source_message_id: 'earlier',
+						recorded_at: 1728000000000000000,
+						original_tokens: 19000,
+						processed_tokens: 10000
+					}
+				}
+			}
+		});
+		expect(chat.history.messages.reply.statusHistory).toHaveLength(1);
+		expect(chat.usage().last_tool_batch.recorded_at).toBe(1728000000000000000);
+	});
+});

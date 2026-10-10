@@ -16,7 +16,13 @@ from test_web_tool_citations import BACKEND, load_functions
 @pytest.fixture
 def runtime(monkeypatch):
     monkeypatch.syspath_prepend(str(BACKEND.parent))
-    ns = {'JSONCodec': json, 'log': logging.getLogger(__name__)}
+    from types import ModuleType
+
+    selections = SimpleNamespace(register_pending=AsyncMock(return_value=True))
+    module = ModuleType('open_webui.models.chat_tool_result_selections')
+    module.get_tool_selection_store = lambda: selections
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    ns = {'JSONCodec': json, 'log': logging.getLogger(__name__), 'selection_store': selections}
     load_functions(
         ns,
         'utils/misc.py',
@@ -202,18 +208,33 @@ async def test_approved_execution_persists_provenance_and_resume_never_reexecute
         execute_tool_call_for_output=AsyncMock(side_effect=execute),
         build_tool_result_parts=lambda result: ([{'type': 'input_text', 'text': result['content']}], []),
         _is_tool_result_error=lambda text: False,
-        output_id=lambda prefix: prefix + '-test',
+        output_id=lambda prefix: prefix + '-' + str(ns['execute_tool_call_for_output'].await_count),
         load_messages_from_db=AsyncMock(return_value=[]),
         ENABLE_PLUGINS=False,
     )
     load_functions(ns, 'utils/middleware.py', {'drain_approved_tool_calls'})
     metadata = {'chat_id': 'chat-1', 'assistant_message_id': 'assistant-1', 'message_id': 'assistant-1'}
-    await ns['drain_approved_tool_calls'](SimpleNamespace(state=SimpleNamespace()), {}, None, {'id': 'model'}, metadata)
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            context_compaction={
+                'mode': 'v2',
+                'chat_id': 'chat-1',
+                'model_id': 'model',
+                'user_message_id': 'user-1',
+                'settings': SimpleNamespace(tool_budget_enabled=True),
+            }
+        )
+    )
+    await ns['drain_approved_tool_calls'](request, {}, None, {'id': 'model'}, metadata)
     results = [i for i in snapshots[-1]['output'] if i['type'] == 'function_call_output']
     assert all(item.get('tool_result') for item in results), 'approval must save original result identity'
     assert results[0]['tool_result']['batch_id'] == results[1]['tool_result']['batch_id']
     assert results[1]['tool_result']['kind'] == 'read'
-    await ns['drain_approved_tool_calls'](SimpleNamespace(state=SimpleNamespace()), {}, None, {'id': 'model'}, metadata)
+    admission = ns['selection_store'].register_pending.await_args
+    assert admission.args[:2] == ('chat-1', 'model')
+    assert len(admission.args[2]) == 2 and len({r['batch_id'] for r in admission.args[2]}) == 1
+    await ns['drain_approved_tool_calls'](request, {}, None, {'id': 'model'}, metadata)
+    ns['selection_store'].register_pending.assert_awaited_once()
     assert ns['execute_tool_call_for_output'].await_count == 2
 
 
@@ -235,6 +256,7 @@ async def test_nonnative_sidecars_are_saved_before_send_and_injected_exactly_onc
             context_compaction={
                 'mode': 'v2',
                 'chat_id': 'chat-1',
+                'model_id': 'model',
                 'user_message_id': 'user-1',
                 'settings': SimpleNamespace(tool_budget_enabled=True),
             }
@@ -253,6 +275,8 @@ async def test_nonnative_sidecars_are_saved_before_send_and_injected_exactly_onc
     assert persisted[0]['tool_results'][0]['text'] == 'original & <raw>'
     assert persisted[0]['meta']['tool_results'] == sidecars
     assert source['_tool_result_ref']['message_id'] == 'assistant-1'
+    ns['selection_store'].register_pending.assert_awaited_once()
+    assert ns['selection_store'].register_pending.await_args.args[2][0]['text'] == sidecars[0]['text']
 
 
 @pytest.mark.asyncio
@@ -288,6 +312,7 @@ async def test_native_v2_citations_do_not_reintroduce_raw_snippets(runtime):
             context_compaction={
                 'mode': 'v2',
                 'chat_id': 'chat-1',
+                'model_id': 'model',
                 'user_message_id': 'user-1',
                 'settings': SimpleNamespace(tool_budget_enabled=True),
             }
@@ -474,6 +499,7 @@ async def test_nonnative_execution_persistence_injection_and_replay_share_exact_
             context_compaction={
                 'mode': 'v2',
                 'chat_id': 'chat-1',
+                'model_id': 'model',
                 'user_message_id': 'user-1',
                 'settings': SimpleNamespace(tool_budget_enabled=True),
             }
@@ -605,6 +631,7 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     ns.update(
         output=output,
         full_output=lambda: output,
+        new_tool_output_ids=[item['id'] for item in output if item.get('type') == 'function_call_output'],
         form_data={
             'previous_response_id': 'stale-previous',
             'messages': [
@@ -621,7 +648,17 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
         filter_functions=[],
         generate_chat_completion=capture,
         user=SimpleNamespace(id='owner'),
-        request=SimpleNamespace(state=SimpleNamespace(context_compaction={'mode': 'v2'})),
+        request=SimpleNamespace(
+            state=SimpleNamespace(
+                context_compaction={
+                    'mode': 'v2',
+                    'chat_id': 'chat-1',
+                    'model_id': 'model',
+                    'user_message_id': 'user-1',
+                    'settings': SimpleNamespace(tool_budget_enabled=True),
+                }
+            )
+        ),
         Chats=SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock()),
         convert_url_images_to_base64=AsyncMock(side_effect=lambda payload, **kwargs: payload),
     )
@@ -632,6 +669,9 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     assert sum(message.get('role') == 'user' for message in messages) >= 5
     assert 'previous_response_id' not in capture.await_args.args[1]
     assert ns['Chats'].upsert_message_to_chat_by_id_and_message_id.await_args.args[2]['output'] == output
+    admission = ns['selection_store'].register_pending.await_args
+    assert admission.args[:2] == ('chat-1', 'model')
+    assert {ref['output_id'] for ref in admission.args[2]} == {'result-a', 'result-b'}
 
 
 @pytest.mark.asyncio
@@ -649,6 +689,7 @@ async def test_auxiliary_reader_path_works_when_builtin_capability_is_disabled(r
                 context_compaction={
                     'mode': 'v2',
                     'chat_id': 'chat-1',
+                    'model_id': 'model',
                     'user_message_id': 'user-1',
                     'settings': SimpleNamespace(tool_budget_enabled=True),
                 }
@@ -789,3 +830,70 @@ def test_injected_context_explicitly_frames_embedded_text_as_untrusted_data(runt
     assert 'untrusted data' in message['content'].lower()
     ref = message['_tool_result_refs'][0]
     assert message['content'][ref['start'] : ref['end']] == 'raw'
+
+
+@pytest.mark.asyncio
+async def test_code_execution_admits_only_new_saved_result_before_followup(runtime):
+    import ast
+
+    ns = runtime
+    tree = ast.parse((BACKEND / 'utils/middleware.py').read_text(encoding='utf-8'))
+    block = min(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == 'register_tool_results'
+                and any(
+                    keyword.arg == 'output_ids'
+                    and any(isinstance(part, ast.Name) and part.id == 'ci_item' for part in ast.walk(keyword.value))
+                    for keyword in child.keywords
+                )
+                for child in ast.walk(node)
+            )
+        ),
+        key=lambda node: len(list(ast.walk(node))),
+    )
+    wrapper = ast.parse('async def persist_code():\n    pass\n')
+    wrapper.body[0].body = [block]
+    exec(compile(ast.fix_missing_locations(wrapper), 'code_provenance', 'exec'), ns)
+    old = {'id': 'old-code', 'type': 'open_webui:code_interpreter', 'output': {'stdout': 'old'}}
+    current = {'id': 'new-code', 'type': 'open_webui:code_interpreter', 'output': {'stdout': 'precise code output'}}
+    saved = []
+
+    async def persist(*args, **kwargs):
+        saved.append(copy.deepcopy(args[2]['output']))
+
+    async def admit(chat_id, model_id, descriptors, **kwargs):
+        assert saved == [[old, current]], 'raw code must be persisted before server admission'
+        assert [r['output_id'] for r in descriptors] == ['new-code']
+        assert descriptors[0]['text'] == 'precise code output'
+        assert descriptors[0]['kind'] == 'code'
+        return True
+
+    ns['selection_store'].register_pending.side_effect = admit
+    ns.update(
+        request=SimpleNamespace(
+            state=SimpleNamespace(
+                context_compaction={
+                    'mode': 'v2',
+                    'chat_id': 'chat-1',
+                    'user_message_id': 'u',
+                    'model_id': 'model',
+                    'settings': SimpleNamespace(tool_budget_enabled=True),
+                }
+            )
+        ),
+        metadata={'chat_id': 'chat-1', 'message_id': 'a'},
+        model_id='model',
+        form_data={'messages': []},
+        new_form_data={'messages': []},
+        ci_item=current,
+        full_output=lambda: [old, current],
+        Chats=SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=persist),
+    )
+    await ns['persist_code']()
+    ns['selection_store'].register_pending.assert_awaited_once()

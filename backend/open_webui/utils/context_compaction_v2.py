@@ -362,6 +362,7 @@ def usage_data(tokens: int, budget: Budget, model_id: str, *, source=None) -> di
         'input_budget': budget.input_budget,
         'threshold': budget.threshold,
         'remaining_tokens': max(0, budget.threshold - tokens),
+        'input_remaining_tokens': max(0, budget.input_budget - tokens),
         'tokens': tokens,
         'estimated_tokens': tokens,
         'percent': min(100, round(tokens * 100 / max(1, budget.threshold))),
@@ -415,7 +416,7 @@ def atomic_groups(messages: list[dict]) -> list[MessageGroup]:
 
 
 def select_compactable_indices(
-    messages: list[dict], recent_tokens: int, protected_user: int | None, *, force=False
+    messages: list[dict], recent_tokens: int, protected_user: int | None, *, force=False, message_costs=None
 ) -> list[int]:
     if protected_user is None:
         return []  # Do not guess which synthetic user message is the real user.
@@ -442,7 +443,11 @@ def select_compactable_indices(
                 or any(messages[i].get('role') in {'system', 'developer'} for i in range(g.start, g.end))
                 for g in unit
             )
-            count = sum(estimate_message(messages[i]) for g in unit for i in range(g.start, g.end))
+            count = sum(
+                message_costs[i] if message_costs is not None else estimate_message(messages[i])
+                for g in unit
+                for i in range(g.start, g.end)
+            )
             if must_keep or (not force and not suffix_full and kept_tokens + count <= recent_tokens):
                 protected.update(i for g in unit for i in range(g.start, g.end))
                 kept_tokens += count
@@ -1169,7 +1174,7 @@ def _protected_indices(messages: list[dict], raw: list[dict], latest: int) -> se
 
 
 async def prepare_v2_request(
-    request, user, payload: dict, metadata: dict, model_id: str, models: dict, *, force=False
+    request, user, payload: dict, metadata: dict, model_id: str, models: dict, *, force=False, admit_tools=True
 ) -> dict:
     from open_webui.utils.chat_id import is_saved_chat_id
 
@@ -1279,8 +1284,13 @@ async def prepare_v2_request(
                     i for i, message in enumerate(messages) if wire_message(message) == history_message(previous)
                 )
 
+            planning_messages = tool_plan.planning_payload(original)['messages'] if tool_plan else messages
+            message_costs = [estimate_message(m) for m in planning_messages]
+
             def select_available(target, *, all_optional=False):
-                selected = select_compactable_indices(messages, target, latest, force=force or all_optional)
+                selected = select_compactable_indices(
+                    messages, target, latest, force=force or all_optional, message_costs=message_costs
+                )
                 allowed = set(selected) - protected
                 # Protect the entire call/result/image group when any member is
                 # required. Runtime instructions are not an optional retention target.
@@ -1415,7 +1425,7 @@ async def prepare_v2_request(
                     detail=f'Context exceeds the input budget ({before}/{budget.input_budget} tokens). {description}',
                 ) from exc
             log.warning('V2 compaction failed within input budget; preserving request: %s', type(exc).__name__)
-    if tool_plan:
+    if tool_plan and admit_tools:
         try:
             original = await tool_plan.finish(original)
         except asyncio.CancelledError:
@@ -1436,6 +1446,10 @@ async def prepare_v2_request(
                 },
             )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        tokens, source = estimate_payload_tokens(original), None
+    elif tool_plan:
+        # A manual history-only action has no following provider send. Pending
+        # tools remain unadopted and usage describes their actual current text.
         tokens, source = estimate_payload_tokens(original), None
     # A prefill must remain the final assistant message for the provider to continue it.
     if (
@@ -1464,17 +1478,14 @@ async def prepare_v2_request(
         tool_result_limit=single_limit,
         tool_batch_limit=batch_limit,
         last_tool_batch=state.get('last_tool_batch'),
+        accounting_error=bool(state.get('tool_accounting_error')),
     )
-    if tool_plan and tool_plan.last_batch:
-        refs = tool_accounting_refs(raw, tool_plan.last_batch['results'])
-        state['last_usage']['tool_budget_accounting'] = {
-            'model': model_id,
-            'branch_id': current_id,
-            'recorded_at': time.time_ns(),
-            'source_refs': refs,
-            'source_fingerprint': digest(refs),
-            'last_tool_batch': copy.deepcopy(tool_plan.last_batch),
-        }
+    if tool_plan and tool_plan.last_accounting:
+        state['last_usage']['last_tool_batch'] = tool_plan.last_accounting['last_tool_batch']
+        compat_accounting = copy.deepcopy(tool_plan.last_accounting)
+        refs = tool_accounting_refs(raw, compat_accounting['last_tool_batch']['results'])
+        compat_accounting.update(source_refs=refs, source_fingerprint=digest(refs))
+        state['last_usage']['tool_budget_accounting'] = compat_accounting
     state['last_compacted'] = did_compact
     await emit_event(metadata, 'context_usage', state['last_usage'])
     return original
@@ -1538,7 +1549,9 @@ async def compact_v2_chat_branch(request, user, chat, model_id: str, models: dic
     }
     request.state.context_compaction = state
     try:
-        await prepare_v2_request(request, user, payload, state['metadata'], model_id, models, force=True)
+        await prepare_v2_request(
+            request, user, payload, state['metadata'], model_id, models, force=True, admit_tools=False
+        )
         return {'ok': True, 'compacted': state.get('last_compacted', False), 'usage': state.get('last_usage')}
     finally:
         request.state.context_compaction = old_state
@@ -1635,10 +1648,22 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
             }
             last_batch = {
                 'batch_id': last,
+                'complete': False,
+                'historical': True,
                 'results': list(by_result.values()),
                 'original_tokens': sum(item.get('original_tokens', 0) for item in by_result.values()),
                 'processed_tokens': sum(item.get('processed_tokens', 0) for item in by_result.values()),
             }
+    if settings.tool_budget_enabled:
+        from open_webui.utils.tool_result_budget import get_tool_selection_store
+
+        committed = await get_tool_selection_store().latest_accounting(chat.id, model_id, branch_id)
+        if committed:
+            last_batch = copy.deepcopy(committed['last_tool_batch'])
+        elif last_batch:
+            last_batch['historical'] = True
+            # Pre-selection records cannot establish which version was sent.
+            last_batch['complete'] = False
     single_limit, batch_limit = tool_limits(budget.context_window, settings)
     return {
         **usage_data(estimate_payload_tokens(payload), budget, model_id, source='estimated:stored-history'),

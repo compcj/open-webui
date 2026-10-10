@@ -70,6 +70,7 @@ async def database(tmp_path):
     for name in (
         'open_webui.models.chat_context_checkpoints',
         'open_webui.models.chat_tool_results',
+        'open_webui.models.chat_tool_result_selections',
         'open_webui.utils.tool_result_store',
         'open_webui.utils.tool_result_sources',
     ):
@@ -79,6 +80,7 @@ async def database(tmp_path):
             if modules[name] is None:
                 del sys.modules[name]
         model = importlib.import_module('open_webui.models.chat_tool_results')
+        selection_model = importlib.import_module('open_webui.models.chat_tool_result_selections')
         store_module = importlib.import_module('open_webui.utils.tool_result_store')
         async with engine.begin() as connection:
             await connection.run_sync(base.metadata.create_all)
@@ -128,6 +130,8 @@ async def database(tmp_path):
                 store=store_module.get_tool_result_store(),
                 module=store_module,
                 model=model,
+                selections=selection_model.get_tool_selection_store(),
+                selection_model=selection_model,
                 sessions=sessions,
                 chat=chat,
                 message=message,
@@ -150,7 +154,7 @@ def descriptor(db):
 
 
 async def edit(db, message_id, **updates):
-    db.raw[message_id] = {**db.raw[message_id], **updates}
+    db.raw[message_id] = {**db.raw.get(message_id, {'id': message_id}), **updates}
     async with db.sessions() as session:
         await session.execute(
             db.chat.update().where(db.chat.c.id == 'chat').values(chat={'history': {'messages': db.raw}})
@@ -503,3 +507,88 @@ async def test_ancestor_sidecar_evidence_edit_invalidates_result(database):
     assert saved
     await edit(db, 'u', meta={'tool_results': [{'id': 'earlier', 'text': 'edited evidence'}]})
     assert await db.store.get_result(saved['id'], branch_id='leaf') is None
+
+
+@pytest.mark.asyncio
+async def test_cursor_accepts_descendant_branch_and_legacy_ancestor_signature(database):
+    import base64
+    import struct
+    from fastapi import HTTPException
+
+    db = database
+    result = await db.store.save_result('chat', descriptor(db), branch_id='a')
+    user = SimpleNamespace(id='owner', role='user')
+    page = await db.module.read_tool_result_page(user, 'chat', result['id'], branch_id='a', max_tokens=400)
+    resumed = await db.module.read_tool_result_page(
+        user, 'chat', result['id'], branch_id='leaf', cursor=page['next_cursor'], max_tokens=400
+    )
+    assert resumed['start'] == page['end']
+    offset = struct.pack('>Q', page['end'])
+    legacy = (
+        base64.urlsafe_b64encode(offset + db.module._cursor_signature(result, 'a', None, offset)).decode().rstrip('=')
+    )
+    old = await db.module.read_tool_result_page(
+        user, 'chat', result['id'], branch_id='leaf', cursor=legacy, max_tokens=400
+    )
+    assert old['start'] == page['end']
+    leaf_page = await db.module.read_tool_result_page(user, 'chat', result['id'], branch_id='leaf', max_tokens=400)
+    await edit(db, 'sister', role='user', content='sister task', parentId='a')
+    for cursor in (leaf_page['next_cursor'], 'x' * 4096):
+        with pytest.raises(HTTPException) as denied:
+            await db.module.read_tool_result_page(
+                user, 'chat', result['id'], branch_id='sister', cursor=cursor, max_tokens=400
+            )
+        assert denied.value.status_code == 400
+    changed = [{**db.raw['a']['output'][0], 'output': [{'type': 'input_text', 'text': 'changed source'}]}]
+    await edit(db, 'a', output=changed)
+    replacement = await db.store.save_result('chat', {**descriptor(db), 'text': 'changed source'}, branch_id='leaf')
+    with pytest.raises(HTTPException) as denied:
+        await db.module.read_tool_result_page(
+            user, 'chat', replacement['id'], branch_id='leaf', cursor=page['next_cursor'], max_tokens=400
+        )
+    assert denied.value.status_code == 400
+
+
+def test_selection_migration_roundtrip_preserves_raw_and_cascades(tmp_path):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    paths = list((ROOT / 'open_webui/migrations/versions').glob('*_add_chat_tool_result_selections.py'))
+    assert len(paths) == 1
+
+    def load(path, name):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    migration = load(paths[0], 'selection_migration')
+    raw_migration = load(
+        next((ROOT / 'open_webui/migrations/versions').glob('*_add_chat_tool_results.py')), 'raw_migration'
+    )
+    assert migration.down_revision == raw_migration.revision
+    engine = create_engine('sqlite:///' + str(tmp_path / 'selection-migration.db'))
+    with engine.begin() as connection:
+        connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+        connection.exec_driver_sql('CREATE TABLE chat (id TEXT PRIMARY KEY)')
+        connection.exec_driver_sql("INSERT INTO chat VALUES ('chat')")
+        with Operations.context(MigrationContext.configure(connection)):
+            raw_migration.upgrade()
+            connection.exec_driver_sql("""INSERT INTO chat_tool_result
+                (id,chat_id,message_id,output_id,call_id,batch_id,name,kind,text,source_hash,source_fingerprint,created_at)
+                VALUES ('raw','chat','a','out','call','batch','tool','native','raw text','hash','fingerprint',1)""")
+            migration.upgrade()
+            assert connection.exec_driver_sql('SELECT COUNT(*) FROM chat_tool_result_selection').scalar() == 0
+            connection.exec_driver_sql("""INSERT INTO chat_tool_result_selection
+                (id,chat_id,result_id,model_id,branch_anchor_id,state,method,allocation,original_tokens,processed_tokens,recorded_at,message_id,output_id,call_id,batch_id,name,kind,source_hash,source_fingerprint)
+                VALUES ('selection','chat',NULL,'model','a','prepared','original',100,100,100,1,'a','out','call','batch','tool','native','hash','fingerprint')""")
+            migration.downgrade()
+            assert connection.exec_driver_sql('SELECT text FROM chat_tool_result').scalar() == 'raw text'
+            assert connection.exec_driver_sql('SELECT COUNT(*) FROM chat').scalar() == 1
+            migration.upgrade()
+            connection.exec_driver_sql("""INSERT INTO chat_tool_result_selection
+                (id,chat_id,result_id,model_id,branch_anchor_id,state,method,allocation,original_tokens,processed_tokens,recorded_at,message_id,output_id,call_id,batch_id,name,kind,source_hash,source_fingerprint)
+                VALUES ('selection','chat',NULL,'model','a','prepared','original',100,100,100,1,'a','out','call','batch','tool','native','hash','fingerprint')""")
+            connection.exec_driver_sql("DELETE FROM chat WHERE id='chat'")
+            assert connection.exec_driver_sql('SELECT COUNT(*) FROM chat_tool_result_selection').scalar() == 0
+    engine.dispose()

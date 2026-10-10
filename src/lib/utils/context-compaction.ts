@@ -13,6 +13,8 @@ export interface ContextUsage {
 	effective_context_window?: number;
 	input_budget?: number;
 	remaining_tokens?: number;
+	input_remaining_tokens?: number;
+	accounting_error?: boolean | string;
 	before_tokens?: number;
 	after_tokens?: number;
 	tool_budget_enabled?: boolean;
@@ -22,6 +24,18 @@ export interface ContextUsage {
 	tool_batch_percent?: number;
 	last_tool_batch?: {
 		batch_id: string;
+		source_message_id?: string;
+		decision_id?: string;
+		/** Unix nanoseconds; replay must not refresh this decision clock. */
+		recorded_at?: number;
+		complete?: boolean;
+		historical?: boolean;
+		limits_at_decision?: {
+			context_window: number;
+			input_budget: number;
+			result_limit: number;
+			batch_limit: number;
+		};
 		original_tokens: number;
 		processed_tokens: number;
 		results: ToolResultStatus[];
@@ -80,12 +94,15 @@ export interface ToolResultStatus {
 	batch_id: string;
 	tool: string;
 	result_id?: string;
+	selection_id?: string;
+	context_id?: string;
 	method?: 'summary' | 'excerpt' | 'original' | 'read';
 	original_tokens?: number;
 	processed_tokens?: number;
 	result_limit?: number;
 	batch_limit?: number;
 	allocated_tokens?: number;
+	reduction_reasons?: string[];
 	estimate_source?: string;
 	branch_id?: string;
 	source_message_id?: string;
@@ -94,6 +111,7 @@ export interface ToolResultStatus {
 	call_id?: string;
 	reused?: boolean;
 	error?: boolean;
+	cancelled?: boolean;
 	done: boolean;
 }
 
@@ -152,4 +170,54 @@ export const mergeCompactionStatus = (history: any[], status: any): any[] => {
 	if (index < 0) result.push(status);
 	else if (!(result[index]?.done && !status?.done)) result[index] = { ...result[index], ...status };
 	return result;
+};
+
+// remaining_tokens / percent describe the trigger, not the model's input capacity.
+export const getContextBudgetStatus = (usage: ContextUsage | null) => {
+	const known = (value: unknown): value is number =>
+		typeof value === 'number' && Number.isFinite(value) && value >= 0;
+	const tokens = known(usage?.tokens)
+		? usage.tokens
+		: known(usage?.estimated_tokens)
+			? usage.estimated_tokens
+			: null;
+	const threshold = known(usage?.threshold) && usage.threshold > 0 ? usage.threshold : null;
+	return {
+		tokens,
+		threshold,
+		percent:
+			threshold !== null
+				? known(usage?.percent)
+					? usage.percent
+					: tokens !== null
+						? (tokens / threshold) * 100
+						: null
+				: null,
+		triggerRemaining: known(usage?.remaining_tokens)
+			? usage.remaining_tokens
+			: threshold !== null && tokens !== null
+				? Math.max(0, threshold - tokens)
+				: null,
+		inputRemaining: known(usage?.input_remaining_tokens)
+			? usage.input_remaining_tokens
+			: known(usage?.input_budget) && tokens !== null
+				? Math.max(0, usage.input_budget - tokens)
+				: null
+	};
+};
+
+export const getToolBatchOrigin = (
+	batch: { source_message_id?: string; historical?: boolean },
+	currentMessageId?: string
+): 'current' | 'previous' | 'historical' | 'unknown' => {
+	if (batch.historical) return 'historical';
+	if (!batch.source_message_id || !currentMessageId) return 'unknown';
+	return batch.source_message_id === currentMessageId ? 'current' : 'previous';
+};
+
+export const getToolBatchRecordedDate = (recordedAt?: number): Date | null => {
+	if (typeof recordedAt !== 'number' || !Number.isFinite(recordedAt) || recordedAt <= 0)
+		return null;
+	const date = new Date(recordedAt / 1_000_000);
+	return Number.isNaN(date.getTime()) ? null : date;
 };

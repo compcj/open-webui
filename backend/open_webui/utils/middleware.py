@@ -1180,7 +1180,7 @@ async def apply_source_context_to_messages(
     return messages
 
 
-async def persist_injected_tool_results(request, metadata: dict, sources: list) -> list[dict]:
+async def persist_injected_tool_results(request, metadata: dict, sources: list, model_id=None) -> list[dict]:
     """Persist original nonnative tool text before any context projection/send."""
     from open_webui.utils.tool_result_sources import batch_id, tool_budget_active
 
@@ -1193,6 +1193,7 @@ async def persist_injected_tool_results(request, metadata: dict, sources: list) 
     meta = dict(original.get('meta') or {})
     sidecars = list(original.get('tool_results') or meta.get('tool_results') or [])
     ids = {item['id'] for item in sidecars}
+    new_descriptors = []
     for source in sources:
         if not source.get('tool_result'):
             continue
@@ -1216,11 +1217,15 @@ async def persist_injected_tool_results(request, metadata: dict, sources: list) 
                 }
             )
             ids.add(output_id)
+            new_descriptors.append({**ref, 'output_id': output_id, 'text': str(document)})
     if sidecars:
         meta['tool_results'] = sidecars
         await Chats.upsert_message_to_chat_by_id_and_message_id(
             metadata['chat_id'], message_id, {'tool_results': sidecars, 'meta': meta}, touch=False
         )
+    from open_webui.utils.tool_result_sources import register_tool_results
+
+    await register_tool_results(request, metadata, model_id, descriptors=new_descriptors)
     return sidecars
 
 
@@ -3573,7 +3578,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         )
     metadata['system_prompt'] = system_content or None
     metadata['user_prompt'] = get_last_user_message(form_data['messages'])
-    await persist_injected_tool_results(request, metadata, sources)
+    await persist_injected_tool_results(request, metadata, sources, model['id'])
     metadata['sources'] = sources[:] if sources else []
 
     # If context is not empty, insert it into the messages
@@ -3810,6 +3815,7 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
     citation_source_ids = get_tool_citation_source_ids(message.get('sources') or metadata.get('sources', []), output)
     citations_enabled = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('citations', True)
     changed = False
+    new_tool_output_ids = []
     for item in approved_calls:
         if item.get('name') == 'ask_user':
             item['status'] = 'pending'
@@ -3865,6 +3871,7 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
                 **({'embeds': result.get('embeds')} if result.get('embeds') else {}),
             }
         )
+        new_tool_output_ids.append(output[-1]['id'])
         changed = True
 
     if changed:
@@ -3910,6 +3917,9 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
             {'done': False, 'output': output},
             touch=False,
         )
+        from open_webui.utils.tool_result_sources import register_tool_results
+
+        await register_tool_results(request, metadata, model['id'], output=output, output_ids=new_tool_output_ids)
         if event_emitter:
             await event_emitter(
                 {
@@ -6475,6 +6485,7 @@ async def streaming_chat_response_handler(response, ctx):
                         results.append(result)
 
                     result_status_by_call_id = {}
+                    new_tool_output_ids = []
                     for result in results:
                         from open_webui.utils.tool_result_sources import result_metadata
 
@@ -6506,6 +6517,8 @@ async def streaming_chat_response_handler(response, ctx):
                                 **({'embeds': result.get('embeds')} if result.get('embeds') else {}),
                             }
                         )
+
+                        new_tool_output_ids.append(output[-1]['id'])
 
                     # Update function_call statuses and parsed/sanitized arguments.
                     for tc in response_tool_calls:
@@ -6622,6 +6635,11 @@ async def streaming_chat_response_handler(response, ctx):
                                 metadata['message_id'],
                                 {'output': full_output(), 'done': False},
                                 touch=False,
+                            )
+                            from open_webui.utils.tool_result_sources import register_tool_results
+
+                            await register_tool_results(
+                                request, metadata, model_id, output=full_output(), output_ids=new_tool_output_ids
                             )
 
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
@@ -6874,6 +6892,11 @@ async def streaming_chat_response_handler(response, ctx):
                                     metadata['message_id'],
                                     {'output': full_output(), 'done': False},
                                     touch=False,
+                                )
+                                from open_webui.utils.tool_result_sources import register_tool_results
+
+                                await register_tool_results(
+                                    request, metadata, model_id, output=full_output(), output_ids=[ci_item['id']]
                                 )
 
                             new_form_data = await convert_url_images_to_base64(new_form_data, user=user)

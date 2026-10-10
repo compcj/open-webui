@@ -17,6 +17,7 @@ from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
 from open_webui.models.chat_context_checkpoints import ChatContextCheckpoint, read_snapshot_in_session
 from open_webui.models.chat_tool_results import ChatToolResult, ChatToolResultContext
+from open_webui.models.chat_tool_result_selections import ChatToolResultSelection
 from open_webui.models.folders import Folders
 from open_webui.models.tags import Tag, TagModel, Tags
 from open_webui.utils.misc import get_output_text, sanitize_data_for_db, sanitize_text_for_db
@@ -2621,6 +2622,7 @@ class ChatTable:
             async with get_async_db_context(db) as session:
                 await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
                 await session.execute(delete(ChatMessage).filter_by(chat_id=id))
+                await session.execute(delete(ChatToolResultSelection).filter_by(chat_id=id))
                 await session.execute(delete(ChatToolResultContext).filter_by(chat_id=id))
                 await session.execute(delete(ChatToolResult).filter_by(chat_id=id))
                 await session.execute(delete(ChatContextCheckpoint).filter_by(chat_id=id))
@@ -2637,6 +2639,9 @@ class ChatTable:
                 await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
                 await session.execute(delete(ChatMessage).filter_by(chat_id=id))
                 owned_chat_ids = select(Chat.id).filter_by(id=id, user_id=user_id)
+                await session.execute(
+                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(owned_chat_ids))
+                )
                 await session.execute(
                     delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(owned_chat_ids))
                 )
@@ -2669,6 +2674,9 @@ class ChatTable:
                 )
                 owned_chat_ids = select(Chat.id).filter_by(user_id=user_id)
                 await session.execute(
+                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(owned_chat_ids))
+                )
+                await session.execute(
                     delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(owned_chat_ids))
                 )
                 await session.execute(delete(ChatToolResult).where(ChatToolResult.chat_id.in_(owned_chat_ids)))
@@ -2694,6 +2702,9 @@ class ChatTable:
                     update(AutomationRun).filter(AutomationRun.chat_id.in_(chat_ids_stmt)).values(chat_id=None)
                 )
                 await session.execute(delete(ChatMessage).filter(ChatMessage.chat_id.in_(chat_ids_stmt)))
+                await session.execute(
+                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(chat_ids_stmt))
+                )
                 await session.execute(
                     delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(chat_ids_stmt))
                 )

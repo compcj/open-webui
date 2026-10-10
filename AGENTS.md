@@ -71,15 +71,25 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
   `context_compaction_config.py`, final-send/retry hooks in `context_compaction_dispatch.py`, and
   persistence in `backend/open_webui/models/chat_context_checkpoints.py`. Isolate checkpoints by
   model and validated branch ancestry/content; stale or competing writes must never win.
-- V2 tool budgets apply only to trusted saved chats when enabled: resolve model window `C`, reserve
-  the incoming batch's desired allowance, compact older history first, then allocate per-result and
-  batch caps fairly. Preserve raw results, call/result pairing and checkpoint source identities.
-  Tool summaries/excerpts are request projections; exact raw rereads remain exact and branch-scoped.
-  Off/legacy/disabled behavior is unchanged; retries must never execute tools again.
-- Keep tool budget accounting separate from conversation notices. Only newly summarized/excerpted
-  results belonging to the current reply emit compaction notices; original/exact/cached results remain
-  in usage accounting, including after reload. Persist complete batch statistics separately from notices;
-  validate their model, branch and source identity. Preserve source-reply records and deduplicate progress.
+- V2 tool budgets apply only to server-registered new results in trusted saved chats. Apply valid
+  history checkpoints and fixed tool selections first; historical originals/summaries are fixed input,
+  not competitors for a new batch's allowance. Reserve capped new demand, compact older history first,
+  then allocate fairly and reclaim actual savings after each reduction. Count the complete final request,
+  including media, references, repeated injection and JSON framing; only unselected new results can shrink.
+- `backend/open_webui/models/chat_tool_result_selections.py` owns pending/prepared versions. Prepare
+  atomically after full budget validation and before transport, revalidating sources and concurrent
+  winners (including batch caps) before commit. Candidates, approval pauses and manual history compaction
+  do not adopt versions. Preparation means selected for send, not confirmed delivery. Preserve raw data,
+  source identities and pairing, including empty/image-only outputs. Never re-execute tools on retry.
+- Replay and status share the read-only selection resolver, isolated by model, valid ancestry and source.
+  Upgrade/import without a selection uses raw content, not a guessed cache. Later task/policy changes do
+  not rewrite selected history; source edits invalidate it. Off/legacy/disabled behavior is unchanged.
+- Keep accounting separate from notices. Only current-reply new summaries/excerpts and necessary errors
+  notify; originals, exact reads and reuse remain silent. End failed/cancelled operations using the same
+  operation identity. Persist complete batch accounting with selection IDs, source reply, decision time,
+  then-effective limits and reduction reasons; never retime replay or label partial legacy data complete.
+  Distinguish window C, input budget B and trigger T: remaining_tokens is T-based; input_remaining_tokens
+  is B-based. Exact raw cursors allow source-validated descendant branches, never siblings/other chats.
 - Internal V2 summaries keep recursion protection and an independent final-send budget guard. Resolve
   the summary model's own window, reserve bounded output, and shrink source chunks on explicit overflow;
   ordinary chat budgets remain independent. Never discard raw history or rerun tools on summary retries.

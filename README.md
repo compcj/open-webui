@@ -66,10 +66,12 @@ V2 将延续摘要、近期完整原文和 Token 预算提醒结合，默认上�
 触发比例 **90%**、近期原文预算 **20000 tokens**；可单独选择摘要模型并调整关键参数。
 预算提醒附加在消息末尾，尽量保持已有上下文前缀稳定，以利于输入缓存复用。
 V2 默认启用工具结果预算：单个结果最多占模型窗口的 **10%**，同一批次最多 **30%**。
-先为工具批次保留额度并压缩较早历史，再按公平预算生成工具摘要；摘要失败时提供明确标记的不完整原文摘录。
+仅为新工具结果分配额度，必要时先压缩较早历史；每次摘要释放的空间会重新分配，其余结果能放下时保留原文。
+历史已采用的原文／摘要保持稳定，不因下一轮任务或预算设置变化再次参与工具分配；摘要失败时使用明确标记的不完整摘录。
 原始结果完整保存，已压缩结果可在所属回复的状态中查看原文并分页查找；模型也可用 `read_tool_result` 读取精确片段。
 只有本轮新发生的工具摘要／摘录才显示压缩提示；保留原文、精确回读及缓存复用不额外提示，旧记录留在原回复。
-完整批次统计独立保存，刷新后的 `/status` 仍包含这些不产生提示的结果。
+采用版本与完整批次统计一起保存，刷新后的 `/status` 仍包含这些不产生提示的结果，区分窗口 C、输入预算 B、触发阈值 T
+以及历史批次的时间、当时上限和缩减原因。旧统计不完整时明确标注。升级／导入后没有采用记录的工具以原文回放。
 V2 设置中的“摘要输出预算比例”默认 **5%**，按摘要模型自身窗口计算，与显式或继承的 token 输出配置取较大值，
 再受模型容量及工具额度约束。摘要请求会分块并检查发送预算，明确超限时缩小片段重试；普通聊天预算规则不变。
 每个工作区模型可设置“压缩用最大上下文长度”，留空继承基础模型或全局值。
@@ -80,12 +82,16 @@ Under **Settings → Interface → Context Compaction**, admins choose **Off / L
 V2 combines continuation summaries, complete recent conversation groups and token budget reminders.
 Budget reminders are appended after the conversation to preserve the existing prefix for input cache reuse.
 V2 enables tool budgets by default: **10%** of the model window per result and **30%** per batch.
-It reserves space for the incoming batch and compacts older history first, then fairly allocates tool
-summaries with explicitly incomplete exact excerpts on summary failure. Complete originals stay saved
+Only new results share tool allowances, with older history compacted first when needed. Each summary
+releases space for the remaining results, which stay raw when they fit. Selected historical originals
+and summaries remain stable across later tasks and settings; failed summaries use explicitly incomplete excerpts. Complete originals stay saved
 and are available from the source reply's compaction status and the model's `read_tool_result` tool.
 Only new tool summaries/excerpts for the current reply show compaction notices. Retained originals,
 exact reads and cached projections are silent; previous notices stay on their original reply.
-Full batch statistics are saved separately, so `/status` retains silent results after reload.
+Selected versions and full batch statistics are saved together. `/status` retains silent results after
+reload and distinguishes window C, input budget B and trigger T, plus historical decision times, limits
+and reduction reasons. Incomplete legacy statistics are labelled; upgraded/imported tools without a
+selection replay raw content.
 The V2 **Summary output budget (%)** defaults to **5%** of the summary model's own window. It takes
 whichever is larger: percentage tokens or the explicit/inherited token setting, then applies model
 capacity and tool allocation limits. Summary requests are budget-checked and chunked; explicit

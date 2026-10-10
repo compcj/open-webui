@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ContextUsage } from '$lib/utils/context-compaction';
+	import ContextUsageStatus from './MessageInput/ContextUsageStatus.svelte';
 	import type { ImageGenerationEngineOption } from '$lib/apis/images';
 	import ImageGenerationEngineSelect from './MessageInput/ImageGenerationEngineSelect.svelte';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
@@ -481,15 +482,6 @@
 		focus({ preventScroll: true });
 	};
 
-	const formatTokenCount = (value: number) => {
-		if (value >= 1_000_000) return `${trimNumber(value / 1_000_000)}m`;
-		if (value >= 1_000) return `${trimNumber(value / 1_000)}k`;
-		return String(value ?? 0);
-	};
-
-	const trimNumber = (value: number) =>
-		value >= 10 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
-
 	const estimateTokens = (value) => {
 		if (value === null || value === undefined || value === '') {
 			return 0;
@@ -571,19 +563,6 @@
 
 	$: statusContextUsage =
 		contextCompactionMode === 'v2' ? contextUsage : (contextUsage ?? getLocalContextUsage());
-	$: contextHasThreshold = Number(statusContextUsage?.threshold) > 0;
-	$: contextPercent = contextHasThreshold
-		? Math.max(0, Math.round(statusContextUsage?.percent ?? 0))
-		: null;
-	$: contextTokens = formatTokenCount(
-		statusContextUsage?.estimated_tokens || statusContextUsage?.tokens || 0
-	);
-	$: contextValue = statusContextUsage
-		? contextHasThreshold
-			? `${contextPercent}% ${contextTokens}/${formatTokenCount(statusContextUsage.threshold)}`
-			: `${contextTokens} ${$i18n.t('tokens')}`
-		: $i18n.t('unknown');
-	$: contextBarPercent = contextHasThreshold ? Math.min(contextPercent, 100) : 0;
 
 	const getCommand = () => {
 		const chatInput = document.getElementById('chat-input');
@@ -1868,71 +1847,11 @@
 								</div>
 
 								<div class="space-y-0.5 px-3 pb-2">
-									<div class="rounded-xl py-0.5 text-gray-600 dark:text-gray-400">
-										<div class="flex min-h-4 items-center gap-3">
-											<span class="min-w-0 flex-1 truncate"
-												>{$i18n.t('Context usage')}
-												{#if contextCompactionMode === 'v2'}
-													· {$i18n.t('V2 compaction')}{/if}
-											</span>
-											<span
-												class="shrink-0 font-mono text-[0.625rem] text-gray-400 dark:text-gray-600"
-											>
-												{contextValue}
-												{#if statusContextUsage?.source}
-													· {statusContextUsage.source === 'provider:single-call'
-														? $i18n.t('Provider input usage')
-														: $i18n.t('Estimated')}{/if}
-											</span>
-										</div>
-										{#if statusContextUsage?.context_window}
-											<div class="mt-1 text-[0.625rem] text-gray-400">
-												{$i18n.t('Window: {{window}} · Remaining: {{remaining}}', {
-													window: formatTokenCount(statusContextUsage.context_window),
-													remaining: formatTokenCount(statusContextUsage.remaining_tokens ?? 0)
-												})}
-												<span title={statusContextUsage.source}>
-													· {statusContextUsage.source?.includes('tiktoken')
-														? $i18n.t('tiktoken estimate')
-														: statusContextUsage.source === 'estimated:stored-history'
-															? $i18n.t('Saved history estimate')
-															: statusContextUsage.source === 'provider:single-call'
-																? $i18n.t('Provider input usage')
-																: $i18n.t('Conservative estimate')}</span
-												>
-											</div>
-										{/if}
-										{#if contextCompactionMode === 'v2' && statusContextUsage?.tool_budget_enabled}
-											<div class="mt-1 text-[0.625rem] text-gray-400">
-												{$i18n.t('Tool limits: {{single}} per result · {{batch}} per batch', {
-													single: formatTokenCount(statusContextUsage.tool_result_limit ?? 0),
-													batch: formatTokenCount(statusContextUsage.tool_batch_limit ?? 0)
-												})}
-											</div>
-											{#if statusContextUsage.last_tool_batch}
-												<div class="mt-1 text-[0.625rem] text-gray-400">
-													{$i18n.t('Last tool batch: {{original}} → {{processed}} tokens', {
-														original: formatTokenCount(
-															statusContextUsage.last_tool_batch.original_tokens
-														),
-														processed: formatTokenCount(
-															statusContextUsage.last_tool_batch.processed_tokens
-														)
-													})}
-												</div>
-											{/if}
-										{/if}
-										{#if contextHasThreshold}
-											<div
-												class="mt-1.5 h-0.5 overflow-hidden rounded-full bg-gray-100 dark:bg-white/8"
-											>
-												<div
-													class="h-full rounded-full bg-gray-300 dark:bg-white/20"
-													style={`width: ${contextBarPercent}%`}
-												></div>
-											</div>
-										{/if}
-									</div>
+									<ContextUsageStatus
+										usage={statusContextUsage}
+										mode={contextCompactionMode}
+										currentMessageId={history?.currentId}
+									/>
 
 									{#if messageQueue.length}
 										<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">

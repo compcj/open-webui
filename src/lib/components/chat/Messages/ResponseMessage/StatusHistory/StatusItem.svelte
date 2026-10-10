@@ -29,10 +29,16 @@
 			</div>
 		{:else if status?.action === 'tool_result_compaction'}
 			<div role="status" class="text-gray-500 dark:text-gray-400 text-sm text-wrap">
-				{#if status?.error}
-					{$i18n.t('Tool result processing failed.')}
-					{#if status?.description}
-						<span class="block">{status.description}</span>
+				{#if status?.cancelled || status?.description === 'Tool result preparation cancelled'}
+					{$i18n.t('Tool result preparation cancelled')}
+				{:else if status?.error}
+					{#if status?.description === 'Tool result preparation failed; retry using saved tool outputs'}
+						{$i18n.t('Tool result preparation failed; retry using saved tool outputs')}
+					{:else}
+						{$i18n.t('Tool result processing failed.')}
+						{#if status?.description}
+							<span class="block">{status.description}</span>
+						{/if}
 					{/if}
 				{:else if !status?.done}
 					{$i18n.t('Processing tool result')}

@@ -32,18 +32,42 @@ def _cursor_signature(record, branch_id, query, offset: bytes) -> bytes:
 
 
 def _encode_cursor(record, branch_id, query, start: int) -> str:
+    anchor = branch_id.encode('utf-8')
+    if not 1 <= len(anchor) <= 1024:
+        raise HTTPException(status_code=400, detail='Invalid tool-result branch identifier.')
     offset = struct.pack('>Q', start)
-    return base64.urlsafe_b64encode(offset + _cursor_signature(record, branch_id, query, offset)).decode().rstrip('=')
+    payload = b'\x02' + struct.pack('>H', len(anchor)) + anchor + offset
+    signature = _cursor_signature(record, branch_id, query, payload)
+    return base64.urlsafe_b64encode(payload + signature).decode().rstrip('=')
 
 
 def _decode_cursor(record, branch_id, query, cursor) -> int:
     try:
-        if not isinstance(cursor, str) or len(cursor) != 32:
+        if not isinstance(cursor, str) or not 32 <= len(cursor) <= 1402:
             raise ValueError
-        data = base64.b64decode(cursor.encode(), altchars=b'-_', validate=True)
-        offset, signature = data[:8], data[8:]
-        if len(data) != 24 or not hmac.compare_digest(signature, _cursor_signature(record, branch_id, query, offset)):
-            raise ValueError
+        data = base64.b64decode((cursor + '=' * (-len(cursor) % 4)).encode(), altchars=b'-_', validate=True)
+        anchors = record.get('_cursor_branch_ids', [branch_id])
+        if len(cursor) == 32 and len(data) == 24:
+            # Previous cursors did not embed their issuing branch. Verify the
+            # signature against only current, source-validated ancestors.
+            offset, signature = data[:8], data[8:]
+            if not any(
+                hmac.compare_digest(signature, _cursor_signature(record, anchor, query, offset)) for anchor in anchors
+            ):
+                raise ValueError
+        else:
+            if len(data) < 28 or data[0] != 2:
+                raise ValueError
+            size = struct.unpack('>H', data[1:3])[0]
+            if not 1 <= size <= 1024 or len(data) != 27 + size:
+                raise ValueError
+            anchor = data[3 : 3 + size].decode('utf-8')
+            if anchor not in anchors:
+                raise ValueError
+            payload, signature = data[:-16], data[-16:]
+            if not hmac.compare_digest(signature, _cursor_signature(record, anchor, query, payload)):
+                raise ValueError
+            offset = data[3 + size : 11 + size]
         start = struct.unpack('>Q', offset)[0]
         if start > len(record['text']):
             raise ValueError
@@ -64,6 +88,17 @@ async def _readable_result(user, chat_id, result_id, branch_id):
     record = await get_tool_result_store().get_result(result_id, branch_id=branch_id)
     if record is None or record['chat_id'] != chat_id:
         raise HTTPException(status_code=404, detail='Tool result not found on this branch, or its source changed.')
+    from open_webui.internal.db import get_async_db_context
+    from open_webui.models.chat_context_checkpoints import read_snapshot_in_session
+    from open_webui.models.chat_tool_results import branch_chain, source_state
+
+    async with get_async_db_context() as db:
+        snapshot = await read_snapshot_in_session(db, chat_id)
+    chain = branch_chain(snapshot['messages_map'], branch_id) if snapshot else None
+    if not chain or source_state(snapshot, record, branch_id) != (record['source_hash'], record['source_fingerprint']):
+        raise HTTPException(status_code=404, detail='Tool result not found on this branch, or its source changed.')
+    source_index = next(i for i, message in enumerate(chain) if message['id'] == record['message_id'])
+    record['_cursor_branch_ids'] = [message['id'] for message in chain[source_index:]]
     return record
 
 

@@ -121,3 +121,78 @@ describe('legacy tool notification ownership', () => {
 		expect(compaction.isVisibleToolResultStatus(notice, 'old', messages)).toBe(true);
 	});
 });
+
+// A trigger fraction is independent of available input space.
+describe('context status budget meanings', () => {
+	it('keeps the automatic trigger and input capacity separate', () => {
+		expect(
+			compaction.getContextBudgetStatus({
+				tokens: 80000,
+				threshold: 90000,
+				input_budget: 120000,
+				percent: 89,
+				remaining_tokens: 10000,
+				input_remaining_tokens: 40000
+			})
+		).toEqual({
+			tokens: 80000,
+			threshold: 90000,
+			percent: 89,
+			triggerRemaining: 10000,
+			inputRemaining: 40000
+		});
+	});
+	it('derives missing compatible fields without inventing zero capacity', () => {
+		expect(
+			compaction.getContextBudgetStatus({ tokens: 95000, threshold: 90000, input_budget: 120000 })
+		).toEqual({
+			tokens: 95000,
+			threshold: 90000,
+			percent: (95000 / 90000) * 100,
+			triggerRemaining: 0,
+			inputRemaining: 25000
+		});
+		expect(
+			compaction.getContextBudgetStatus({ tokens: 0, estimated_tokens: 3000 }).inputRemaining
+		).toBeNull();
+		expect(compaction.getContextBudgetStatus(null).tokens).toBeNull();
+	});
+});
+
+describe('last tool decision identity', () => {
+	it('identifies a previous reply even when its batch is returned with current usage', () => {
+		expect(compaction.getToolBatchOrigin({ source_message_id: 'earlier' }, 'reply')).toBe(
+			'previous'
+		);
+		expect(compaction.getToolBatchOrigin({ source_message_id: 'reply' }, 'reply')).toBe('current');
+	});
+	it('keeps legacy historical and unknown records distinct from current admission', () => {
+		expect(
+			compaction.getToolBatchOrigin({ historical: true, source_message_id: 'reply' }, 'reply')
+		).toBe('historical');
+		expect(compaction.getToolBatchOrigin({}, 'reply')).toBe('unknown');
+		expect(compaction.getToolBatchOrigin({ source_message_id: 'reply' }, undefined)).toBe(
+			'unknown'
+		);
+	});
+	it('converts a saved nanosecond clock to a date without assigning a new clock to legacy records', () => {
+		expect(compaction.getToolBatchRecordedDate(1728000000000000000)?.toISOString()).toBe(
+			'2024-10-04T00:00:00.000Z'
+		);
+		expect(compaction.getToolBatchRecordedDate(undefined)).toBeNull();
+		expect(compaction.getToolBatchRecordedDate(-1)).toBeNull();
+	});
+});
+
+describe('authoritative input occupancy', () => {
+	it('uses backend tokens when a separate estimate is also present', () => {
+		expect(
+			compaction.getContextBudgetStatus({
+				tokens: 80000,
+				estimated_tokens: 50000,
+				threshold: 100000,
+				input_budget: 120000
+			})
+		).toMatchObject({ tokens: 80000, percent: 80, inputRemaining: 40000 });
+	});
+});

@@ -202,7 +202,7 @@ asks for a model/configuration change. Cancellation stops immediately and preser
 ## 工具结果预算 / Tool result budgets
 
 仅在已保存 WebUI 聊天的 V2 模式且工具预算开关开启时生效；关闭、原版压缩以及关闭此开关时保持原行为。
-原始结果在下一次发送前完整保存，摘要／摘录仅用于本次模型上下文，不覆盖聊天内容。
+原始结果在下一次发送前完整保存，摘要／摘录用于模型上下文，发送前固定采用版本，不覆盖聊天内容。
 单个结果比例及批次比例必须是整数且满足 `1 <= individual <= batch <= 100`，按解析后的模型窗口 `C`
 计算：`S = floor(C * individual / 100)`，`Q = floor(C * batch / 100)`。
 继承模型窗口和更小的 Ollama `num_ctx` 同样影响 `C`；有效窗口比例和输出额度进一步限制可用输入 `B`。
@@ -215,52 +215,95 @@ are percentages of resolved `C`, including base-model inheritance and a smaller 
 rather than percentages of the remaining input budget. Effective-window and configured-output reserves
 still constrain `B`. With `C = 100000`, defaults give `S = 10000` and `Q = 30000`.
 
-发送顺序：先应用已验证的历史检查点，再保留本次批次希望使用的额度
-`D = min(Q, sum(min(rawTokens_i, S)))`。若固定输入＋历史＋`D` 超出 `B` 或触发自动阈值，
-先压缩较早的完整历史，保护当前批次、最新用户输入和未完成调用。之后在实际剩余空间内按单个上限及批次上限
-确定性公平分配：较短结果只使用需要的额度，释放给较长结果，各调用仍保留配对结果。
-例如历史及固定输入 70000、工具批次希望保留 30000、输入预算 95000 时，先压缩历史，而不是先削减工具结果。
-最终所有消息、工具定义和多模态额度均须满足 `B`，否则给出可操作的错误。
+先应用有效历史检查点，再恢复已固定采用的工具原文／摘要。历史工具按实际采用文本计入固定输入，
+不参与新批次分配；没有采用记录的升级／导入数据以原文为基准，不猜测旧缓存。
+只有服务端执行路径登记的新结果参与预算；批准恢复沿用原批次，来源回复不同的同名调用独立分组。
+空文本、纯图片结果也保护完整调用组，图片占用另计。
 
-The final-send order applies a valid history checkpoint before tool projection, reserves the incoming
-batch's desired allowance `D = min(Q, sum(min(rawTokens_i, S)))`, and compacts older complete history
-first if fixed input plus history plus `D` exceeds `B` or the automatic threshold is reached. The incoming
-batch, latest user input and incomplete call groups remain protected. Deterministic max-min fair
-allocation then shares the remaining space under `S`/`Q`: short results use only what they need,
-freeing allowance for longer results, while every tool call retains a paired result. With 70000 tokens
-of fixed input/history, a desired 30000-token batch and `B = 95000`, history compaction runs before tool
-summaries. The complete final input must fit `B` or the request returns an actionable error.
+```text
+S = floor(C × 单次比例 / 100)
+Q = floor(C × 整批比例 / 100)
+本批剩余额度 = max(0, Q − 同批已采用文本的实际 tokens)
+D = min(本批剩余额度, sum(min(新结果原文 tokens, S)))
+```
+
+完整固定历史、运行指令、工具定义、媒体及包装，加上新结果预期占用达到 T 或超过 B 时，先压缩旧历史。
+近期原文保留使用同一受控文本成本，保护最新用户输入、本批及未完成调用。之后公平分配新结果，
+每次处理当前超额原文最大的结果，并列按调用顺序；得到摘要／摘录后按实际长度回收空间、重新分配。
+其他原文能放下就直接保留，不为每个结果预先耗尽分配额度。最终连同引用、重复注入和 JSON 包装重新计数；
+若仍超过 B，仅调整尚未固定的新结果，通过替换后的完整请求寻找可用摘录长度。无法容纳必需内容才停止。
+
+例如固定输入 120000、历史已采用摘要 10000、新结果 19000，B 为 223000 且单项／批次上限足够时，
+约 149000 的总输入应保留新结果原文。历史原文即使很长，也不会再次争夺工具额度。
+历史 70000、新批期望 30000、B 为 95000 时则先压缩历史，再决定工具摘要。
+
+Apply valid history checkpoints and restore fixed tool selections before budgeting. Historical selected
+text is fixed input, never a competitor for new allowances. Upgraded/imported data without a selection
+uses raw content, not guessed cache entries. Only server-registered new results participate. Approval
+resumes retain their batch, separate replies stay isolated, and empty/image-only outputs protect pairing.
+`S`/`Q` use C; desired new demand is `min(max(0,Q-alreadySelectedTokens),sum(min(newRawTokens,S)))`.
+
+Measure full fixed history/instructions/tools/media/framing plus desired new content. Reaching T or
+exceeding B compacts older history first, with recent retention using the same projected costs. Fairly
+allocate new results, reduce the largest over-budget original first (call order breaks ties), then
+reclaim its actual savings and reallocate. Keep remaining originals when they fit. The final check counts
+citations, repeated injection and JSON framing; only unselected new results may shrink, using complete
+request measurements rather than an assumed text-token subtraction. Fail if required content cannot fit.
+For fixed input 120000 + selected history 10000 + incoming 19000, B=223000 and sufficient S/Q, the roughly
+149000-token input keeps the new result raw. Historical raw sizes do not compete again. With 70000 fixed
+history + 30000 desired new tokens and B=95000, compact history first.
 
 工具摘要使用 V2 摘要模型、输出配置、超时及重试设置，并结合当前任务保留必要证据、错误、数值与引用。
 独立工具摘要提示词留空使用默认值；较小摘要模型按可容纳的块递进总结。
 超时、空摘要、超长或无有效缩减时回退为原文摘录，明确标记不完整并提供原始结果 ID。
 原生工具、批准恢复、非原生注入工具、代码执行及保存后的重放共用此预算路径；供应商发送重试不重新执行工具。
-工具摘要缓存按模型、分支、任务、策略及实际额度隔离，源内容变化使缓存失效；数据库事务不跨模型生成。
+候选摘要缓存按模型、分支、任务、策略和额度隔离；数据库事务不跨模型生成。
+`chat_tool_result_selection` 区分待处理和已采用版本，原文采用记录仅引用源输出，摘要引用不可变候选记录。
+完整请求通过预算检查后、供应商发送前按批次原子固定版本；“已采用”表示本次选择发送的版本，不证明供应商已收到。
+只保存原文、生成候选、等待批准和手动历史压缩都不固定版本；固定前取消不产生采用记录。
+并发提交重新验证来源、数据库胜出版本及整包／批次预算；不满足则返回可重试冲突，且不固定本次其他新结果。
+重试不重新执行工具。
 
-Tool summaries use the existing V2 summary model, output settings, timeout and retries with task-aware
-instructions. The dedicated tool-summary prompt defaults to built-in instructions. A smaller summary
-model uses progressive chunks. Timeout, empty, oversized or ineffective summaries fall back to exact
-source excerpts explicitly marked incomplete with a raw result ID. Excerpts prioritize status/errors,
-current task terms and source edges, with omission separators; labels and IDs count toward the cap.
-Custom tool-summary instructions have no template variables. Native tools, approval resumes,
-injected tools, code execution and saved-history replay share the budget path; provider retries never
-execute tools again. Projection caches are scoped by model, branch, task, policy and allocation, and
-source edits invalidate them. Database transactions do not span summary generation.
+历史回放及 `/status` 使用同一只读解析器。任务、比例或摘要策略变化不改写已采用历史；模型窗口缩小由整体
+历史压缩处理。模型间隔离，切回原模型恢复其有效版本。来源／祖先编辑使记录失效；关闭工具预算恢复未被历史检查点
+覆盖的原文，重新开启仍可复用有效记录。旧缓存保留，但不会自动视为已采用。
+
+Tool summaries use the V2 summary model, output settings, timeouts and retries with task-aware evidence
+instructions. Small summary models use progressive chunks. Empty, oversized, ineffective or failed
+summaries fall back to explicitly incomplete exact excerpts with source IDs inside the allowance.
+Native, approved, injected and code paths share this logic. Candidate caches are scoped by model,
+branch, task, policy and allowance; no database transaction spans generation.
+
+`chat_tool_result_selection` distinguishes pending from prepared versions. Original selections reference
+source output without duplicate bodies; derived selections pin immutable candidate rows. Commit a batch
+only after validating the complete request and before provider transport. Prepared means selected for
+send, not confirmed delivery. Saving raw output, generating a candidate, approval waits and manual
+history compaction do not adopt versions. Cancellation before preparation leaves no adopted version.
+Concurrent transactions revalidate sources, canonical winners and full/batch budgets before commit;
+an unsafe merge returns a retryable conflict without fixing other new members or executing tools again.
+
+Send and status share a read-only resolver. Later tasks, percentages or summary policies do not rewrite
+selected history; a smaller model window invokes whole-history compaction. Models remain isolated and
+switching back restores valid selections. Source/ancestor edits invalidate them. Disabling tool budgets
+restores raw text outside valid history checkpoints; re-enabling can reuse valid versions. Old caches
+remain stored without being treated as proof of adoption.
 
 模型的 `read_tool_result` 以及界面“查看原始工具结果”从完整原文读取有限长度的精确片段，可查询及分页。
-此类结果只缩短原文页，不再生成摘要；游标绑定原文、查询与位置。读取必须通过聊天访问权限、当前分支祖先和源内容校验，
+此类结果只缩短原文页，不再生成摘要；新游标绑定签发分支、原文、查询与位置，允许来源未变的后续分支续读。
+旧游标兼容检查当前分支及有效祖先；已返回的精确历史文本不改写。读取必须通过聊天访问权限、当前分支祖先和源内容校验，
 不能读取其他聊天／兄弟分支，也不能访问任意文件或 URL。界面按纯文本渲染，并显示加载／错误和下一页状态。
-删除聊天会同时删除 `chat_tool_result` 和 `chat_tool_result_context`。
+删除聊天会同时清理 `chat_tool_result`、`chat_tool_result_context` 和 `chat_tool_result_selection`。
 
 The auxiliary `read_tool_result` tool and **View original tool result** read exact bounded passages,
 with query and paging support. These pages may be resized to fit but are never summarized again.
 The HTTP reader defaults to 2048 tokens and accepts at most 8192; native reads include JSON
-positions/cursor metadata inside the allowance. Opaque cursors also bind chat/result/branch. A changed
+positions/cursor metadata inside the allowance. New opaque cursors bind their issuance branch and support unchanged-source descendants. Legacy cursors
+are verified against eligible current/ancestor branches; historical exact pages remain unchanged. A changed
 cursor binding returns 400; denied, missing or invalidated originals return 404. Every read verifies
 chat access, current branch
 ancestry and unchanged source content; it cannot read a different chat/sibling branch or arbitrary
-files/URLs. The UI renders plain text with loading, error and paging states. Chat deletion cleans both
-`chat_tool_result` and `chat_tool_result_context`.
+files/URLs. The UI renders plain text with loading, error and paging states. Chat deletion cleans
+`chat_tool_result`, `chat_tool_result_context` and `chat_tool_result_selection`.
 
 This extends the Codex-inspired history compaction design with WebUI's saved raw results and branch
 permissions. A single-output truncation limit alone does not reserve room for a parallel batch or
@@ -269,11 +312,15 @@ The 10%/30% ratios are configurable project defaults.
 
 ## 查看用量和压缩进度 / Usage and compaction status
 
-在聊天中输入 `/status` 并执行可打开状态面板，查看当前模型的占用、压缩阈值、窗口和剩余预算。
+在聊天中输入 `/status` 并执行可打开状态面板，查看当前模型的占用、窗口 C、输入预算 B 和触发阈值 T。
+占用百分比及 `remaining_tokens` 仍以 T 为基准，`input_remaining_tokens` 表示距离 B 的可用输入空间；
+例如面板分母 223k 若是阈值，并不表示模型窗口或输入预算也是 223k。
 启用工具预算时还显示后端计算的单个／批次上限及最近批次原始／处理后 token 数。
 对话仅提示本轮工具结果新发生的摘要／不完整摘录及必要错误，即使关闭普通工具状态也显示。
 保留原文、精确回读及复用缓存不额外产生压缩提示，但仍计入状态面板中的预算和用量统计。
-完整批次统计独立保存，刷新后按模型、分支和源内容校验后恢复；不会仅凭可见提示统计，也不会把旧批次当成最新批次。
+完整统计随采用版本保存，记录来源回复、采用版本、处理时间、当时上限、实际分配及缩减原因（单项上限、整批上限、
+剩余输入空间或最终请求校验）。刷新后验证模型、分支、源内容和有效采用版本，历史回放不更新时间；
+旧通知或分支混合版本无法还原完整批次时明确标记不完整，不以可见通知冒充完整统计。失败／取消以原操作身份结束进度。
 以前的有效压缩记录和“查看原始工具结果”按钮保留在原回复，不在当前回复重复显示；刷新、续调及批准恢复按
 操作身份合并进度和完成结果。旧聊天按输出／调用身份识别归属，无法确定身份的旧记录保留原位，不删除历史。
 面板不是默认常驻显示。模型的压缩用最大上下文长度设为 `100000`，采用默认 95%／90% 且未配置
@@ -286,13 +333,15 @@ V2 自动压缩会在对应助手消息上显示“正在压缩上下文”，�
 并区分单次输入估算与累计计费用量。回复下方用量 tooltip 的 `input_tokens` 是该条回复涉及的多次调用的累计输入量，
 相同历史重复发送也会重复计入；压缩不会清零已累计的用量。它可以大于模型窗口，不能据此判断单次请求超限。
 
-Run `/status` in the chat to open the status panel with the selected model's usage, trigger, window
-and remaining budget. Enabled tool budgets add backend-computed individual/batch limits and the last
+Run `/status` to inspect usage, window C, input budget B and trigger T separately. Percent used and
+`remaining_tokens` remain T-based; `input_remaining_tokens` measures remaining capacity to B. Enabled tool budgets add backend-computed individual/batch limits and the last
 batch's original/processed token counts. Only newly summarized/excerpted current-reply tool results
 and necessary errors show conversation notices, even with ordinary tool statuses disabled. Retained
-originals, exact reads and cache reuse are silent but still counted. Complete batch statistics are
-separately persisted and restored after model/branch/source validation, including silent and mixed
-batches; visible notices alone do not determine the latest batch. Valid earlier notices and raw-view
+originals, exact reads and cache reuse are silent but still counted. Batch statistics persist with selections: source reply, selected version, original decision time, then-effective
+limits, actual allocations and reasons (single cap, batch cap, remaining input or final request fit). Restore
+after model/branch/source/effective-version validation without refreshing historical timestamps. Partial
+legacy or mixed-branch records are labelled incomplete; notices alone never imply complete accounting.
+Failed/cancelled operations end their original progress identity. Valid earlier notices and raw-view
 buttons stay on their original replies; refresh, continuation and approvals merge progress/completion
 by operation identity. Legacy output/call identity identifies misplaced records; unknown legacy
 records remain in place and no stored history is deleted.
