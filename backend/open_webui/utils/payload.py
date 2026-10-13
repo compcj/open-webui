@@ -1,17 +1,80 @@
 import logging
+from copy import deepcopy
 from typing import Callable, Optional
+
+from fastapi import HTTPException
 
 from open_webui.utils.chat_variables import render_chat_variables, render_user_variables
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import (
     add_or_update_system_message,
     convert_logit_bias_input_to_json,
-    deep_update,
     replace_system_message_content,
 )
 from open_webui.utils.task import prompt_template, prompt_variables_template
 
 log = logging.getLogger(__name__)
+
+
+def _overlay_params(base: dict, overrides: dict) -> dict:
+    """Merge provider JSON parameters while allowing explicit value shape changes."""
+    result = deepcopy(base)
+    for key, value in overrides.items():
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = _overlay_params(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def apply_model_controls(
+    params: dict,
+    controls: dict,
+    model_options: dict,
+    *,
+    advanced_params: dict | None = None,
+    model_params: dict | None = None,
+) -> dict:
+    """Explicit choices win; defaults defer to chat/personal advanced parameters.
+
+    ``advanced_params`` is the request's personal/chat merge, before server model
+    defaults are added. This prevents a global default from masquerading as an
+    explicit user parameter. Options are expanded only from server definitions.
+    """
+    if not isinstance(model_options, dict):
+        raise HTTPException(400, 'Model control options must be an object.')
+    for key, choice in model_options.items():
+        if key in controls and (not isinstance(choice, str) or choice not in controls[key]['options']):
+            raise HTTPException(400, f'Model control {key}: the selected option is no longer available.')
+
+    advanced = {key: value for key, value in (advanced_params or {}).items() if value is not None}
+    advanced = _overlay_params(advanced, deepcopy(advanced.pop('custom_params', None) or {}))
+
+    def with_overrides(defaults, overrides):
+        result = deepcopy(defaults)
+        for key in defaults:
+            value = overrides.get(key)
+            if value is None:
+                continue
+            if isinstance(defaults[key], dict) and isinstance(value, dict):
+                result[key] = with_overrides(defaults[key], value)
+            else:
+                result[key] = deepcopy(value)
+        return result
+
+    defaults = {}
+    explicit = {}
+    for key, control in controls.items():
+        choice = model_options.get(key)
+        default = control.get('default')
+        if choice is not None:
+            explicit = _overlay_params(explicit, control['options'][choice]['params'])
+        elif default in control['options']:
+            defaults = _overlay_params(defaults, control['options'][default]['params'])
+    values = _overlay_params(with_overrides(defaults, advanced), explicit)
+    if values:
+        params['custom_params'] = _overlay_params(deepcopy(params.get('custom_params') or {}), values)
+    return params
 
 
 async def resolve_system_prompt(
@@ -96,6 +159,7 @@ def apply_params_to_form_data(form_data: dict, model: dict, params: dict | None 
         'system': str,
         'note_id': str,
         'tool_approval_mode': str,
+        'model_controls': dict,
     }
 
     for key in list(params.keys()):
@@ -110,7 +174,7 @@ def apply_params_to_form_data(form_data: dict, model: dict, params: dict | None 
                 except JSONCodec.JSONDecodeError:
                     pass
 
-        params = deep_update(params, custom_params)
+        params = _overlay_params(params, custom_params)
 
     if model.get('owned_by') == 'ollama':
         form_data['options'] = {**params, **(form_data.get('options') or {})}
@@ -151,6 +215,7 @@ def remove_open_webui_params(params: dict) -> dict:
         'system': str,
         'note_id': str,
         'tool_approval_mode': str,
+        'model_controls': dict,
     }
 
     for key in list(params.keys()):
@@ -177,7 +242,7 @@ def apply_model_params_to_body_openai(params: dict, form_data: dict) -> dict:
                     pass
 
         # If there are custom parameters, we need to apply them first
-        params = deep_update(params, custom_params)
+        params = _overlay_params(params, custom_params)
 
     mappings = {
         'temperature': float,
@@ -211,7 +276,7 @@ def apply_model_params_to_body_ollama(params: dict, form_data: dict) -> dict:
                     pass
 
         # If there are custom parameters, we need to apply them first
-        params = deep_update(params, custom_params)
+        params = _overlay_params(params, custom_params)
 
     # Convert OpenAI parameter names to Ollama parameter names if needed.
     name_differences = {
@@ -382,10 +447,6 @@ def convert_payload_openai_to_ollama(openai_payload: dict) -> dict:
     if 'tools' in openai_payload:
         ollama_payload['tools'] = openai_payload['tools']
 
-    if 'max_tokens' in openai_payload:
-        ollama_payload['num_predict'] = openai_payload['max_tokens']
-        del openai_payload['max_tokens']
-
     # If there are advanced parameters in the payload, format them in Ollama's options field
     if openai_payload.get('options'):
         # Copied before key deletions below so the caller's options stay intact
@@ -431,6 +492,11 @@ def convert_payload_openai_to_ollama(openai_payload: dict) -> dict:
     if 'stop' in openai_payload:
         ollama_options = ollama_payload.get('options', {})
         ollama_options['stop'] = openai_payload.get('stop')
+        ollama_payload['options'] = ollama_options
+
+    if 'max_tokens' in openai_payload:
+        ollama_options = ollama_payload.get('options', {})
+        ollama_options['num_predict'] = openai_payload['max_tokens']
         ollama_payload['options'] = ollama_options
 
     if 'metadata' in openai_payload:

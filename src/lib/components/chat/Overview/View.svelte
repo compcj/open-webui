@@ -23,7 +23,7 @@
 
 	export let history;
 	export let onNodeClick;
-	export let chatUser = null;
+	export let chatUser: import('$lib/stores').ChatUserIdentity | null = null;
 
 	type LayoutDirection = 'vertical' | 'horizontal';
 	type PositionMapEntry = {

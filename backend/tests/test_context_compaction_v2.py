@@ -23,6 +23,13 @@ class IsolatedCase(unittest.TestCase):
         from unittest.mock import AsyncMock
 
         tool = importlib.import_module('open_webui.utils.tool_result_budget')
+        v2 = importlib.import_module('open_webui.utils.context_compaction_v2')
+        utils = importlib.import_module('open_webui.utils')
+        # Other isolated fixtures can replace sys.modules while a cached budget
+        # module retains its earlier engine. Bind both imports for this case and
+        # restore the package/module attributes alongside the module inventory.
+        self.enterContext(patch.object(utils, 'context_compaction_v2', v2, create=True))
+        self.enterContext(patch.object(tool, 'v2', v2))
         self.enterContext(
             patch.object(
                 tool,
@@ -899,8 +906,12 @@ class ManualNativeRoundtripTests(IsolatedCase):
         middleware = ModuleType('open_webui.utils.middleware')
         payload_module = ModuleType('open_webui.utils.payload')
         for relative, names, module in [
-            ('utils/misc.py', {'convert_output_to_messages', 'reconcile_tool_pairs'}, misc),
-            ('utils/middleware.py', {'get_reasoning_format'}, middleware),
+            ('utils/misc.py', {'convert_output_to_messages', 'reconcile_tool_pairs', 'get_paired_tool_call_ids'}, misc),
+            (
+                'utils/middleware.py',
+                {'get_reasoning_format', 'process_messages_with_output', 'add_file_context'},
+                middleware,
+            ),
         ]:
             path = Path(__file__).parents[1] / 'open_webui' / relative
             nodes = [
@@ -908,7 +919,7 @@ class ManualNativeRoundtripTests(IsolatedCase):
                 for node in ast.parse(path.read_text(encoding='utf-8')).body
                 if isinstance(node, ast.FunctionDef) and node.name in names
             ]
-            namespace = {'JSONCodec': json}
+            namespace = {'JSONCodec': json, **vars(misc)}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
             for name in names:
                 setattr(module, name, namespace[name])

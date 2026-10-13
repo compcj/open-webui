@@ -2,10 +2,12 @@
 
 import ast
 import asyncio
+import copy
 import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +20,7 @@ BACKEND = Path(__file__).parents[1] / 'open_webui'
 
 
 def extract(path, name, namespace):
+    namespace.setdefault('Optional', Optional)
     tree = ast.parse((BACKEND / path).read_text(encoding='utf-8'))
     node = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
     node.decorator_list = []
@@ -203,6 +206,10 @@ def test_chat_metadata_consumes_engine_id_before_calling_text_provider():
     form = {'image_generation_engine_id': 'studio'}
     namespace = {
         'form_data': form,
+        'copy': copy,
+        'approval_resume': None,
+        'request_params': {},
+        'model_controls': {},
         'user': SimpleNamespace(id='account-1'),
         'request': SimpleNamespace(headers={}, state=SimpleNamespace()),
         'chat_id': 'chat-1',
@@ -232,12 +239,17 @@ def test_tool_approval_round_trip_preserves_the_original_engine_selection(tool_n
         assistant.update(update)
 
     namespace = {
+        'copy': copy,
+        'Users': SimpleNamespace(
+            get_user_by_id=AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(ui={})))
+        ),
+        'Config': SimpleNamespace(get=AsyncMock(return_value={})),
         'Chats': SimpleNamespace(
             upsert_message_to_chat_by_id_and_message_id=AsyncMock(side_effect=save),
             get_message_by_id_and_message_id=AsyncMock(
                 side_effect=lambda chat_id, message_id: assistant if message_id == 'assistant-1' else user_message
             ),
-        )
+        ),
     }
     pause = extract('utils/middleware.py', 'pause_for_tool_approval', namespace)
     resume = extract('utils/tool_approval.py', 'build_tool_approval_resume_payload', namespace)
@@ -250,6 +262,6 @@ def test_tool_approval_round_trip_preserves_the_original_engine_selection(tool_n
             {'image_generation_engine_id': 'studio', 'features': {'image_generation': True}},
         )
     )
-    payload = asyncio.run(resume('chat-1', 'assistant-1', SimpleNamespace(chat={}, variables={})))
+    payload = asyncio.run(resume('chat-1', 'assistant-1', SimpleNamespace(chat={}, variables={}, user_id='account-1')))
     assert payload.get('image_generation_engine_id') == 'studio'
     assert payload['features']['image_generation'] is True

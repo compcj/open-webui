@@ -168,6 +168,10 @@ async def _effective(db, snapshot, chat_id, model_id, branch_id):
             or ranks[context.branch_id] > ranks[selection.branch_anchor_id]
         ):
             continue
+        if snapshot.get('shared_history') and context is not None and context.source_scope != 'saved_history_v1':
+            # Keep the admitted identity immutable, but project the proven raw
+            # source instead of exposing an old private-context summary.
+            context = None
         valid.append((selection, raw, context))
     # Prepared selections outrank pending registrations even when the latter are
     # closer. A stable tie-breaker makes legacy/corrupt duplicate data harmless.
@@ -181,6 +185,9 @@ async def _effective(db, snapshot, chat_id, model_id, branch_id):
 
 
 def _resolved(selection, raw, context):
+    from open_webui.utils.context_compaction_v2 import estimate_text
+
+    fallback = selection.context_id is not None and context is None
     return {
         **row_dict(selection),
         **{
@@ -199,6 +206,17 @@ def _resolved(selection, raw, context):
         'batch_report': copy.deepcopy((selection.batch_report or {}).get('last_tool_batch')),
         'branch_id': selection.branch_anchor_id,
         'text': context.text if context is not None else raw.text,
+        **(
+            {
+                'context_id': None,
+                'method': 'original',
+                'allocation': estimate_text(raw.text),
+                'processed_tokens': estimate_text(raw.text),
+                'batch_report': None,
+            }
+            if fallback
+            else {}
+        ),
     }
 
 
@@ -299,7 +317,8 @@ class ChatToolResultSelectionsTable:
                         if not existing or context is None:
                             return None
                         if (
-                            context.result_id != raw.result_id
+                            (snapshot.get('shared_history') and context.source_scope != 'saved_history_v1')
+                            or context.result_id != raw.result_id
                             or context.chat_id != chat_id
                             or context.model_id != model_id
                             or context.branch_id not in chain
@@ -372,7 +391,8 @@ class ChatToolResultSelectionsTable:
                     report = copy.deepcopy(candidate)
                     canonical_results = []
                     for result, (row, raw, context) in zip(results, members):
-                        if raw.id not in newly_prepared:
+                        resolved = _resolved(row, raw, context)
+                        if raw.id not in newly_prepared and resolved['batch_report'] is not None:
                             # Keep the winning operation's metadata too, not only
                             # its token counts. A competing caller did not make it.
                             result = next(
@@ -387,20 +407,20 @@ class ChatToolResultSelectionsTable:
                             {
                                 **result,
                                 'selection_id': row.id,
-                                'context_id': row.context_id,
+                                'context_id': resolved['context_id'],
                                 'message_id': raw.message_id,
                                 'source_message_id': raw.message_id,
                                 'output_id': raw.output_id,
                                 'result_id': raw.result_id,
-                                'method': row.method,
-                                'allocated_tokens': row.allocation,
-                                'original_tokens': row.original_tokens,
-                                'processed_tokens': row.processed_tokens,
+                                'method': resolved['method'],
+                                'allocated_tokens': resolved['allocation'],
+                                'original_tokens': resolved['original_tokens'],
+                                'processed_tokens': resolved['processed_tokens'],
                             }
                         )
                     report['results'] = canonical_results
-                    report['original_tokens'] = sum(item[0].original_tokens for item in members)
-                    report['processed_tokens'] = sum(item[0].processed_tokens for item in members)
+                    report['original_tokens'] = sum(item['original_tokens'] for item in canonical_results)
+                    report['processed_tokens'] = sum(item['processed_tokens'] for item in canonical_results)
                     report['recorded_at'] = max(item[0].recorded_at for item in fresh)
                     report['decision_id'] = str(candidate.get('decision_id') or fresh[0][0].decision_id)
                     envelope = {
@@ -413,11 +433,11 @@ class ChatToolResultSelectionsTable:
                                 **{key: getattr(raw, key) for key in SOURCE_KEYS},
                                 'result_id': raw.result_id,
                                 'selection_id': row.id,
-                                'context_id': row.context_id,
+                                'context_id': result['context_id'],
                                 'source_hash': raw.source_hash,
                                 'source_fingerprint': raw.source_fingerprint,
                             }
-                            for row, raw, _ in members
+                            for (row, raw, _), result in zip(members, canonical_results)
                         ],
                     }
                     for row, _, _ in fresh:
@@ -447,7 +467,9 @@ class ChatToolResultSelectionsTable:
             reports = [
                 item[0].batch_report
                 for item in effective.values()
-                if item[0].state == 'prepared' and item[0].batch_report
+                if item[0].state == 'prepared'
+                and item[0].batch_report
+                and not (item[0].context_id is not None and item[2] is None)
             ]
             reports.sort(
                 key=lambda report: (
@@ -473,7 +495,7 @@ class ChatToolResultSelectionsTable:
                         or raw.id not in effective
                         or effective[raw.id][0].state != 'prepared'
                         or effective[raw.id][0].id != ref.get('selection_id')
-                        or effective[raw.id][0].context_id != ref.get('context_id')
+                        or _resolved(*effective[raw.id])['context_id'] != ref.get('context_id')
                     ):
                         valid = False
                         break

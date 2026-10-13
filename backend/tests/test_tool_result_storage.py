@@ -118,13 +118,19 @@ async def database(tmp_path):
             )
             await session.commit()
 
+        accessible_users = {'member'}
+
         async def accessible(chat_id, user):
             async with sessions() as session:
                 row = (await session.execute(select(chat).where(chat.c.id == chat_id))).mappings().first()
-                return SimpleNamespace(**row) if row and row['user_id'] == user.id else None
+                return (
+                    SimpleNamespace(**row)
+                    if row and (row['user_id'] == user.id or (chat_id == 'chat' and user.id in accessible_users))
+                    else None
+                )
 
         chats_module = ModuleType('open_webui.models.chats')
-        chats_module.Chats = SimpleNamespace(get_chat_by_id_for_user=accessible)
+        chats_module.Chats = SimpleNamespace(get_accessible_chat_by_id=accessible)
         with patch.dict(sys.modules, {'open_webui.models.chats': chats_module}):
             yield SimpleNamespace(
                 store=store_module.get_tool_result_store(),
@@ -137,6 +143,7 @@ async def database(tmp_path):
                 message=message,
                 raw=raw,
                 text=original,
+                accessible_users=accessible_users,
             )
         await engine.dispose()
 
@@ -592,3 +599,20 @@ def test_selection_migration_roundtrip_preserves_raw_and_cascades(tmp_path):
             connection.exec_driver_sql("DELETE FROM chat WHERE id='chat'")
             assert connection.exec_driver_sql('SELECT COUNT(*) FROM chat_tool_result_selection').scalar() == 0
     engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_shared_reader_current_permission_and_revocation_apply_to_raw_pages(database):
+    from fastapi import HTTPException
+
+    db = database
+    record = await db.store.save_result('chat', descriptor(db), branch_id='a')
+    member = SimpleNamespace(id='member', role='user')
+    first = await db.module.read_tool_result_page(member, 'chat', record['id'], branch_id='leaf', max_tokens=300)
+    assert db.text[first['start'] : first['end']] == first['text']
+    db.accessible_users.remove('member')
+    with pytest.raises(HTTPException) as error:
+        await db.module.read_tool_result_page(
+            member, 'chat', record['id'], branch_id='leaf', cursor=first['next_cursor'], max_tokens=300
+        )
+    assert error.value.status_code == 404

@@ -8,7 +8,16 @@ import json
 import logging
 import re
 from html import escape
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
+import hashlib
+import ntpath
+import posixpath
+from open_webui.utils.skill_files import (
+    SKILL_CONTENT_MAX_CHARS,
+    bounded_skill_manifest,
+    format_skill_content,
+    skill_content_page,
+)
 
 import pytest
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
@@ -110,16 +119,27 @@ def skill_block(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
     fake('open_webui.env', AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL=True, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=5)
-    fake('open_webui.models.skills', Skills=SimpleNamespace())
+    fake(
+        'open_webui.models.skills',
+        Skills=SimpleNamespace(),
+        get_skill_snapshot=AsyncMock(
+            side_effect=lambda skill, version: {
+                'name': skill.name,
+                'content': skill.content,
+                'data': {'files': [{'path': 'SKILL.md', 'content': skill.content}]},
+            }
+        ),
+    )
     fake(
         'open_webui.utils.skills_runtime',
-        openclaw_meta=lambda s: getattr(s, 'openclaw', {}),
+        openclaw_meta=lambda s: s.get('openclaw', {}) if isinstance(s, dict) else getattr(s, 'openclaw', {}),
         openclaw_frontmatter=lambda m: m.get('frontmatter', {}),
+        skill_frontmatter=lambda s: getattr(s, 'openclaw', {}).get('frontmatter', {}),
         prepare_skills_for_terminal=AsyncMock(return_value={}),
     )
     fake(
         'open_webui.utils.terminals',
-        format_terminal_skill_context=lambda s: s['content'],
+        format_terminal_skill_context=lambda s, *args: s['content'],
         format_terminal_skill_manifest_entry=lambda s: s['id'],
         get_terminal_request_info=AsyncMock(return_value=None),
         get_terminal_skill=AsyncMock(return_value=None),
@@ -128,7 +148,10 @@ def skill_block(monkeypatch):
     )
     tree = ast.parse((BACKEND / 'utils/middleware.py').read_text(encoding='utf-8'))
     block = next(
-        n for n in ast.walk(tree) if isinstance(n, ast.If) and ast.unparse(n.test) == 'skill_ids or use_builtin_tools'
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.If)
+        and ast.unparse(n.test) == "skill_ids or (use_builtin_tools and model_builtin_tools.get('skills', True))"
     )
     wrapper = ast.parse('async def run():\n    pass')
     wrapper.body[0].body = [
@@ -142,6 +165,9 @@ def skill_block(monkeypatch):
         use_builtin_tools=True,
         user=SimpleNamespace(id='user', role='user', model_dump=lambda: {'id': 'user'}),
         model={},
+        model_builtin_tools={},
+        skill_versions={},
+        HTTPException=HTTPException,
         request=object(),
         metadata={},
         extra_params={},
@@ -162,7 +188,14 @@ def skill_block(monkeypatch):
     exec(compile(ast.fix_missing_locations(wrapper), 'real_skill_injection', 'exec'), ns)
     skills = [
         SimpleNamespace(
-            id=i, name=i, description=i, content='instructions', is_active=True, openclaw={'frontmatter': {}}
+            id=i,
+            name=i,
+            description=i,
+            content='instructions',
+            is_active=True,
+            version_id='version',
+            openclaw={'frontmatter': {}},
+            model_dump=lambda i=i: {'id': i, 'openclaw': {'frontmatter': {}}},
         )
         for i in ['allowed', 'unlisted', 'selected']
     ]
@@ -193,7 +226,7 @@ async def test_empty_auto_allowlist_still_prepares_only_mentioned_skill(skill_bl
     ns['mentioned_skill_ids'] = {'selected'}
     await ns['run']()
     assert [s.id for s in ns['available_skills']] == ['selected']
-    assert [s.id for s in runtime.prepare_skills_for_terminal.await_args.args[-1]] == ['selected']
+    assert [s['id'] for s in runtime.prepare_skills_for_terminal.await_args.args[-1]] == ['selected']
     assert ns['view_skill_ids'] == []
 
 
@@ -252,14 +285,48 @@ def terminal_runtime(monkeypatch):
     env.AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL = True
     env.AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA = 5
     monkeypatch.setitem(sys.modules, env.__name__, env)
+    from pydantic import BaseModel
+
+    class TerminalUser(BaseModel):
+        id: str = 'owner'
+        role: str = 'user'
+
+    def stub(name, **values):
+        mod = ModuleType(name)
+        mod.__dict__.update(values)
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    stub('open_webui.models.users', UserModel=TerminalUser)
+    stub('open_webui.models.groups', Groups=SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])))
+    stub('open_webui.utils.access_control', has_connection_access=AsyncMock(return_value=True))
+    stub('open_webui.utils.tools', build_tool_server_headers=AsyncMock(return_value=({}, {})))
     ns = dict(
         asyncio=asyncio,
+        ENABLE_TOOL_SERVERS=True,
+        quote=quote,
+        hashlib=hashlib,
+        ntpath=ntpath,
+        posixpath=posixpath,
+        SKILL_CONTENT_MAX_CHARS=SKILL_CONTENT_MAX_CHARS,
+        skill_content_page=skill_content_page,
+        bounded_skill_manifest=bounded_skill_manifest,
+        MAX_AGENTS_MD_BYTES=32 * 1024,
+        terminal_context_id=lambda *args: None,
+        terminal_context_config=lambda *args: {},
+        terminal_context_available=lambda *args: True,
+        get_terminal_server_url=lambda connection: connection['url'],
         log=logging.getLogger(__name__),
         _get_terminal_request_info=AsyncMock(side_effect=TimeoutError('unavailable')),
     )
     compile_nodes(
         'utils/terminals.py',
-        {'get_terminal_request_info', 'get_terminal_skills', 'get_terminal_skill', 'terminal_skills_auto_discovery'},
+        {
+            'get_terminal_request_info',
+            'get_terminal_json',
+            'get_terminal_skills',
+            'get_terminal_skill',
+            'terminal_skills_auto_discovery',
+        },
         ns,
     )
     return ns, config.Config
@@ -313,7 +380,15 @@ async def test_terminal_skills_explicit_selection_works_without_discovery(skill_
 def view_runtime(monkeypatch):
     from types import ModuleType
 
-    skill = SimpleNamespace(id='allowed', user_id='owner', is_active=True, name='Skill', content='default instructions')
+    skill = SimpleNamespace(
+        id='allowed',
+        user_id='owner',
+        is_active=True,
+        name='Skill',
+        content='default instructions',
+        version_id='version',
+        model_dump=lambda: {},
+    )
 
     def fake(name, **values):
         mod = ModuleType(name)
@@ -321,22 +396,42 @@ def view_runtime(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
         return mod
 
-    fake('open_webui.models.skills', Skills=SimpleNamespace(get_skill_by_id=AsyncMock(return_value=skill)))
+    fake(
+        'open_webui.models.skills',
+        Skills=SimpleNamespace(get_skill_by_id=AsyncMock(return_value=skill)),
+        get_skill_snapshot=AsyncMock(
+            return_value={
+                'name': 'Skill',
+                'content': 'default instructions',
+                'data': {'files': [{'path': 'SKILL.md', 'content': 'default instructions'}]},
+            }
+        ),
+    )
     acl = fake(
         'open_webui.models.access_grants', AccessGrants=SimpleNamespace(has_access=AsyncMock(return_value=False))
     )
     prepare = AsyncMock(side_effect=TimeoutError('terminal unavailable'))
     fake('open_webui.utils.skills_runtime', openclaw_meta=lambda s: {'files': {}}, prepare_skills_for_terminal=prepare)
     terminal = fake(
-        'open_webui.utils.terminals', get_terminal_skill=AsyncMock(return_value={'content': 'terminal instructions'})
+        'open_webui.utils.terminals',
+        get_terminal_skill=AsyncMock(return_value={'content': 'terminal instructions', 'next_offset': None}),
     )
     ns = dict(
         JSONCodec=json,
         log=logging.getLogger(__name__),
         unquote=unquote,
+        skill_content_page=skill_content_page,
+        bounded_skill_manifest=bounded_skill_manifest,
+        HTTPException=HTTPException,
+        BYPASS_ADMIN_ACCESS_CONTROL=False,
+        Skills=sys.modules['open_webui.models.skills'].Skills,
+        AccessGrants=acl.AccessGrants,
         Groups=SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
     )
-    compile_nodes('tools/builtin.py', {'view_skill'}, ns)
+    compile_nodes('routers/skills.py', {'authorized_skill'}, ns)
+    fake('open_webui.routers.skills', authorized_skill=ns['authorized_skill'])
+    compile_nodes('tools/builtin.py', {'_runtime_skill_content', 'view_skill', 'read_skill_file'}, ns)
+    ns['view_skill'].read_file = ns['read_skill_file']
     return ns['view_skill'], prepare, acl.AccessGrants, terminal
 
 
@@ -370,7 +465,9 @@ async def test_view_skill_terminal_prepare_outage_returns_default_instructions(v
             'allowed', object(), {'id': 'owner', 'role': 'user'}, {'view_skill_ids': ['allowed'], 'terminal_id': 't'}
         )
     )
-    assert result == {'name': 'Skill', 'content': 'default instructions'}
+    assert result['name'] == 'Skill' and result['content'] == 'default instructions'
+    assert result['offset'] == 0 and result['next_offset'] is None
+    assert result['version_id'] == 'version'
     prepare.assert_awaited_once()
 
 
@@ -398,13 +495,13 @@ async def test_selected_terminal_skills_are_fetched_fresh_and_names_are_encoded(
 
     app = web.Application()
     app.router.add_get('/skills', listing)
-    app.router.add_get('/skills/{name}', content)
+    app.router.add_get('/skills/read', content)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '127.0.0.1', 0)
     await site.start()
     port = runner.addresses[0][1]
-    ns['get_terminal_request_info'] = AsyncMock(return_value=(f'http://127.0.0.1:{port}', {'X-User-Id': 'owner'}, {}))
+    config.get.return_value = [{'id': 'one', 'url': f'http://127.0.0.1:{port}'}]
     try:
         first = await ns['get_terminal_skills'](object(), {}, {'terminal_id': 'one'})
         second = await ns['get_terminal_skills'](object(), {}, {'terminal_id': 'one'})
@@ -412,7 +509,7 @@ async def test_selected_terminal_skills_are_fetched_fresh_and_names_are_encoded(
         loaded = await ns['get_terminal_skill'](object(), {}, {'terminal_id': 'one'}, 'one/variant')
         assert loaded['directory'] == '/home/.agents/skills/one'
         assert loaded['resources'] == ['run.py']
-        assert requests == [('/skills', 'owner'), ('/skills', 'owner'), ('/skills/one%2Fvariant', 'owner')]
+        assert requests == [('/skills', 'owner'), ('/skills', 'owner'), ('/skills/read?name=one/variant', 'owner')]
     finally:
         await runner.cleanup()
 
@@ -442,11 +539,104 @@ async def test_home_agents_md_reloads_per_turn_without_skill_discovery(terminal_
     site = web.TCPSite(runner, '127.0.0.1', 0)
     await site.start()
     port = runner.addresses[0][1]
-    ns['get_terminal_request_info'] = AsyncMock(return_value=(f'http://127.0.0.1:{port}', {}, {}))
+    config.get.return_value = [{'id': 'one', 'url': f'http://127.0.0.1:{port}'}]
     try:
         assert await ns['get_terminal_agents_md'](object(), {}, {'terminal_id': 'one'}) == '# AGENTS.md\n\nfirst turn'
         state['content'] = 'next turn'
         assert await ns['get_terminal_agents_md'](object(), {}, {'terminal_id': 'one'}) == '# AGENTS.md\n\nnext turn'
-        config.get.assert_not_awaited()
+        assert all(call.args[0] == 'terminal_server.connections' for call in config.get.await_args_list)
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('skill_id', ['allowed', 'terminal:unlisted'])
+async def test_read_skill_file_requires_authorized_turn_context(view_runtime, skill_id):
+    view, prepare, acl, terminal = view_runtime
+    result = json.loads(
+        await view.read_file(
+            skill_id, 'SKILL.md', __request__=object(), __user__={'id': 'owner', 'role': 'user'}, __metadata__={}
+        )
+    )
+    assert result.get('error') == 'Skill not available in this chat context'
+    terminal.get_terminal_skill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'context',
+    [
+        {'view_skill_ids': ['allowed']},
+        {'loaded_skill_ids': ['allowed']},
+        {'chat_context': {'skill_versions': {'allowed': 'version'}}},
+    ],
+)
+async def test_read_skill_file_accepts_selected_loaded_or_pinned_skill(view_runtime, context):
+    view, prepare, acl, terminal = view_runtime
+    result = json.loads(
+        await view.read_file(
+            'ALLOWED',
+            'SKILL.md',
+            offset=2,
+            max_chars=4,
+            __request__=object(),
+            __user__={'id': 'owner', 'role': 'user'},
+            __metadata__=context,
+        )
+    )
+    assert result['content'] == 'faul' and result['offset'] == 2
+    assert result['version_id'] == 'version'
+
+
+@pytest.mark.asyncio
+async def test_read_skill_file_rechecks_acl_after_selection(view_runtime):
+    view, prepare, acl, terminal = view_runtime
+    result = json.loads(
+        await view.read_file(
+            'allowed',
+            'SKILL.md',
+            __request__=object(),
+            __user__={'id': 'other', 'role': 'user'},
+            __metadata__={'loaded_skill_ids': ['allowed']},
+        )
+    )
+    assert result.get('error') == 'Access denied'
+    acl.has_access.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_loaded_terminal_can_read_root_but_not_supporting_file(view_runtime):
+    view, prepare, acl, terminal = view_runtime
+    metadata = {'loaded_skill_ids': ['terminal:chosen']}
+    user = {'id': 'owner', 'role': 'user'}
+    result = json.loads(
+        await view.read_file('terminal:chosen', 'SKILL.md', __request__=object(), __user__=user, __metadata__=metadata)
+    )
+    assert result['content'] == 'terminal instructions'
+    denied = json.loads(
+        await view.read_file(
+            'terminal:chosen', 'private.txt', __request__=object(), __user__=user, __metadata__=metadata
+        )
+    )
+    assert 'SKILL.md only' in denied['error']
+
+
+@pytest.mark.asyncio
+async def test_view_skill_records_loaded_context_for_terminal_reader(view_runtime):
+    view, prepare, acl, terminal = view_runtime
+    metadata = {'view_skill_ids': ['terminal:chosen']}
+    result = json.loads(await view('terminal:chosen', object(), {'id': 'owner', 'role': 'user'}, metadata))
+    assert result['offset'] == 0
+    assert metadata['loaded_skill_ids'] == ['terminal:chosen']
+    assert (
+        json.loads(
+            await view.read_file(
+                'terminal:chosen',
+                'SKILL.md',
+                __request__=object(),
+                __user__={'id': 'owner', 'role': 'user'},
+                __metadata__=metadata,
+            )
+        )['content']
+        == 'terminal instructions'
+    )

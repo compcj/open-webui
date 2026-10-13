@@ -75,12 +75,26 @@ export function mergeRequestParamsWithReasoningEffort<T extends Record<string, u
 export function getAvailableReasoningEffort(
 	model:
 		| {
-				info?: { meta?: { available_reasoning_effort?: unknown } };
+				info?: {
+					meta?: { available_reasoning_effort?: unknown };
+					params?: {
+						model_controls?: Record<
+							string,
+							{ options: Record<string, { params?: { reasoning_effort?: unknown } }> }
+						>;
+					};
+				};
 		  }
 		| null
 		| undefined
 ): string[] {
-	return normalizeAvailableReasoningEffort(model?.info?.meta?.available_reasoning_effort);
+	const legacy = normalizeAvailableReasoningEffort(model?.info?.meta?.available_reasoning_effort);
+	if (legacy.length) return legacy;
+	return normalizeAvailableReasoningEffort(
+		Object.values(model?.info?.params?.model_controls ?? {}).flatMap((control) =>
+			Object.values(control.options).map((option) => option.params?.reasoning_effort)
+		)
+	);
 }
 
 export function sanitizeReasoningEffortByModel(

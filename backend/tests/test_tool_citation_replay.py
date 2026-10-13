@@ -1,6 +1,7 @@
 """Synthetic provider-boundary checks; no application import or live providers."""
 
 import ast
+import asyncio
 import copy
 import itertools
 import importlib
@@ -12,7 +13,7 @@ import pytest
 
 from test_web_tool_citations import BACKEND, load_functions, tool_elements, hit
 from test_web_tool_citations import runtime as citation_runtime
-from test_image_tool_context import runtime as output_runtime
+from test_image_tool_context import runtime as output_runtime, install_approval_store
 from test_tool_result_storage import database, edit
 
 
@@ -21,10 +22,11 @@ def pipeline(citation_runtime, output_runtime):
     ns = {**output_runtime.ns, **citation_runtime.ns}
     ids = itertools.count()
     ns['output_id'] = lambda prefix: f'{prefix}-{next(ids)}'
+    ns['tool_call_counter'] = itertools.count()
     tree = load_functions(
         ns,
         'utils/middleware.py',
-        {'process_messages_with_output', 'drain_approved_tool_calls', 'tool_result_content', 'strip_reasoning_details'},
+        {'process_messages_with_output', 'resume_tool_calls', 'tool_result_content', 'strip_reasoning_details'},
     )
     prepare = next(
         node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'process_chat_payload'
@@ -83,6 +85,21 @@ def pipeline(citation_runtime, output_runtime):
         ENABLE_RESPONSES_API_STATEFUL=False,
         last_response_id=None,
     )
+    pending = next(
+        node
+        for node in prepare.body
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == 'pending_assistant_message is not None'
+        and any(
+            isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == 'resume_tool_calls'
+            for child in ast.walk(node)
+        )
+    )
+    wrapper = ast.parse(
+        'async def project_approved_response(request, form_data, user, model, metadata, pending_assistant_message):\n    pass'
+    )
+    wrapper.body[0].body = copy.deepcopy(pending.body[1:])
+    exec(compile(ast.fix_missing_locations(wrapper), 'approved_response_projection', 'exec'), ns)
     ns['form_data'] = copy.deepcopy(citation_runtime.ns['form_data'])
     ns['form_data']['tools'] = [
         {'type': 'function', 'function': {'name': 'fetch_url', 'parameters': {'type': 'object'}}}
@@ -92,7 +109,7 @@ def pipeline(citation_runtime, output_runtime):
 
 async def run_tool(pipeline, name, params, text):
     ns = pipeline.ns
-    call_id = str(len(ns['output']))
+    call_id = str(next(ns['tool_call_counter']))
     ns['output'].append(
         {
             'type': 'function_call',
@@ -121,6 +138,8 @@ async def test_search_then_five_fetches_preserve_final_provider_prefix(pipeline,
     snapshots = []
     for index in range(6):
         ns['results'] = []
+        ns['output'] = []
+        prior = copy.deepcopy(snapshots)
         name = 'search_web' if index == 0 else 'fetch_url'
         params = {} if index == 0 else {'url': f'https://example.test/{index}'}
         raw = json.dumps([hit(1), hit(2)]) if index == 0 else f'Fetched page {index}. ' * 60
@@ -133,8 +152,8 @@ async def test_search_then_five_fetches_preserve_final_provider_prefix(pipeline,
         assert payload['tools'] == baseline['tools']
         assert ns['form_data'] == baseline
         assert ns['output'] == frozen
-        assert ns['output'][: len(snapshots)] == snapshots
-        snapshots = frozen
+        assert snapshots == prior
+        snapshots.extend(frozen)
         assert ns['output'][-1]['output'][0]['text'] == raw
         assert '<tool_sources>' in ns['output'][-1]['citation_context']
         if api != 'stateful':
@@ -154,7 +173,7 @@ async def test_search_then_five_fetches_preserve_final_provider_prefix(pipeline,
     assert len(pipeline.events) == 6
     assert [
         tool_elements(item['citation_context'])[0].attrib['id']
-        for item in ns['output']
+        for item in snapshots
         if item['type'] == 'function_call_output'
     ] == ['1', '1', '2', '3', '4', '5']
 
@@ -205,7 +224,7 @@ async def test_approval_restores_ids_preserves_prepared_prefix_and_does_not_run_
         'sources': [event['data'] for event in pipeline.events],
         'output': [*old, queued],
     }
-    form = {'messages': copy.deepcopy(ns['form_data']['messages']) + ns['convert_output_to_messages'](old, raw=True)}
+    form = {'messages': copy.deepcopy(ns['form_data']['messages'])}
     prefix = copy.deepcopy(form['messages'])
 
     async def save(chat_id, message_id, update, **kwargs):
@@ -223,9 +242,11 @@ async def test_approval_restores_ids_preserves_prepared_prefix_and_does_not_run_
             return_value={'tool_call_id': 'approved', 'content': 'Fetched evidence'}
         ),
     )
+    install_approval_store(ns, message)
     metadata = {'chat_id': 'chat', 'assistant_message_id': 'assistant', 'sources': []}
     for _ in range(2):
-        await ns['drain_approved_tool_calls'](None, form, ns['user'], ns['model'], metadata)
+        await ns['resume_tool_calls'](None, form, ns['user'], ns['model'], metadata, message)
+    await ns['project_approved_response'](None, form, ns['user'], ns['model'], metadata, message)
     ns['execute_tool_call_for_output'].assert_awaited_once()
     assert form['messages'][: len(prefix)] == prefix
     assert message['output'][: len(old)] == old
@@ -352,8 +373,14 @@ async def test_approval_argument_error_does_not_attempt_citation_parsing(pipelin
             return_value={'tool_call_id': 'invalid', 'content': 'Error: Invalid JSON'}
         ),
     )
-    await ns['drain_approved_tool_calls'](
-        None, ns['form_data'], ns['user'], ns['model'], {'chat_id': 'chat', 'assistant_message_id': 'assistant'}
+    install_approval_store(ns, message)
+    await ns['resume_tool_calls'](
+        None,
+        ns['form_data'],
+        ns['user'],
+        ns['model'],
+        {'chat_id': 'chat', 'assistant_message_id': 'assistant'},
+        message,
     )
     result = message['output'][1]
     assert result['status'] == 'failed'
@@ -377,6 +404,8 @@ async def test_v2_counts_citations_and_preserves_them_when_projecting_raw_text(p
     assert ref['text'] == db.text
     assert result['content'][ref['start'] : ref['end']] == db.text
     assert result['content'].endswith(context)
+    # Only server-registered new tool results compete for the current batch budget.
+    await db.selections.register_pending('chat', 'model', [ref], branch_id='a')
     v2 = importlib.import_module('open_webui.utils.context_compaction_v2')
     plain = copy.deepcopy(payload)
     plain['messages'][-1]['content'] = db.text
@@ -464,11 +493,11 @@ async def test_approval_keeps_reasoning_and_parallel_calls_in_same_response_span
     )
     if mode != 'v2':
         tail = {key: value for key, value in tail.items() if key in ('role', 'content')}
-    form = {'messages': [*prefix, *prepared, tail]}
+    form = {'messages': [*prefix, tail]}
     metadata = {'chat_id': 'chat', 'assistant_message_id': 'assistant'}
     form, metadata = ns['finalize_payload'](form, metadata)
-    before_evidence = copy.deepcopy(
-        [msg for msg in form['messages'] if 'Prepared search evidence' in str(msg.get('content'))]
+    prepared_evidence = copy.deepcopy(
+        [msg for msg in prepared if 'Prepared search evidence' in str(msg.get('content'))]
     )
     if mode == 'off':
         assert all('_context_message_id' not in msg for msg in form['messages'])
@@ -491,21 +520,21 @@ async def test_approval_keeps_reasoning_and_parallel_calls_in_same_response_span
         execute_tool_call_for_output=execute,
         get_reasoning_format=lambda model: 'reasoning_content',
     )
-    await ns['drain_approved_tool_calls'](
-        SimpleNamespace(state=SimpleNamespace(context_compaction={'mode': mode})),
-        form,
-        ns['user'],
-        ns['model'],
-        metadata,
-    )
+    install_approval_store(ns, message)
+    request = SimpleNamespace(state=SimpleNamespace(context_compaction={'mode': mode}))
+    await ns['resume_tool_calls'](request, form, ns['user'], ns['model'], metadata, message)
+    await ns['project_approved_response'](request, form, ns['user'], ns['model'], metadata, message)
+    form, metadata = ns['finalize_payload'](form, metadata)
     assistant = next(msg for msg in form['messages'] if any(call['id'] == 'B' for call in msg.get('tool_calls', [])))
     assert assistant['reasoning_details'] == reasoning['reasoning_details']
     assert assistant['reasoning_content'] == 'Plan'
     assert [call['id'] for call in assistant['tool_calls']] == ['A', 'B']
     assert sum(bool(msg.get('reasoning_details')) for msg in form['messages']) == 1
     assert form['messages'][: len(prefix)] == prefix
-    assert form['messages'][-1] == tail
-    assert [msg for msg in form['messages'] if 'Prepared search evidence' in str(msg.get('content'))] == before_evidence
+    assert form['messages'][len(prefix)] == tail
+    assert [
+        msg for msg in form['messages'] if 'Prepared search evidence' in str(msg.get('content'))
+    ] == prepared_evidence
     assert all('_current_response_output' not in msg for msg in form['messages'])
 
 
@@ -569,8 +598,93 @@ async def test_pre_rag_system_metadata_still_carries_model_prompt_for_background
     exec(compile(ast.fix_missing_locations(wrapper), 'inherited_system_prompt', 'exec'), ns)
     initial = copy.deepcopy(ns['form_data'])
     ns.update(
-        model_system_prompt='Model template', resolve_system_prompt=AsyncMock(return_value='Resolved model prompt')
+        model_system_prompt_template='Model template',
+        resolve_system_prompt=AsyncMock(return_value='Resolved model prompt'),
     )
     await ns['capture_prompt']()
     assert ns['metadata']['system_prompt'] == 'Resolved model prompt\n' + initial['messages'][0]['content']
     assert ns['form_data'] == initial
+
+
+@pytest.mark.asyncio
+async def test_concurrent_approval_resume_claims_each_call_once(pipeline):
+    ns = pipeline.ns
+    message = {
+        'role': 'assistant',
+        'model': 'synthetic',
+        'output': [
+            {
+                'type': 'function_call',
+                'call_id': call_id,
+                'name': 'fetch_url',
+                'arguments': json.dumps({'url': f'https://example.test/{call_id}'}),
+                'status': 'queued',
+                'approved': True,
+            }
+            for call_id in ['A', 'B']
+        ],
+    }
+    install_approval_store(ns, message)
+    entered, release = asyncio.Event(), asyncio.Event()
+    executed = []
+
+    async def execute(*args):
+        executed.append(args[-1]['id'])
+        if len(executed) == 1:
+            entered.set()
+            await release.wait()
+        return {'tool_call_id': args[-1]['id'], 'content': 'Frozen evidence'}
+
+    ns.update(
+        get_event_emitter_and_caller=AsyncMock(return_value=(ns['event_emitter'], None)),
+        execute_tool_call_for_output=execute,
+    )
+    metadata = {'chat_id': 'chat', 'assistant_message_id': 'assistant'}
+    first = asyncio.create_task(
+        ns['resume_tool_calls'](None, ns['form_data'], ns['user'], ns['model'], metadata, message)
+    )
+    await entered.wait()
+    assert await ns['resume_tool_calls'](None, ns['form_data'], ns['user'], ns['model'], metadata, message) is True
+    release.set()
+    assert await first is False
+    assert executed == ['A', 'B']
+    assert len([item for item in message['output'] if item['type'] == 'function_call_output']) == 2
+    assert len([item for item in message['output'] if item['type'] == 'message']) == 1
+    assert ns['pending_tool_calls'](message['output']) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('actor,expected', [('member', None), ('owner', 403), ('reader', 401), ('stranger', 401)])
+async def test_saved_tool_approval_requires_current_write_access_and_message_author(pipeline, actor, expected):
+    from fastapi import HTTPException, status
+
+    ns = pipeline.ns
+    message = {
+        'user_id': 'member',
+        'output': [
+            {'type': 'function_call', 'call_id': 'A', 'name': 'fetch_url', 'arguments': '{}', 'status': 'pending'}
+        ],
+    }
+    install_approval_store(ns, message)
+    chat = SimpleNamespace(user_id='owner')
+    ns['Chats'].get_accessible_chat_by_id = AsyncMock(return_value=chat if actor in {'member', 'owner'} else None)
+    ns.update(
+        HTTPException=HTTPException,
+        status=status,
+        ERROR_MESSAGES=SimpleNamespace(NOT_FOUND='not found', ACCESS_PROHIBITED='denied'),
+        get_event_emitter=AsyncMock(return_value=None),
+    )
+    load_functions(ns, 'utils/tool_approval.py', {'resolve_tool_call_output'})
+    form = SimpleNamespace(call_id='A', action='approve')
+    if expected is not None:
+        with pytest.raises(HTTPException) as caught:
+            await ns['resolve_tool_call_output']('chat', 'assistant', form, SimpleNamespace(id=actor))
+        assert caught.value.status_code == expected
+        assert 'approved' not in message['output'][0]
+    else:
+        result = await ns['resolve_tool_call_output']('chat', 'assistant', form, SimpleNamespace(id=actor))
+        assert result['resume'] == 'tools'
+        assert message['output'][0]['approved'] is True
+        with pytest.raises(HTTPException) as caught:
+            await ns['resolve_tool_call_output']('chat', 'assistant', form, SimpleNamespace(id=actor))
+        assert caught.value.status_code == 409

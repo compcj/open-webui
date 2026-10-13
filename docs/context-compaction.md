@@ -14,7 +14,7 @@ and is never sent as a provider inference parameter.
 | 模式 / Mode         | 行为 / Behavior                                                                                                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 关闭 / `off`        | 下次请求重新使用完整原始分支历史，不应用任何压缩检查点。Full raw branch history is used on the next request.                                                                                            |
-| 原版压缩 / `legacy` | 保留原有摘要算法、提示词、保留比例和个人／会话阈值覆盖；触发阈值额外受模型上下文长度限制。Existing algorithm, prompts, retention and threshold overrides remain, capped by the model context window.    |
+| 原版压缩 / `legacy` | 采用上游 v0.12 历史及工具轮间压缩；保留提示词、保留比例与个人／会话阈值覆盖。Uses upstream v0.12 history and tool-round compaction, retaining prompt, retention and threshold overrides.                |
 | V2压缩 / `v2`       | 在发送请求前按 Token 预算检查，合并延续摘要、近期完整原文与预算提醒。Checks the final request budget and combines a continuation summary with complete recent conversation groups and budget reminders. |
 
 升级时，未设置新模式的安装继续使用旧开关：关闭映射 `off`，开启映射 `legacy`；
@@ -381,7 +381,7 @@ Chat deletion also removes V2 checkpoints.
 - 普通聊天发送明确超限时，只有响应内容尚未输出才强制压缩并重试发送一次，不重新执行工具。
 - 生成摘要的请求明确超限时，按上文缩小源片段重试，次数采用摘要重试配置，不递归触发聊天压缩。
 - 取消或并发冲突不破坏原始历史与上一个有效检查点。
-- 手动压缩通过聊天输入区 `/compact`，按当前模式执行，生成过程中不可手动压缩，访问权限保持不变。
+- 手动压缩通过聊天输入区 `/compact`，按当前模式执行，仅聊天所有者可触发，生成过程中不可手动压缩。
 
 Timeouts, empty summaries, no effective reduction and an over-budget result are failures. A request
 that still fits `B` proceeds unchanged with a warning; otherwise an actionable error asks for a retry
@@ -390,7 +390,34 @@ compaction/send retry only before any content is delivered, without repeating to
 overflow instead shrinks source fragments under the configured summary retry count, without recursive
 chat compaction. Cancellation
 and conflicting writes preserve raw history and the last valid checkpoint. `/compact` follows the
-selected mode and is unavailable while a response is active.
+selected mode, requires chat ownership and is unavailable while a response is active.
+
+## 共享状态与精确工具读取 / Shared state and exact tools
+
+多人续写共用同一聊天、模型及有效分支的 V2 检查点和工具结果选用版本，不按参与者另建状态。
+参与者的系统指令、变量、终端说明和连接授权留在自己的请求中并计入预算。共享摘要仅接受已保存
+分支的原文和已完成输出前缀；个人提示词和变量不进入可复用摘要。服务端使用
+`source_scope=saved_history_v1` 记录这一来源。旧记录没有证明时保留数据库原记录，回放原文。
+后续参与者不能因为自己的任务或预算设置重写已选历史版本。
+
+Collaborators share checkpoints and tool selections by chat, model and validated branch. Personal
+instructions, variables and terminal context remain actor-local and count toward the request budget.
+Reusable shared summaries contain only saved branch facts and completed output prefixes. The server
+marks this provenance as `saved_history_v1`; older unproven projections replay raw without modifying
+historical selections. Approval and stop actions belong to the reply author; manual compaction is
+owner-only. Status and raw-result reads recheck current read access and branch identity. Clones do not
+inherit reusable checkpoints, selections or cursor authority; clone-only shares expose their snapshot.
+
+Tool Search 保持默认关闭。开启后，工具清单、完整定义和查询结果都计入最终预算。
+服务器识别的 `search_tools` 只按完整工具条目缩小，`view_skill` / `read_skill_file` 按精确字符
+分页并返回下一偏移；这些内容不做语义摘要，也不显示摘要通知。最小有效条目仍无法容纳时，
+返回增加额度或减少工具／技能内容的错误，不向供应商发送破损 schema。
+
+Tool Search defaults off. Its manifest, definitions and results all count. Registered builtin
+`search_tools` results shrink only by complete entries; skill reads use exact text prefixes with a
+valid `next_offset`. They never use semantic summaries. An allocation too small for one valid entry
+fails with actionable guidance. Off replays raw history, legacy uses upstream round compaction,
+and V2 uses final preparation/retry hooks; each request follows exactly one algorithm.
 
 ## 范围与设计参考 / Scope and references
 

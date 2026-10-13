@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,9 +30,11 @@ def runtime(monkeypatch):
         {
             'convert_output_to_messages',
             'reconcile_tool_pairs',
+            'get_paired_tool_call_ids',
             'strip_empty_content_blocks',
             'merge_system_messages',
             'get_system_message',
+            'get_last_user_message_item',
             'get_content_from_message',
         },
     )
@@ -212,7 +215,24 @@ async def test_approved_execution_persists_provenance_and_resume_never_reexecute
         load_messages_from_db=AsyncMock(return_value=[]),
         ENABLE_PLUGINS=False,
     )
-    load_functions(ns, 'utils/middleware.py', {'drain_approved_tool_calls'})
+
+    @asynccontextmanager
+    async def edit_output(chat_id, message_id):
+        yield record
+        snapshots.append(copy.deepcopy(record))
+
+    ns.update(
+        copy=copy,
+        ENABLE_FUNCTIONS=False,
+        strip_reasoning_details=lambda output: output,
+        convert_url_images_to_base64=AsyncMock(),
+        HTTPException=__import__('fastapi').HTTPException,
+    )
+    ns['Chats'].edit_message_output = edit_output
+    ns['ERROR_MESSAGES'] = SimpleNamespace(NOT_FOUND='not found')
+    ns['tool_continuation'] = lambda: {'type': 'message', 'id': 'continuation', 'content': []}
+    load_functions(ns, 'utils/tool_approval.py', {'pending_tool_calls', 'complete_tool_call'})
+    load_functions(ns, 'utils/middleware.py', {'resume_tool_calls'})
     metadata = {'chat_id': 'chat-1', 'assistant_message_id': 'assistant-1', 'message_id': 'assistant-1'}
     request = SimpleNamespace(
         state=SimpleNamespace(
@@ -225,16 +245,32 @@ async def test_approved_execution_persists_provenance_and_resume_never_reexecute
             }
         )
     )
-    await ns['drain_approved_tool_calls'](request, {}, None, {'id': 'model'}, metadata)
+    await ns['resume_tool_calls'](
+        request,
+        {'messages': []},
+        None,
+        {'id': 'model', 'info': {'meta': {'capabilities': {'citations': False}}}},
+        metadata,
+        record,
+    )
     results = [i for i in snapshots[-1]['output'] if i['type'] == 'function_call_output']
     assert all(item.get('tool_result') for item in results), 'approval must save original result identity'
     assert results[0]['tool_result']['batch_id'] == results[1]['tool_result']['batch_id']
     assert results[1]['tool_result']['kind'] == 'read'
     admission = ns['selection_store'].register_pending.await_args
     assert admission.args[:2] == ('chat-1', 'model')
-    assert len(admission.args[2]) == 2 and len({r['batch_id'] for r in admission.args[2]}) == 1
-    await ns['drain_approved_tool_calls'](request, {}, None, {'id': 'model'}, metadata)
-    ns['selection_store'].register_pending.assert_awaited_once()
+    assert ns['selection_store'].register_pending.await_count == 2
+    admitted = [ref for call in ns['selection_store'].register_pending.await_args_list for ref in call.args[2]]
+    assert len(admitted) == 2 and len({ref['batch_id'] for ref in admitted}) == 1
+    await ns['resume_tool_calls'](
+        request,
+        {'messages': []},
+        None,
+        {'id': 'model', 'info': {'meta': {'capabilities': {'citations': False}}}},
+        metadata,
+        record,
+    )
+    assert ns['selection_store'].register_pending.await_count == 2
     assert ns['execute_tool_call_for_output'].await_count == 2
 
 
@@ -301,6 +337,7 @@ async def test_native_v2_citations_do_not_reintroduce_raw_snippets(runtime):
             'add_or_update_user_message',
             'get_content_from_message',
             'get_system_message',
+            'get_last_user_message_item',
             'update_message_content',
         },
     )
@@ -598,7 +635,9 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     import ast
 
     ns = runtime
-    load_functions(ns, 'utils/misc.py', {'get_system_message', 'get_content_from_message'})
+    load_functions(
+        ns, 'utils/misc.py', {'get_system_message', 'get_content_from_message', 'get_last_user_message_item'}
+    )
     tree = ast.parse((BACKEND / 'utils/middleware.py').read_text(encoding='utf-8'))
     followup = next(
         node
@@ -624,7 +663,9 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
         and node.value.value.func.id == 'generate_chat_completion'
     )
     wrapper = ast.parse('async def dispatch_followup():\n    pass\n')
-    wrapper.body[0].body = followup.body[: dispatch_index + 1]
+    wrapper.body[0].body = (
+        ast.parse("messages = list(form_data['messages'])").body + followup.body[: dispatch_index + 1]
+    )
     exec(compile(ast.fix_missing_locations(wrapper), 'native_provenance_followup', 'exec'), ns)
     output = native_output()
     capture = AsyncMock()
@@ -805,7 +846,11 @@ def test_identical_legacy_code_items_keep_distinct_fallback_ids(runtime):
 
 def test_default_conversion_and_pipe_replay_do_not_add_private_budget_fields(runtime):
     plain = {}
-    load_functions(plain, 'utils/misc.py', {'convert_output_to_messages', 'reconcile_tool_pairs'})
+    load_functions(
+        plain,
+        'utils/misc.py',
+        {'convert_output_to_messages', 'reconcile_tool_pairs', 'get_paired_tool_call_ids', 'get_content_from_message'},
+    )
     messages = plain['convert_output_to_messages'](native_output())
     assert all('_tool_result_refs' not in message for message in messages)
     replay = runtime['process_messages_with_output'](

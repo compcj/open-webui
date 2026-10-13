@@ -10,20 +10,22 @@
 	export let id = 'input-modal';
 
 	export let show = false;
-	export let value = null;
-	export let inputContent = null;
+	export let value: string | null = null;
+	type EditorContent = { md: string; html: string; json?: any };
+	export let inputContent: EditorContent | null = null;
 
 	export let autocomplete = false;
 	export let generateAutoCompletion = null;
 
-	export let onChange = () => {};
+	export let onChange: (content: EditorContent) => void = () => {};
+	export let oninput: ((event: Event) => void) | undefined = undefined;
 	export let onClose = () => {};
 
 	let inputElement;
 </script>
 
 <Drawer bind:show>
-	<div class="flex h-full min-h-screen flex-col">
+	<div class="flex h-full min-h-screen flex-col" {oninput}>
 		<div
 			class=" sticky top-0 z-30 flex justify-between bg-white px-4.5 pt-3 pb-3 dark:bg-gray-900 dark:text-gray-100"
 		>

@@ -1131,7 +1131,7 @@ export const cloneSharedChatById = async (token: string, id: string) => {
 	return res;
 };
 
-export const shareChatById = async (token: string, id: string) => {
+export const shareChatById = async (token: string, id: string, shareMode?: 'continue' | null) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/share`, {
@@ -1140,7 +1140,8 @@ export const shareChatById = async (token: string, id: string) => {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
 			...(token && { authorization: `Bearer ${token}` })
-		}
+		},
+		body: JSON.stringify({ share_mode: shareMode })
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -1262,7 +1263,12 @@ export const deleteSharedChatById = async (token: string, id: string) => {
 	return res;
 };
 
-export const updateChatAccessGrants = async (token: string, id: string, accessGrants: object[]) => {
+export const updateChatAccessGrants = async (
+	token: string,
+	id: string,
+	accessGrants: object[],
+	shareMode?: 'continue' | null
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/shared/${id}/access/update`, {
@@ -1273,7 +1279,8 @@ export const updateChatAccessGrants = async (token: string, id: string, accessGr
 			...(token && { authorization: `Bearer ${token}` })
 		},
 		body: JSON.stringify({
-			access_grants: accessGrants
+			access_grants: accessGrants,
+			share_mode: shareMode
 		})
 	})
 		.then(async (res) => {

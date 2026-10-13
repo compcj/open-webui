@@ -11,7 +11,7 @@
 	import LocalizedFormat from 'dayjs/plugin/localizedFormat';
 	dayjs.extend(LocalizedFormat);
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	export let recording = false;
 	export let transcribe = true;
@@ -175,10 +175,13 @@
 		// Create a blob from the audio chunks
 
 		await tick();
-		const file = blobToFile(audioBlob, `Recording-${dayjs().format('L LT')}.${ext}`);
+		const file = blobToFile(
+			audioBlob,
+			`Recording-${dayjs().locale($i18n.language).format('L LT')}.${ext}`
+		);
 
 		if (transcribe) {
-			if ($config.audio.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
+			if ($config.audio?.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
 				// with web stt, we don't need to send the file to the server
 				return;
 			}
@@ -298,7 +301,7 @@
 		}
 
 		if (transcribe) {
-			if ($config.audio.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
+			if ($config.audio?.stt.engine === 'web' || ($settings?.audio?.stt?.engine ?? '') === 'web') {
 				if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
 					// reset accumulated transcription from previous sessions
 					transcription = '';
@@ -308,6 +311,8 @@
 
 					// Set continuous to true for continuous recognition
 					speechRecognition.continuous = true;
+					// Interim results keep the inactivity timeout from firing mid-sentence
+					speechRecognition.interimResults = true;
 
 					// Set the timeout for turning off the recognition after inactivity (in milliseconds)
 					const inactivityTimeout = 2000; // 3 seconds
@@ -323,9 +328,13 @@
 
 						// Handle recognized speech
 						console.log(event);
-						const transcript = event.results[Object.keys(event.results).length - 1][0].transcript;
-
-						transcription = `${transcription}${transcript}`;
+						for (const result of Array.from(
+							event.results as ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>
+						).slice(event.resultIndex)) {
+							if (result.isFinal) {
+								transcription = `${transcription}${result[0].transcript}`;
+							}
+						}
 
 						await tick();
 						document.getElementById('chat-input')?.focus();
@@ -420,7 +429,7 @@
 	$: maxVisibleItems = Math.floor(containerWidth / 5); // 2px width + 0.5px gap
 
 	const handleKeyDown = (e) => {
-		if (e.key === 'Escape') {
+		if (recording && e.key === 'Escape') {
 			e.preventDefault();
 			cancelRecording();
 			onCancel();

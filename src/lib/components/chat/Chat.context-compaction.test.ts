@@ -19,6 +19,7 @@ const createChat = () => {
 		const { toast, mergeCompactionStatus, isVisibleToolResultStatus } = dependencies;
 		const console = { log: () => {} };
 		const tick = async () => {};
+		const bridge = null;
 		const $i18n = { t: text => text };
 		const $chatId = 'chat';
 		let contextCompactionToastId = null;

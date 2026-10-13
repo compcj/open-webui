@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { isValidToolBudgetPercent } from '$lib/utils/context-compaction';
 
 const source = readFileSync(new URL('./Interface.svelte', import.meta.url), 'utf8');
-const names = new Set(['chatConfig', 'taskConfig', 'configuredParams', 'updateInterfaceHandler']);
+const names = new Set([
+	'chatConfig',
+	'taskConfig',
+	'configuredParams',
+	'toolSearchAlwaysLoaded',
+	'updateInterfaceHandler'
+]);
 const declarations = parse(source)
 	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
 	.filter((node: any) => names.has(node.id?.name))
@@ -18,6 +24,7 @@ const createForm = () => {
         const updateTaskConfig = async (_token, config) => config;
         const localStorage = { token: 'synthetic' }, $i18n = { t: text => text };
         const appConfig = { update: () => {} };
+        const toast = { error: text => { throw new Error(text); } }, saveHandler = () => {};
         ${declarations}
         return { config: chatConfig, save: updateInterfaceHandler };
     `;

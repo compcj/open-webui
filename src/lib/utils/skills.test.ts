@@ -326,3 +326,32 @@ describe('base64ToBlob', () => {
 		expect(await blob.text()).toBe('hello');
 	});
 });
+
+describe('canonical skill tree', () => {
+	it('reads frontmatter and binary files from data.files and preserves export exactly', async () => {
+		const content =
+			'---\nname: canonical\nmetadata:\n  openclaw:\n    requires:\n      bins: [uv]\n---\nbody\n';
+		const skill = {
+			id: 'canonical',
+			content,
+			meta: { openclaw: { source: { type: 'zip', future: true }, config: { enabled: true } } },
+			data: {
+				files: [
+					{ path: 'SKILL.md', content },
+					{ path: 'a.bin', content: 'AP8=', encoding: 'base64' }
+				]
+			}
+		};
+		expect(extractGating(skill)?.bins).toEqual(['uv']);
+		expect(getOpenclaw(skill)?.source?.future).toBe(true);
+		expect(getOpenclaw(skill)?.files?.['a.bin'].content).toBe('AP8=');
+		expect(skillToOpenclawMarkdown(skill)).toBe(content);
+		const blob = await buildSkillZip(skill);
+		const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+		expect(await zip.file('canonical/SKILL.md')?.async('string')).toBe(content);
+		expect(Array.from((await zip.file('canonical/a.bin')?.async('uint8array')) ?? [])).toEqual([
+			0, 255
+		]);
+		expect(skill.meta.openclaw).not.toHaveProperty('files');
+	});
+});

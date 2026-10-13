@@ -1,8 +1,10 @@
 """Exercise chat deletion against SQLite with foreign-key cascades disabled."""
 
 import ast
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,7 +24,7 @@ from sqlalchemy.orm import declarative_base
         ('delete_chats_by_user_id_and_folder_id', ('owner', 'folder'), {'other', 'second'}),
     ],
 )
-async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, args, remaining):
+async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch, method, args, remaining):
     base = declarative_base()
 
     class Chat(base):
@@ -55,6 +57,15 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
         __tablename__ = 'chat_tool_result_selection'
         id = Column(Text, primary_key=True)
         chat_id = Column(Text)
+
+    class SharedChat(base):
+        __tablename__ = 'shared_chat'
+        id = Column(Text, primary_key=True)
+        chat_id = Column(Text)
+
+    shared_module = ModuleType('open_webui.models.shared_chats')
+    shared_module.SharedChat = SharedChat
+    monkeypatch.setitem(sys.modules, 'open_webui.models.shared_chats', shared_module)
 
     class AutomationRun(base):
         __tablename__ = 'automation_run'
@@ -113,6 +124,7 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
                 ]
             )
             for chat_id in ('first', 'other', 'second'):
+                session.add(SharedChat(id=chat_id, chat_id=chat_id))
                 for model in ('a', 'b'):
                     session.add(ChatContextCheckpoint(id=f'{chat_id}-{model}', chat_id=chat_id))
                     session.add(ChatToolResult(id=f'{chat_id}-{model}', chat_id=chat_id))
@@ -129,6 +141,8 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
                 assert {row.chat_id for row in rows} == remaining
                 assert len(rows) == len(remaining) * 2
             assert set((await session.execute(select(Chat.id))).scalars()) == remaining
+            if method == 'delete_chats_by_user_id_and_folder_id':
+                assert set((await session.execute(select(SharedChat.chat_id))).scalars()) == remaining
     finally:
         await engine.dispose()
 
@@ -142,8 +156,6 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, method, arg
     ],
 )
 async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, method, args, remaining):
-    from types import SimpleNamespace
-
     base = declarative_base()
 
     class Model(base):
@@ -152,6 +164,17 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
 
     class ChatToolResultSelection(base):
         __tablename__ = 'chat_tool_result_selection'
+        id = Column(Text, primary_key=True)
+        model_id = Column(Text)
+
+    class AccessGrant(base):
+        __tablename__ = 'access_grant'
+        id = Column(Text, primary_key=True)
+        resource_type = Column(Text)
+        resource_id = Column(Text)
+
+    class ModelHistory(base):
+        __tablename__ = 'model_history'
         id = Column(Text, primary_key=True)
         model_id = Column(Text)
 
@@ -169,7 +192,11 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
         for node in ast.parse(source.read_text(encoding='utf-8')).body
         if isinstance(node, ast.ClassDef) and node.name == 'ModelsTable'
     )
-    node = next(node for node in original.body if isinstance(node, ast.AsyncFunctionDef) and node.name == method)
+    nodes = [
+        node
+        for node in original.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in {method, '_delete_models'}
+    ]
     namespace = dict(
         AsyncSession=AsyncSession,
         get_async_db_context=context,
@@ -177,9 +204,17 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
         ChatToolResultSelection=ChatToolResultSelection,
         delete=delete,
         select=select,
-        AccessGrants=SimpleNamespace(revoke_all_access=AsyncMock()),
+        AccessGrant=AccessGrant,
+        ModelHistory=ModelHistory,
     )
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), namespace)
+    module = ast.fix_missing_locations(
+        ast.Module(
+            body=[ast.ClassDef(name='ModelsTable', bases=[], keywords=[], body=nodes, decorator_list=[])],
+            type_ignores=[],
+        )
+    )
+    exec(compile(module, str(source), 'exec'), namespace)
+    table = namespace['ModelsTable']()
     try:
         async with engine.begin() as connection:
             await connection.run_sync(base.metadata.create_all)
@@ -188,9 +223,19 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
             session.add_all(
                 [ChatToolResultSelection(id=model, model_id=model) for model in ('first', 'second', 'base-provider')]
             )
+            for model in ('first', 'second', 'base-provider'):
+                session.add(AccessGrant(id=model, resource_type='model', resource_id=model))
+                session.add(ModelHistory(id=model, model_id=model))
+            session.add(AccessGrant(id='other-resource', resource_type='skill', resource_id='first'))
             await session.commit()
-        assert await namespace[method](None, *args)
+        assert await getattr(table, method)(*args)
         async with sessions() as session:
             assert set((await session.execute(select(ChatToolResultSelection.model_id))).scalars()) == remaining
+            assert set((await session.execute(select(ModelHistory.model_id))).scalars()) == remaining
+            grants = (await session.execute(select(AccessGrant))).scalars().all()
+            assert {(grant.resource_type, grant.resource_id) for grant in grants} == {
+                *(('model', model) for model in remaining),
+                ('skill', 'first'),
+            }
     finally:
         await engine.dispose()

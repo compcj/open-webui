@@ -52,7 +52,7 @@ export const shortCodesToEmojis = writable(
 	}, {})
 );
 
-export const TTSWorker = writable(null);
+export const TTSWorker = writable<import('$lib/workers/KokoroWorker').KokoroWorker | null>(null);
 
 export const chatId = writable('');
 export const chatTitle = writable('');
@@ -65,7 +65,16 @@ export const pinnedNotes = writable([]);
 export const tags = writable([]);
 export const folders = writable([]);
 
-export const selectedFolder = writable(null);
+export type SelectedFolder = {
+	id: string;
+	name: string;
+	user_id?: string;
+	write_access?: boolean;
+	parent_id?: string | null;
+	data?: { model_ids?: string[]; [key: string]: unknown };
+	meta?: Record<string, any>;
+};
+export const selectedFolder: Writable<SelectedFolder | null> = writable(null);
 
 export const models: Writable<Model[]> = writable([]);
 
@@ -73,7 +82,15 @@ export const knowledge: Writable<null | Document[]> = writable(null);
 export const tools = writable(null);
 export const skills: Writable<null | any[]> = writable(null);
 export const terminalSkills: Writable<any[]> = writable([]);
-export const functions = writable(null);
+export type WorkspaceFunction = {
+	id: string;
+	name: string;
+	type: 'filter' | 'action' | 'pipe';
+	is_active?: boolean;
+	is_global?: boolean;
+	meta?: Record<string, any>;
+};
+export const functions: Writable<WorkspaceFunction[] | null> = writable(null);
 
 export type WorkspaceSection = 'models' | 'knowledge' | 'prompts' | 'skills' | 'tools';
 export type WorkspaceAction = {
@@ -125,6 +142,19 @@ export const audioQueue = writable<AudioQueue | null>(null);
 export const chatRequestQueues: Writable<
 	Record<string, { id: string; prompt: string; files: any[] }[]>
 > = writable({});
+
+export type ChannelQueuedMessage = {
+	id: string;
+	prompt: string;
+	files: any[];
+	user_id: string;
+	channel_id: string;
+	parent_id: string | null;
+	reply_to_message: any;
+	sending?: boolean;
+	error?: string;
+};
+export const channelRequestQueues = writable<Record<string, ChannelQueuedMessage[]>>({});
 
 export const sidebarWidth = writable(245);
 
@@ -178,14 +208,24 @@ export const desktopEvent: Writable<DesktopEvent | null> = writable(null);
 export const isLastActiveTab = writable(true);
 export const playingNotificationSound = writable(false);
 
-export type Model = OpenAIModel | OllamaModel;
+export type Model = OpenAIModel | OllamaModel | ArenaModel;
 
 type BaseModel = {
 	id: string;
 	name: string;
 	info?: ModelConfig;
 	owned_by: 'ollama' | 'openai' | 'arena';
+	preset?: boolean;
+	arena?: boolean;
+	direct?: boolean;
+	pipe?: boolean | Record<string, unknown>;
+	has_user_valves?: boolean;
+	filters?: { id: string; name: string; icon?: string; [key: string]: unknown }[];
 };
+
+export interface ArenaModel extends BaseModel {
+	owned_by: 'arena';
+}
 
 export interface OpenAIModel extends BaseModel {
 	owned_by: 'openai';
@@ -229,6 +269,7 @@ type OllamaModelDetails = {
 };
 
 type Settings = {
+	enableMessageQueue?: boolean;
 	pinnedModels?: string[];
 	toolServers?: any[];
 	terminalServers?: {
@@ -243,6 +284,9 @@ type Settings = {
 	showChangelog?: boolean;
 	showEmojiInCall?: boolean;
 	voiceInterruption?: boolean;
+	temporaryChatByDefault?: boolean;
+	showFormattingToolbar?: boolean;
+	insertPromptAsRichText?: boolean;
 	collapseCodeBlocks?: boolean;
 	expandDetails?: boolean;
 	notificationSound?: boolean;
@@ -324,8 +368,8 @@ type ModelOptions = {
 };
 
 type AudioSettings = {
-	stt: any;
-	tts: any;
+	stt?: any;
+	tts?: any;
 	STTEngine?: string;
 	TTSEngine?: string;
 	speaker?: string;
@@ -348,6 +392,11 @@ type Document = {
 };
 
 type Config = {
+	audio?: {
+		realtime?: { enabled: boolean; model: string; voice: string };
+		stt: { engine: string };
+		tts: { engine: string; voice: string; split_on: string };
+	};
 	license_metadata: any;
 	status: boolean;
 	name: string;
@@ -359,6 +408,21 @@ type Config = {
 	default_prompt_suggestions: PromptSuggestion[] | null;
 	default_prompt_suggestions_i18n?: Record<string, { suggestion_prompts: PromptSuggestion[] }>;
 	features: {
+		enable_automations?: boolean;
+		enable_calendar?: boolean;
+		enable_folders?: boolean;
+		enable_channels?: boolean;
+		enable_user_status?: boolean;
+		enable_public_active_users_count?: boolean;
+		enable_password_change_form?: boolean;
+		enable_onedrive_personal?: boolean;
+		enable_onedrive_business?: boolean;
+		enable_code_execution?: boolean;
+		enable_easter_eggs?: boolean;
+		enable_user_webhooks?: boolean;
+		enable_signup_password_confirmation: boolean;
+		enable_ldap: boolean;
+		enable_websocket: boolean;
 		slim?: boolean;
 		auth: boolean;
 		auth_trusted_header: boolean;
@@ -386,6 +450,9 @@ type Config = {
 		enable_memories: boolean;
 		enable_notes?: boolean;
 		enable_plugins?: boolean;
+		enable_tools?: boolean;
+		enable_functions?: boolean;
+		enable_tool_servers?: boolean;
 		enable_autocomplete_generation: boolean;
 		enable_direct_connections: boolean;
 		enable_direct_integrations?: boolean;
@@ -412,6 +479,14 @@ type Config = {
 type PromptSuggestion = {
 	content: string;
 	title: [string, string];
+};
+
+export type ChatUserIdentity = {
+	id: string;
+	name?: string;
+	email?: string;
+	role?: string;
+	profile_image_url?: string | null;
 };
 
 export type SessionUser = {

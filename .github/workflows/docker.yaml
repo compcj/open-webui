@@ -32,26 +32,26 @@ jobs:
             runner: ubuntu-24.04-arm
         variant:
           - name: main
-            suffix: ""
-            build_args: ""
+            suffix: ''
+            build_args: ''
             free_disk: false
           - name: cuda
-            suffix: "-cuda"
-            build_args: "USE_CUDA=true"
+            suffix: '-cuda'
+            build_args: 'USE_CUDA=true'
             free_disk: true
           - name: cuda126
-            suffix: "-cuda126"
+            suffix: '-cuda126'
             build_args: |
               USE_CUDA=true
               USE_CUDA_VER=cu126
             free_disk: true
           - name: ollama
-            suffix: "-ollama"
-            build_args: "USE_OLLAMA=true"
+            suffix: '-ollama'
+            build_args: 'USE_OLLAMA=true'
             free_disk: false
           - name: slim
-            suffix: "-slim"
-            build_args: "USE_SLIM=true"
+            suffix: '-slim'
+            build_args: 'USE_SLIM=true'
             free_disk: false
 
     steps:
@@ -136,6 +136,7 @@ jobs:
           sbom: true
           build-args: |
             BUILD_HASH=${{ github.sha }}
+            BUILD_CHANNEL=${{ github.ref == 'refs/heads/dev' && 'dev' || (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'main' || 'unknown' }}
             ${{ matrix.variant.build_args }}
 
       - name: Export digest
@@ -164,15 +165,15 @@ jobs:
       matrix:
         variant:
           - name: main
-            suffix: ""
+            suffix: ''
           - name: cuda
-            suffix: "-cuda"
+            suffix: '-cuda'
           - name: cuda126
-            suffix: "-cuda126"
+            suffix: '-cuda126'
           - name: ollama
-            suffix: "-ollama"
+            suffix: '-ollama'
           - name: slim
-            suffix: "-slim"
+            suffix: '-slim'
 
     steps:
       - name: Prepare environment

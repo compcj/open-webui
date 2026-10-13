@@ -1,4 +1,7 @@
 <script context="module">
+	// Keep keys in nested template expressions visible to i18next-parser.
+	// $i18n.t("Unknown error");
+
 	// Persists across mount/unmount cycles (module-level, not per-instance)
 	let savedPath = '/';
 	let savedFileRoot = null;
@@ -61,7 +64,7 @@
 	import PortPreview from './FileNav/PortPreview.svelte';
 	import TerminalDock from './TerminalDock.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<import('svelte/store').Writable<import('i18next').i18n>>('i18n');
 
 	export let overlay = false;
 	export let chatId: string | null = null;
@@ -357,6 +360,11 @@
 	let selectedTerminal: { url: string; key: string; system: boolean } | null = null;
 	let terminalChatContextPending = false;
 	let terminalChatContextHidden = false;
+	let isPerChatTerminal = false;
+	$: portPreviewBaseUrl =
+		selectedTerminal && isPerChatTerminal && chatId
+			? `${selectedTerminal.url}/chats/${encodeURIComponent(chatId)}`
+			: (selectedTerminal?.url ?? '');
 
 	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
 
@@ -365,10 +373,12 @@
 			? (($terminalServers ?? []).find((t) => t.id === $selectedTerminalId) ?? null)
 			: ($terminalServers?.[0] ?? null);
 		const chatConfig = chatContext(systemTerminal);
-		const chatScoped = !!systemTerminal && chatConfig?.context_id === 'chat_id';
+		isPerChatTerminal = !!systemTerminal && chatConfig?.context_id === 'chat_id';
 		terminalChatContextHidden =
-			!!systemTerminal && (chatConfig === false || (chatScoped && isTemporaryChatId(chatId)));
-		terminalChatContextPending = chatScoped && !terminalChatContextHidden && !isSavedChatId(chatId);
+			!!systemTerminal &&
+			(chatConfig === false || (isPerChatTerminal && isTemporaryChatId(chatId)));
+		terminalChatContextPending =
+			isPerChatTerminal && !terminalChatContextHidden && !isSavedChatId(chatId);
 		if (terminalChatContextHidden || terminalChatContextPending) return null;
 
 		const settingsValue: any = $settings;
@@ -415,6 +425,7 @@
 		if (terminalChanged) prevTerminalUrl = terminal.url;
 
 		if (chatChanged || terminalChanged || !terminal) comparePaths = null;
+		if (chatChanged || terminalChanged || !terminal) previewPort = null;
 
 		if (mounted && terminal) {
 			if (chatChanged && chatId && !oldChatId) {
@@ -1187,7 +1198,7 @@
 			chatId ?? undefined
 		);
 		toast[result ? 'success' : 'error'](
-			$i18n.t(result ? 'Folder created' : 'Failed to create folder')
+			result ? $i18n.t('Folder created') : $i18n.t('Failed to create folder')
 		);
 		invalidateTreeCache(currentPath);
 		await loadDir(currentPath, { preserveTree: true });
@@ -1231,7 +1242,9 @@
 
 		const result = await deleteEntry(terminal.url, terminal.key, path, chatId ?? undefined);
 		toast[result ? 'success' : 'error'](
-			$i18n.t(result ? '{{name}} deleted' : 'Failed to delete {{name}}', { name })
+			result
+				? $i18n.t('{{name}} deleted', { name })
+				: $i18n.t('Failed to delete {{name}}', { name })
 		);
 		invalidateTreeCache(currentPath, path);
 		await loadDir(currentPath, { preserveTree: true });
@@ -1499,8 +1512,7 @@
 			showFileNavDir.set(null);
 			filePath = normalizePath(filePath);
 			if (!isInsideFileRoot(filePath)) {
-				await loadDir(fileRoot?.path ?? '/');
-				return;
+				filePath = fileRoot?.path ?? '/';
 			}
 
 			const lastSlash = filePath.lastIndexOf('/');
@@ -1882,7 +1894,7 @@
 				/>
 			{:else if previewPort !== null}
 				<PortPreview
-					baseUrl={selectedTerminal?.url ?? ''}
+					baseUrl={portPreviewBaseUrl}
 					port={previewPort}
 					overlay={overlay || isDraggingHandle}
 					onClose={() => {
@@ -1937,7 +1949,7 @@
 							chatId ?? undefined
 						);
 						toast[result ? 'success' : 'error'](
-							$i18n.t(result ? 'File saved' : 'Failed to save file')
+							result ? $i18n.t('File saved') : $i18n.t('Failed to save file')
 						);
 						if (result) fileContent = content;
 					}}
@@ -2162,15 +2174,19 @@
 		<!-- Port detection -->
 		{#if selectedTerminal && !selectedTerminal.system && !selectedFile && previewPort === null && !isSearching}
 			<div class="shrink-0 border-t border-gray-50 dark:border-gray-850/30">
-				<PortList
-					baseUrl={selectedTerminal.url}
-					apiKey={selectedTerminal.key}
-					on:previewPort={(e) => {
-						selectedFile = null;
-						clearFilePreview();
-						previewPort = e.detail;
-					}}
-				/>
+				{#key JSON.stringify([chatId, selectedTerminal.url])}
+					<PortList
+						baseUrl={selectedTerminal.url}
+						previewBaseUrl={portPreviewBaseUrl}
+						apiKey={selectedTerminal.key}
+						{chatId}
+						on:previewPort={(e) => {
+							selectedFile = null;
+							clearFilePreview();
+							previewPort = e.detail;
+						}}
+					/>
+				{/key}
 			</div>
 		{/if}
 

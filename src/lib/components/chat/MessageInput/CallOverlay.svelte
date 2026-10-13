@@ -14,6 +14,7 @@
 	import VideoInputMenu from './CallOverlay/VideoInputMenu.svelte';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
+	import type { RealtimeCall } from '$lib/utils/realtime';
 
 	const i18n: any = getContext('i18n');
 
@@ -23,6 +24,7 @@
 	export let files;
 	export let chatId;
 	export let modelId;
+	export let bridge: RealtimeCall | undefined = undefined;
 
 	let wakeLock = null;
 
@@ -44,9 +46,17 @@
 	let mediaRecorder;
 	let audioStream = null;
 	let audioChunks = [];
+	let destroyed = false;
 
 	let videoInputDevices = [];
 	let selectedVideoInputDeviceId = null;
+
+	$: if (bridge) {
+		assistantSpeaking = bridge.speaking;
+		muted = bridge.muted;
+		loading = bridge.connecting || (bridge.working && !bridge.speaking);
+		model = $models.find((m) => m.id === modelId);
+	}
 
 	const getVideoInputDevices = async () => {
 		const devices = await navigator.mediaDevices.enumerateDevices();
@@ -57,7 +67,7 @@
 				...videoInputDevices,
 				{
 					deviceId: 'screen',
-					label: $i18n.t('Screen Share')
+					label: ''
 				}
 			];
 		}
@@ -184,7 +194,8 @@
 	};
 
 	const stopRecordingCallback = async (_continue = true) => {
-		if ($showCallOverlay) {
+		// $showCallOverlay stays true when the chat page unmounts
+		if ($showCallOverlay && !destroyed) {
 			console.log('%c%s', 'color: red; font-size: 20px;', '🚨 stopRecordingCallback 🚨');
 
 			// deep copy the audioChunks array
@@ -231,7 +242,7 @@
 	};
 
 	const startRecording = async () => {
-		if ($showCallOverlay) {
+		if ($showCallOverlay && !destroyed) {
 			if (!audioStream) {
 				audioStream = await navigator.mediaDevices.getUserMedia({
 					audio: {
@@ -378,8 +389,9 @@
 		detectSound();
 	};
 
-	let finishedMessages = {};
-	let currentMessageId = null;
+	let finishedMessages: Record<string, boolean> = {};
+	let failedMessages: Record<string, boolean> = {};
+	let currentMessageId: string | null = null;
 	let currentUtterance: SpeechSynthesisUtterance | null = null;
 
 	// Get voice: model-specific > user settings > config default
@@ -389,7 +401,7 @@
 			return model.info.meta.tts.voice;
 		}
 		// Fall back to user settings or config default
-		if ($settings?.audio?.tts?.defaultVoice === $config.audio.tts.voice) {
+		if ($settings?.audio?.tts?.defaultVoice === $config.audio?.tts.voice) {
 			return $settings?.audio?.tts?.voice ?? $config?.audio?.tts?.voice;
 		}
 		return $config?.audio?.tts?.voice;
@@ -453,21 +465,17 @@
 				};
 
 				audioElement.src = audio.src;
-				audioElement.muted = true;
+				// stopAllAudio mutes it; unmuting after play() outside a gesture makes WebKit pause it
+				audioElement.muted = false;
 				audioElement.playbackRate = $settings.audio?.tts?.playbackRate ?? 1;
 				audioElement.onended = finish;
 				audioElement.onerror = () => finish();
 				audioElement.onpause = finish;
 
-				audioElement
-					.play()
-					.then(() => {
-						audioElement.muted = false;
-					})
-					.catch((error) => {
-						console.error(error);
-						finish(error);
-					});
+				audioElement.play().catch((error) => {
+					console.error(error);
+					finish(error);
+				});
 			});
 		} else {
 			return Promise.resolve();
@@ -475,8 +483,10 @@
 	};
 
 	const stopAllAudio = async () => {
+		if (bridge) return bridge.stopSpeaking();
 		assistantSpeaking = false;
 		interrupted = true;
+		audioAbortController.abort();
 
 		if (chatStreaming) {
 			stopResponse();
@@ -502,7 +512,10 @@
 	const emojiCache = new Map();
 
 	const fetchAudio = async (content) => {
-		if (!audioCache.has(content)) {
+		const id = currentMessageId;
+		if (id === null) return;
+
+		if (!audioCache.has(content) && !failedMessages[id]) {
 			try {
 				// Set the emoji for the content if needed
 				if ($settings?.showEmojiInCall ?? false) {
@@ -531,10 +544,14 @@
 					if (url) {
 						audioCache.set(content, new Audio(url));
 					}
-				} else if ($config.audio.tts.engine !== '') {
+				} else if ($config.audio?.tts.engine !== '') {
 					const res = await synthesizeOpenAISpeech(localStorage.token, getVoiceId(), content).catch(
 						(error) => {
 							console.error(error);
+							if (!failedMessages[id]) {
+								failedMessages[id] = true;
+								toast.error(`${error}`);
+							}
 							return null;
 						}
 					);
@@ -550,18 +567,23 @@
 			} catch (error) {
 				console.error('Error synthesizing speech:', error);
 			}
+
+			if (!audioCache.has(content)) {
+				failedMessages[id] = true;
+			}
 		}
 
 		return audioCache.get(content);
 	};
 
-	let messages = {};
+	let messages: Record<string, string[]> = {};
 
 	const monitorAndPlayAudio = async (id, signal) => {
 		while (!signal.aborted) {
 			if (messages[id] && messages[id].length > 0) {
 				// Retrieve the next content string from the queue
 				const content = messages[id].shift(); // Dequeues the content for playing
+				if (content === undefined) continue;
 
 				if (audioCache.has(content)) {
 					// If content is available in the cache, play it
@@ -573,7 +595,7 @@
 						emoji = null;
 					}
 
-					if ($config.audio.tts.engine !== '') {
+					if ($config.audio?.tts.engine !== '') {
 						try {
 							console.log(
 								'%c%s',
@@ -591,7 +613,7 @@
 					} else {
 						await speakSpeechSynthesisHandler(content);
 					}
-				} else {
+				} else if (!failedMessages[id]) {
 					// If not available in the cache, push it back to the queue and delay
 					messages[id].unshift(content); // Re-queue the content at the start
 					console.log(`Audio for "${content}" not yet available in the cache, re-queued...`);
@@ -664,6 +686,7 @@
 	};
 
 	const toggleMute = () => {
+		if (bridge) return bridge.mute();
 		muted = !muted;
 		if (muted && hasStartedSpeaking) {
 			// Abort the ongoing recording so it doesn't accidentally send a partial sentence
@@ -677,7 +700,7 @@
 	};
 
 	let wasAssistantSpeaking = false;
-	$: {
+	$: if (!bridge) {
 		if (assistantSpeaking && !wasAssistantSpeaking) {
 			wasAssistantSpeaking = true;
 		} else if (!assistantSpeaking && wasAssistantSpeaking) {
@@ -705,6 +728,10 @@
 	};
 
 	onMount(async () => {
+		if (bridge) {
+			document.addEventListener('keydown', handleKeydown);
+			return;
+		}
 		const setWakeLock = async () => {
 			try {
 				wakeLock = await navigator.wakeLock.request('screen');
@@ -735,6 +762,17 @@
 
 		model = $models.find((m) => m.id === modelId);
 
+		if ($settings.audio?.tts?.engine === 'browser-kokoro' && !$TTSWorker) {
+			try {
+				const worker = new KokoroWorker($settings.audio?.tts?.engineConfig?.dtype ?? 'fp32');
+				TTSWorker.set(worker);
+				await worker.init();
+			} catch (error) {
+				console.error(error);
+				toast.error(`${error}`);
+			}
+		}
+
 		startRecording();
 
 		eventTarget.addEventListener('chat:start', chatStartHandler);
@@ -742,29 +780,14 @@
 		eventTarget.addEventListener('chat:finish', chatFinishHandler);
 
 		document.addEventListener('keydown', handleKeydown);
-
-		return async () => {
-			await stopAllAudio();
-
-			stopAudioStream();
-
-			eventTarget.removeEventListener('chat:start', chatStartHandler);
-			eventTarget.removeEventListener('chat', chatEventHandler);
-			eventTarget.removeEventListener('chat:finish', chatFinishHandler);
-
-			document.removeEventListener('keydown', handleKeydown);
-
-			audioAbortController.abort();
-			await tick();
-
-			await stopAllAudio();
-
-			await stopRecordingCallback(false);
-			await stopCamera();
-		};
 	});
 
 	onDestroy(async () => {
+		if (bridge) {
+			document.removeEventListener('keydown', handleKeydown);
+			return;
+		}
+		destroyed = true;
 		await stopAllAudio();
 		await stopRecordingCallback(false);
 		await stopCamera();
@@ -866,6 +889,7 @@
 			{#if !camera}
 				<button
 					type="button"
+					aria-label={assistantSpeaking ? $i18n.t('Stop speaking') : $i18n.t('Voice call')}
 					on:click={() => {
 						if (assistantSpeaking) {
 							stopAllAudio();
@@ -982,8 +1006,12 @@
 					}
 				}}
 			>
-				<div class="line-clamp-1 text-sm font-normal">
-					{#if loading}
+				<div class="line-clamp-1 text-sm font-normal" role="status" aria-live="polite">
+					{#if bridge?.connecting}
+						{$i18n.t('Connecting')}
+					{:else if bridge?.approval}
+						{$i18n.t('Waiting for approval')}
+					{:else if loading}
 						{$i18n.t('Thinking...')}
 					{:else if muted}
 						{$i18n.t('Muted')}
@@ -998,7 +1026,9 @@
 			<div class="flex items-center justify-center gap-4 z-10">
 				{#if camera}
 					<VideoInputMenu
-						devices={videoInputDevices}
+						devices={videoInputDevices.map((device) =>
+							device.deviceId === 'screen' ? { ...device, label: $i18n.t('Screen Share') } : device
+						)}
 						on:change={async (e) => {
 							console.log(e.detail);
 							selectedVideoInputDeviceId = e.detail;
@@ -1026,7 +1056,7 @@
 							</svg>
 						</button>
 					</VideoInputMenu>
-				{:else}
+				{:else if !bridge}
 					<Tooltip content={$i18n.t('Camera')}>
 						<button
 							aria-label={$i18n.t('Camera')}
@@ -1114,15 +1144,30 @@
 					</button>
 				</Tooltip>
 
+				{#if bridge?.working}
+					<Tooltip content={$i18n.t('Stop')}>
+						<button
+							type="button"
+							aria-label={$i18n.t('Stop')}
+							class="p-3 rounded-full bg-gray-50 dark:bg-gray-900"
+							on:click={() => bridge?.stopBackend()}
+						>
+							<svg class="size-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+								<rect x="4" y="4" width="12" height="12" rx="2" />
+							</svg>
+						</button>
+					</Tooltip>
+				{/if}
+
 				<button
 					aria-label={$i18n.t('End call')}
 					class="p-3 rounded-full bg-gray-50 dark:bg-gray-900"
 					on:click={async () => {
-						await stopAudioStream();
-						await stopVideoStream();
-
-						console.log(audioStream);
-						console.log(cameraStream);
+						if (bridge) bridge.end();
+						else {
+							await stopAudioStream();
+							await stopVideoStream();
+						}
 
 						showCallOverlay.set(false);
 						dispatch('close');

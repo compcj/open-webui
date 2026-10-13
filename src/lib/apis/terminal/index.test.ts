@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { config } from '$lib/stores';
 
 import {
 	downloadDeliveryFile,
@@ -6,6 +7,10 @@ import {
 	getFileDelivery,
 	validateDeliveryUrl
 } from './index';
+
+beforeEach(() => {
+	config.set({ features: { enable_tool_servers: true } } as any);
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -167,5 +172,17 @@ describe('downloadFilePreview', () => {
 		await expect(
 			downloadFilePreview('/api/v1/terminals/system', 'token', '/tmp/report.docx')
 		).resolves.toBeNull();
+	});
+});
+
+describe('terminal feature policy', () => {
+	it('does not send credentials when tool servers are disabled', async () => {
+		config.set({ features: { enable_tool_servers: false } } as any);
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(
+			getFileDelivery('/api/v1/terminals/system', 'token', '/tmp/file.txt')
+		).rejects.toThrow('Tool servers are disabled');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

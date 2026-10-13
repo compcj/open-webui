@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, StrictStr, field_validator
+from pydantic import BaseModel, StrictBool, StrictStr, field_validator
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
 
@@ -347,7 +347,7 @@ def test_environment_defaults_are_registered(monkeypatch, value, expected):
 def test_admin_settings_round_trip_and_old_client_compatibility():
     """Run the real admin schema/mapping/handlers against an in-memory config store."""
     router = APIRouter()
-    stored = {'chat.temporary.enable': True, 'chat.direct_api.enable': True}
+    stored = {'chat.temporary.enable': True, 'chat.direct_api.enable': True, 'auth.mfa.enable': True}
 
     async def get_many(*keys):
         return {key: stored[key] for key in keys if key in stored}
@@ -380,6 +380,19 @@ def test_admin_settings_round_trip_and_old_client_compatibility():
         'get_admin_user': admin_user,
         'Config': SimpleNamespace(get_many=get_many, upsert=upsert),
     }
+    # Load the actual MFA schema and no-policy-change update path without app imports.
+    mfa_tree = ast.parse((BACKEND / 'utils/mfa.py').read_text(encoding='utf-8'))
+    mfa_nodes = [
+        node
+        for node in mfa_tree.body
+        if getattr(node, 'name', None) in {'MfaConfigForm', 'update_mfa_config'}
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == 'MFA_CONFIG_KEYS' for target in node.targets)
+        )
+    ]
+    namespace.update(StrictBool=StrictBool, HTTPException=HTTPException)
+    exec(compile(ast.Module(body=mfa_nodes, type_ignores=[]), '<mfa-config>', 'exec'), namespace)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), '<auths>', 'exec'), namespace)
     app = FastAPI()
     app.include_router(router)
@@ -397,6 +410,7 @@ def test_admin_settings_round_trip_and_old_client_compatibility():
             '/admin/config', json={**payload, 'ENABLE_TEMPORARY_CHATS': temporary, 'ENABLE_DIRECT_API_CHAT': direct}
         )
         assert updated.status_code == 200
+        assert updated.json()['sessions_revoked'] is False
         fetched = client.get('/admin/config').json()
         assert fetched['ENABLE_TEMPORARY_CHATS'] is temporary
         assert fetched['ENABLE_DIRECT_API_CHAT'] is direct
@@ -405,3 +419,4 @@ def test_admin_settings_round_trip_and_old_client_compatibility():
     assert client.post('/admin/config', json=payload).status_code == 200
     assert stored['chat.temporary.enable'] is False
     assert stored['chat.direct_api.enable'] is False
+    assert stored['auth.mfa.enable'] is True

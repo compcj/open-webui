@@ -39,7 +39,7 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 ## Upstream integration decisions
 
 Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
-[active v0.11.4 decisions](docs/upstream/v0.11.4-decisions.md). Verify official commit IDs and actual
+[active v0.12.0 decisions](docs/upstream/v0.12.0-decisions.md). Verify official commit IDs and actual
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
@@ -64,7 +64,8 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to
-  off/legacy. Never auto-enable V2 on upgrade. Preserve the legacy algorithm and override rules.
+  off/legacy. Never auto-enable V2 on upgrade. Legacy uses upstream v0.12 tool-round compaction and retains its threshold override rules. Never run legacy and V2 on the same request.
+- Shared chats reuse V2 state by chat/model/validated branch, never by participant. Only saved shared branch history enters shared summaries; personal instructions, variables and terminal context remain request-local and counted. Require server `source_scope=saved_history_v1` before reusing compressed records in shared history; unproven older records replay raw without rewriting the stored selection. Manual `/compact` is owner-only; approval and stop operations belong to the reply author. Live updates and raw/status reads recheck current chat access.
 - Keep original chat messages intact. Legacy `contextSummary` and V2 `chat_context_checkpoint`
   storage are independent; off replays full raw history and mode changes apply next request.
 - V2 lives in `backend/open_webui/utils/context_compaction_v2.py`, validated settings in
@@ -104,18 +105,21 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 - Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API,
   Tavily search depth, and model reasoning-effort behavior. The scoped guides define their contracts;
   [the development guide](docs/DEVELOPMENT.md) maps their files/tests.
-- Workspace skills support two formats: native OpenWebUI skills and OpenClaw-compatible `SKILL.md`
-  skills. `SkillMeta.openclaw` is a permissive JSON bag (`frontmatter`, `files`, `source`, `config`,
-  `env`) — keep it schema-tolerant and preserve its round-trip through import, edit, and
-  "Export SKILL.md". Import paths (file/zip plus `POST /skills/load/url` for direct links, GitHub
-  repo/tree URLs, skills.sh links, and ClawHub refs) prefill the create editor. GitHub tree URLs and
-  bare repo URLs download the repo zipball (codeload, no token); skills.sh links map to their
-  backing GitHub repo. When an archive contains multiple skills and the URL carries no select hint,
-  the frontend shows a picker instead of guessing. At chat time `utils/skills_runtime.py` enforces
-  OpenClaw gating against the configured Open Terminal, syncs bundled files there, and substitutes
-  `{baseDir}`; any terminal failure must degrade to the previous default loading, never break the
-  chat. `POST /skills/id/{id}/install_deps` runs declared install specs only on explicit user
-  action. Secrets never go into the shareable skill meta.
+- Skills use upstream `data.files` as the sole editable file tree for native and OpenClaw packages.
+  Legacy `meta.openclaw.files`/frontmatter are compatibility input/projections; preserve unknown
+  frontmatter, source/config/env and original bytes without keeping a second mutable copy. Canonical
+  collisions fail with skill ID/path; migration is transactional and historical versions stay immutable.
+  Use `expected_version_id` for edits; missing legacy attachment versions require a client refresh.
+  URL imports keep GitHub, skills.sh, ClawHub, direct links and multi-skill selection. Admin or
+  `workspace.skills_import` authorization still uses upstream network/redirect/archive/size checks.
+  `/skills/load/url` defaults to the legacy descriptor; new clients request `response_format=packages`.
+  Runtime gating, terminal sync, `{baseDir}` and explicit dependency installation use pinned canonical
+  files. Discovery manifests never sync unused skills; terminal failures degrade gracefully.
+- Ordinary model reasoning uses upstream model controls. Existing new configuration wins; old
+  presets/custom strings, saved chat choices and user memory migrate to valid option IDs. Precedence:
+  chat explicit control, remembered control, chat advanced, personal advanced, control/model default,
+  global default. Reset clears explicit choices without reviving legacy memory. Direct/pipe fallback
+  keeps its existing input. Preserve ordered incremental saves and account isolation.
 - Trace frontend/backend contracts together: request fields, defaults, permissions, streaming events,
   persistent settings, and error responses. Test the affected boundary, not only one side.
 - Keep `package.json` and `package-lock.json` consistent. For Python dependency changes, inspect

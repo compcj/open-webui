@@ -48,6 +48,7 @@ class ChatToolResultContext(Base):
     budget = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     method = Column(Text, nullable=False)
+    source_scope = Column(Text, nullable=True)
     original_tokens = Column(Integer, nullable=False)
     processed_tokens = Column(Integer, nullable=False)
     created_at = Column(BigInteger, nullable=False)
@@ -227,6 +228,9 @@ class ChatToolResultsTable:
                 .scalars()
                 .first()
             )
+            snapshot = await read_snapshot_in_session(db, row.chat_id) if row else None
+            if snapshot and snapshot.get('shared_history') and row.source_scope != 'saved_history_v1':
+                return None
             return row_dict(row) if row else None
 
     async def save_context(
@@ -242,9 +246,11 @@ class ChatToolResultsTable:
         method: str,
         original_tokens: int,
         processed_tokens: int,
+        source_scope: str | None = None,
     ) -> dict | None:
         if (
-            type(budget) is not int
+            source_scope not in {None, 'saved_history_v1'}
+            or type(budget) is not int
             or budget < 0
             or method not in {'summary', 'excerpt', 'original', 'read'}
             or not isinstance(text, str)
@@ -267,6 +273,9 @@ class ChatToolResultsTable:
                 raw = await valid_result(db, result_id, branch_id, lock=True)
                 if raw is None:
                     return None
+                snapshot = await read_snapshot_in_session(db, raw.chat_id)
+                if snapshot and snapshot.get('shared_history') and source_scope != 'saved_history_v1':
+                    return None
                 row = (await db.execute(select(ChatToolResultContext).filter_by(**key))).scalars().first()
                 if row is None:
                     row = ChatToolResultContext(
@@ -275,6 +284,7 @@ class ChatToolResultsTable:
                         id=str(uuid.uuid4()),
                         text=text,
                         method=method,
+                        source_scope=source_scope,
                         original_tokens=original_tokens,
                         processed_tokens=processed_tokens,
                         created_at=time.time_ns(),
@@ -311,7 +321,8 @@ class ChatToolResultsTable:
                     },
                 }
                 for context, raw in rows
-                if source_state(snapshot, row_dict(raw), branch_id) == (raw.source_hash, raw.source_fingerprint)
+                if (not snapshot or not snapshot.get('shared_history') or context.source_scope == 'saved_history_v1')
+                and source_state(snapshot, row_dict(raw), branch_id) == (raw.source_hash, raw.source_fingerprint)
             ]
 
 

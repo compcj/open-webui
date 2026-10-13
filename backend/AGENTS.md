@@ -31,9 +31,9 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   frontend `WebSearch.svelte`. Preserve response normalization, result limits, domain filtering,
   HTTP error handling, configuration persistence, and the missing-key error.
 - Tavily search depth spans `config.py`, `retrieval/web/tavily.py`, and `routers/retrieval.py`.
-  Preserve `TAVILY_SEARCH_DEPTH` (`basic` by default, `advanced` opt-in), the per-key setting
+  Preserve `TAVILY_SEARCH_DEPTH` (`basic` by default; `ultra-fast`, `fast`, `basic`, `advanced` accepted), the per-key setting
   `web.search.tavily_search_depth`, and its propagation through the shared search entry point.
-  The admin configuration API accepts only these two values; omission or `null` preserves the
+  The admin configuration API accepts only these four values; omission or `null` preserves the
   current value. Stored settings keep the existing persistence precedence over environment defaults.
   Search depth is independent of `TAVILY_EXTRACT_DEPTH`; preserve result mapping, domain filtering,
   and HTTP errors. See the development guide for isolated request/config regression tests.
@@ -48,8 +48,8 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   frontend pick). Preserve gating semantics (`always` exempts `requires.*` only
   when the `os` constraint holds; `requires.config` checks the skill's own `config` bag),
   fingerprint-idempotent terminal file sync, degradation to default skill loading on any terminal
-  failure, and the trust model: `/load/url` requires admin or `workspace.skills_import` (same
-  trusted-SSRF rationale as tools), `install_deps` requires skill write access and runs declared
+  failure, and the trust model: `/load/url` requires admin or `workspace.skills_import` and applies upstream SSRF, redirect,
+  archive and download-size restrictions, `install_deps` requires skill write access and runs declared
   specs only on explicit request.
 
 ## Upstream integration contracts
@@ -66,16 +66,48 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Preserve signed terminal file identity/context checks, response isolation, denied port/admin
   proxy paths, redirect refusal, opt-in cookie forwarding, and HTTP/WS identity consistency.
 - Configured Redis revocation failure must deny access with a retryable HTTP `503` or terminal
-  WebSocket `1013`, without deleting valid login cookies. Unconfigured Redis is a separate case;
+  and Realtime WebSocket `1013`, without deleting valid login cookies. Unconfigured Redis is a separate case;
   invalid/revoked credentials remain denied. Check every caller's exception handling.
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Preserve named
   engine settings and context-only image deduplication across normal, approved, and replayed tools.
 
-Terminal AGENTS.md is a synthetic user message. Enrich real user attachment context before injecting
-it; otherwise ordinal pairing with stored chat history can attach one turn's files to another turn.
+Terminal AGENTS.md is a synthetic user message. Enrich each user message from its own `files` in
+`process_messages_with_output` before stripping those fields and injecting AGENTS.md. Do not pair
+attachments by ordinal positions after output expansion or repeat the old async enrichment path.
 Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pipeline stage.
 
-See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and upgrade boundaries.
+See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and upgrade boundaries.
+
+## v0.12 data and collaboration boundaries
+
+- `data.files` is the only mutable skill file tree. Compatibility conversion in `skill_compat.py`
+  must be lossless, keep valid canonical data, preserve unknown metadata and reject divergent path
+  collisions with skill ID/path. `SKILL.md` owns frontmatter; runtime projections are read adapters.
+  Immutable old versions stay unchanged; restores create compatible new versions. Every new file
+  edit requires `expected_version_id`; reject missing-version legacy attachment writes explicitly.
+- `/skills/load/url` has optional `response_format`: default descriptor, `packages` parsed skills.
+  Both paths share safe download and parse limits. Native `view_skill`/`read_skill_file` recheck ACLs
+  and current turn selected/loaded/discovered IDs; pinned snapshots govern runtime file preparation.
+- Merge revision `a120d13e0001` connects `f9a4b2d6c805` and `b8f2c6d91a04`; `a120d13e0002`
+  migrates skills; `a120d13e0003` adds nullable shared-context provenance without guessing old safety.
+- Authorize shared execution with the actor's model/tool/connection permissions. Approval and stop
+  require reply authorship; `/compact` requires ownership. Status/raw reads use live chat read access
+  and validated branch ancestry. Clone-only shares expose snapshots; imports/forks discard reusable
+  context/accounting identities while preserving raw outputs and frozen citations.
+- Shared V2 state has no participant key. Generate shared summaries from saved branch facts only,
+  excluding personal system instructions, variables and terminal runtime context; those remain in
+  the actor's counted request. Only server-marked `saved_history_v1` compressed records may replay
+  in shared history. Old unproven prepared selections resolve to raw text without rewriting the row.
+  Check source and sharing scope again during commit. Recheck live socket access after revocation.
+- Project every user-visible chat response, export and mutation by message author; private request
+  metadata belongs to its author even when the requester owns the chat. Filter clone/fork input before
+  persistence while retaining raw server approval history. Never persist prepared skill root text;
+  exact root pages share request-local prepared content. Terminal sync caches include the actual
+  outgoing actor, connection and context identity, not just the shared chat ID.
+- Exact builtin tool outputs are classified by registered type/identity, never by an external tool's
+  name. `search_tools` retains complete schema entries; skill pages shrink at exact character offsets.
+  Do not semantically summarize these results. If minimum valid content cannot fit, fail with an
+  actionable budget error; count manifests, definitions and results in the final request.
 
 ## Tool citation prefix contract
 
@@ -107,7 +139,8 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
 
 ## Context compaction
 
-- Preserve off/legacy/V2 compatibility and the original implementation in `utils/context_compaction.py`.
+- Preserve off/legacy/V2 dispatch. `utils/context_compaction.py` uses upstream v0.12 round compaction;
+  it must return unchanged for off/V2. V2 keeps final-send and retry dispatch independently.
   New settings are administrator-only; an explicit mode wins over the old enable flag. Resolve
   `meta.context_window` through base-model inheritance/global default and cap smaller Ollama num_ctx.
 - V2 budget checks belong after model parameters and all prompt/tool/knowledge/skill/file injections,

@@ -16,7 +16,7 @@
 
 	let boilerplate = ``;
 
-	let codeEditor = $state(null);
+	let codeEditor = $state<CodeEditor | null>(null);
 	let _content = $state(value);
 
 	$effect(() => {
@@ -58,7 +58,14 @@
 			class="flex h-full w-full flex-1 flex-col md:flex-row md:space-x-4 dark:text-gray-200 overflow-y-auto"
 		>
 			<div class=" flex h-full w-full flex-col sm:flex-row sm:justify-center sm:space-x-6">
-				<CodeEditor bind:this={codeEditor} {value} {boilerplate} {lang} {onChange} {onSave} />
+				<CodeEditor
+					bind:this={codeEditor}
+					{value}
+					{boilerplate}
+					{lang}
+					onChange={(value) => onChange(value)}
+					onSave={() => onSave()}
+				/>
 			</div>
 		</div>
 	</div>

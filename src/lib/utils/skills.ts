@@ -3,9 +3,9 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 import { formatSkillName, slugify } from '$lib/utils';
 
-export const OPENCLAW_MAX_FILES = 256;
-export const OPENCLAW_MAX_FILE_SIZE = 1024 * 1024; // 1 MiB
-export const OPENCLAW_MAX_TOTAL_SIZE = 8 * 1024 * 1024; // 8 MiB
+export const OPENCLAW_MAX_FILES = 1000;
+export const OPENCLAW_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MiB
+export const OPENCLAW_MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MiB
 
 export type ParsedSkillMarkdown = {
 	frontmatter: Record<string, any>;
@@ -106,6 +106,8 @@ export const openclawToSkill = (
 };
 
 export const skillToOpenclawMarkdown = (skill: SkillLike): string => {
+	const root = skill?.data?.files?.find((file: any) => file.path === 'SKILL.md');
+	if (root) return root.content;
 	const frontmatter = {
 		name: slugify(skill?.id || skill?.name || ''),
 		description: skill?.description ?? '',
@@ -227,6 +229,12 @@ export const extractSkillFromZip = async (
 
 		const relativePath = prefix ? path.slice(prefix.length) : path;
 		if (!relativePath || isIgnoredZipPath(relativePath)) continue;
+		if (
+			/[:\\\x00]/.test(relativePath) ||
+			relativePath.startsWith('/') ||
+			relativePath.split('/').some((part) => !part || part === '.' || part === '..')
+		)
+			throw new Error(`Invalid skill file path: ${relativePath}`);
 
 		const bytes = await entry.async('uint8array');
 
@@ -235,8 +243,7 @@ export const extractSkillFromZip = async (
 			bytes.byteLength > OPENCLAW_MAX_FILE_SIZE ||
 			totalSize + bytes.byteLength > OPENCLAW_MAX_TOTAL_SIZE
 		) {
-			skipped += 1;
-			continue;
+			throw new Error(`Skill archive exceeds file or package limits: ${relativePath}`);
 		}
 
 		totalSize += bytes.byteLength;
@@ -291,7 +298,7 @@ export const buildSkillZip = async (skill: SkillLike): Promise<Blob> => {
 
 	folder.file('SKILL.md', skillToOpenclawMarkdown(skill));
 
-	const files = skill?.meta?.openclaw?.files ?? {};
+	const files = getOpenclaw(skill)?.files ?? {};
 	for (const [path, entry] of Object.entries(files)) {
 		if (entry?.encoding === 'base64') {
 			folder.file(path, entry.content, { base64: true });
@@ -305,6 +312,25 @@ export const buildSkillZip = async (skill: SkillLike): Promise<Blob> => {
 
 export const getOpenclaw = (skillOrMeta: any): OpenclawMeta | null => {
 	const openclaw = skillOrMeta?.meta?.openclaw ?? skillOrMeta?.openclaw ?? null;
+	const files = skillOrMeta?.data?.files ?? skillOrMeta?.files;
+	if (Array.isArray(files)) {
+		const root = files.find((file: any) => file.path === 'SKILL.md');
+		const fields =
+			parseSkillMarkdown(root?.content ?? skillOrMeta?.content ?? '')?.frontmatter ?? {};
+		if (openclaw || fields?.metadata?.openclaw)
+			return {
+				...(openclaw ?? {}),
+				frontmatter: fields,
+				files: Object.fromEntries(
+					files
+						.filter((file: any) => file.path !== 'SKILL.md')
+						.map((file: any) => [
+							file.path,
+							{ content: file.content, encoding: file.encoding ?? 'utf-8' }
+						])
+				)
+			};
+	}
 	return openclaw && typeof openclaw === 'object' ? openclaw : null;
 };
 

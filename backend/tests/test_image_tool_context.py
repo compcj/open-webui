@@ -7,10 +7,13 @@ import importlib.util
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
+from uuid import uuid4
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 
 from test_web_tool_citations import BACKEND, load_functions
@@ -44,7 +47,9 @@ def runtime():
         {
             'convert_output_to_messages',
             'reconcile_tool_pairs',
+            'get_paired_tool_call_ids',
             'get_system_message',
+            'get_last_user_message_item',
             'get_message_list',
             'get_content_from_message',
             'strip_empty_content_blocks',
@@ -63,7 +68,7 @@ def runtime():
             'process_messages_with_output',
             'convert_url_images_to_base64',
             'sanitize_tool_pairs',
-            'drain_approved_tool_calls',
+            'resume_tool_calls',
             'attach_tool_citations',
             'get_tool_citation_source_ids',
             'get_source_context',
@@ -71,6 +76,8 @@ def runtime():
             'normalize_messages_for_model',
         },
     )
+    ns.update(asyncio=asyncio, copy=copy, HTTPException=HTTPException, uuid4=uuid4, ENABLE_FUNCTIONS=False)
+    load_functions(ns, 'utils/tool_approval.py', {'pending_tool_calls', 'tool_continuation', 'complete_tool_call'})
     # Execute the real streaming output assembly and frontend filtering blocks.
     result_loop = next(
         node
@@ -114,10 +121,30 @@ def runtime():
         and isinstance(node.value.value.func, ast.Name)
         and node.value.value.func.id == 'generate_chat_completion'
     )
-    wrapper = ast.parse('async def dispatch_followup():\n    pass\n')
-    wrapper.body[0].body = followup.body[: dispatch_index + 1]
+    wrapper = ast.parse(
+        'async def dispatch_followup():\n    global messages\n    if messages is None:\n        messages = list(form_data["messages"])\n'
+    )
+    wrapper.body[0].body.extend(followup.body[: dispatch_index + 1])
+    ns['messages'] = None
     exec(compile(ast.fix_missing_locations(wrapper), 'native_image_followup', 'exec'), ns)
     return SimpleNamespace(ns=ns, result_loop=result_loop, frontend_loop=frontend_loop)
+
+
+def install_approval_store(ns, message):
+    """Transaction double for the real claim/complete interface; retain its atomic ownership."""
+    lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def edit_message_output(chat_id, message_id):
+        async with lock:
+            yield message
+
+    ns['Chats'] = SimpleNamespace(edit_message_output=edit_message_output)
+    ns['ENABLE_FUNCTIONS'] = False
+    ns['UserModel'] = SimpleNamespace
+    ns['ERROR_MESSAGES'] = SimpleNamespace(NOT_FOUND='not found')
+    load_functions(ns, 'utils/tool_approval.py', {'pending_tool_calls', 'tool_continuation', 'complete_tool_call'})
+    return lock
 
 
 def result_output(runtime, tool_name='generate_image', images=None, tool_result=None):
@@ -245,8 +272,9 @@ def test_generated_image_history_keeps_later_attachments_on_their_user_turns(run
             )
         ),
     )
-    replay = ns['process_messages_with_output'](copy.deepcopy(history), include_tool_images=vision)
-    replay = asyncio.run(ns['add_file_context'](replay, 'chat-1', SimpleNamespace(id='owner')))
+    replay = ns['process_messages_with_output'](
+        copy.deepcopy(history), include_tool_images=vision, include_file_context=True
+    )
     payload = ns['normalize_messages_for_model']({'messages': replay})
     user_texts = [
         '\n'.join(part.get('text', '') for part in msg['content'])
@@ -372,41 +400,38 @@ def test_approved_image_tool_uses_the_same_context_and_authorized_image_loading(
         'files': [{'type': 'image', 'url': IMAGE_URL, 'context_only': True}],
     }
     message = {'role': 'assistant', 'model': 'vision', 'output': [{**output[0], 'status': 'queued', 'approved': True}]}
-    saved = []
-
-    async def save(chat_id, message_id, update, **kwargs):
-        message.update(copy.deepcopy(update))
-        saved.append(copy.deepcopy(update))
 
     async def event_pair(metadata):
         return AsyncMock(), AsyncMock()
 
     ns = runtime.ns
+    install_approval_store(ns, message)
     ns.update(
         is_saved_chat_id=lambda value: value == 'chat-1',
-        Chats=SimpleNamespace(
-            get_message_by_id_and_message_id=AsyncMock(side_effect=lambda *args: message),
-            upsert_message_to_chat_by_id_and_message_id=save,
-        ),
         get_event_emitter_and_caller=event_pair,
         execute_tool_call_for_output=AsyncMock(return_value=result),
-        load_messages_from_db=AsyncMock(return_value=[{'role': 'user', 'content': 'Draw a tree'}]),
-        MESSAGE_REPLAY_KEYS=('role', 'output', 'model'),
         get_reasoning_format=lambda model: None,
-        ENABLE_PLUGINS=False,
     )
-    form = {}
-    asyncio.run(
-        ns['drain_approved_tool_calls'](
-            None,
-            form,
-            SimpleNamespace(id='owner'),
-            {'id': 'vision'},
-            {'chat_id': 'chat-1', 'assistant_message_id': 'assistant-1'},
+    form = {'messages': [{'role': 'user', 'content': 'Draw a tree'}]}
+    assert (
+        asyncio.run(
+            ns['resume_tool_calls'](
+                None,
+                form,
+                SimpleNamespace(id='owner'),
+                {'id': 'vision'},
+                {'chat_id': 'chat-1', 'assistant_message_id': 'assistant-1'},
+                message,
+            )
         )
+        is False
     )
-    assert not saved[0]['output'][1].get('files')
-    assert {'type': 'input_image', 'image_url': IMAGE_URL} in saved[0]['output'][1]['output']
+    stored = next(item for item in message['output'] if item['type'] == 'function_call_output')
+    assert not stored.get('files')
+    assert {'type': 'input_image', 'image_url': IMAGE_URL} in stored['output']
+    # The actual next pipeline stage projects completed results before the final image read.
+    form['messages'].extend(ns['process_messages_with_output']([message]))
+    asyncio.run(ns['convert_url_images_to_base64'](form, user=SimpleNamespace(id='owner')))
     assert any(
         part.get('image_url', {}).get('url') == IMAGE_DATA
         for msg in form['messages']

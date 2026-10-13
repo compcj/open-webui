@@ -85,6 +85,7 @@ def runtime():
             'add_or_update_system_message',
             'convert_output_to_messages',
             'reconcile_tool_pairs',
+            'get_paired_tool_call_ids',
         },
     )
     load_functions(ns, 'utils/task.py', {'rag_template'})

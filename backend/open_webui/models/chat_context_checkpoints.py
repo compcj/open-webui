@@ -23,6 +23,7 @@ class ChatContextCheckpoint(Base):
     covered_message_keys = Column(JSON, nullable=False)
     covered_output_ids = Column(JSON, nullable=False)
     summary = Column(Text, nullable=False)
+    source_scope = Column(Text, nullable=True)
     created_at = Column(BigInteger, nullable=False)
     __table_args__ = (
         UniqueConstraint('chat_id', 'model_id', 'version', name='uq_chat_context_checkpoint_version'),
@@ -60,7 +61,7 @@ async def read_snapshot_in_session(db, chat_id: str, *, lock=False) -> dict | No
             message = {
                 mapping.get(k, k): copy.deepcopy(v)
                 for k, v in row.items()
-                if k not in {'chat_id', 'user_id', 'id', 'updated_at', 'created_at'} and v is not None
+                if k not in {'chat_id', 'id', 'updated_at', 'created_at'} and v is not None
             }
             message['id'] = identity
             message.setdefault('content', '')
@@ -68,7 +69,37 @@ async def read_snapshot_in_session(db, chat_id: str, *, lock=False) -> dict | No
     for identity, message in messages.items():
         message['id'] = identity
     current = chat.get('current_message_id') or (data.get('history') or {}).get('currentId') or data.get('currentId')
-    return {'chat': data, 'messages_map': messages, 'current_id': current}
+    shared_history = False
+    shared_table = Base.metadata.tables.get('shared_chat')
+    if shared_table is not None:
+        shares = (
+            (await db.execute(select(shared_table.c.chat).where(shared_table.c.chat_id == chat_id))).scalars().all()
+        )
+        shared_history = any((item or {}).get('share_mode') == 'continue' for item in shares)
+    # Folder readers see live history even when they cannot continue it. Walk
+    # inherited grants as well; presence is sufficient, no actor dimension.
+    folder_table = Base.metadata.tables.get('folder')
+    grants = Base.metadata.tables.get('access_grant')
+    folder_id, seen = chat.get('folder_id'), set()
+    while not shared_history and folder_id and folder_id not in seen and folder_table is not None:
+        seen.add(folder_id)
+        if grants is not None:
+            shared_history = (
+                await db.execute(
+                    select(grants.c.id)
+                    .where(grants.c.resource_type == 'folder', grants.c.resource_id == folder_id)
+                    .limit(1)
+                )
+            ).first() is not None
+        folder = (await db.execute(select(folder_table).where(folder_table.c.id == folder_id))).mappings().first()
+        folder_id = folder.get('parent_id') if folder else None
+    return {
+        'chat': data,
+        'messages_map': messages,
+        'current_id': current,
+        'owner_id': chat.get('user_id'),
+        'shared_history': shared_history,
+    }
 
 
 class ChatContextCheckpointsTable:
@@ -112,6 +143,8 @@ class ChatContextCheckpointsTable:
                 # Locks only span these DB operations, never the model await.
                 snapshot = await read_snapshot_in_session(db, data['chat_id'], lock=True)
                 if not snapshot or not source_refs_match(data['source_refs'], snapshot['messages_map']):
+                    return None
+                if snapshot.get('shared_history') and data.get('source_scope') != 'saved_history_v1':
                     return None
                 if digest(data['source_refs']) != data['source_fingerprint']:
                     return None

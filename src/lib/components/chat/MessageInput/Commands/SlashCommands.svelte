@@ -10,6 +10,7 @@
 		type TerminalSkill
 	} from '$lib/apis/terminal';
 	import {
+		user,
 		chatId,
 		selectedTerminalId,
 		settings,
@@ -70,7 +71,9 @@
 		...('settings'.startsWith(query.toLowerCase())
 			? [{ type: 'command', data: { id: 'settings' } }]
 			: []),
-		...(hasChatContent && $selectedTerminalId && 'skills:create'.startsWith(query.toLowerCase())
+		...(hasChatContent &&
+		($user?.role === 'admin' || $user?.permissions?.workspace?.skills) &&
+		'skills:create'.startsWith(query.toLowerCase())
 			? [{ type: 'command', data: { id: 'skills:create' } }]
 			: [])
 	];

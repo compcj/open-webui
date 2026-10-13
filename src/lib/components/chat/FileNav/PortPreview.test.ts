@@ -53,8 +53,9 @@ describe('terminal HTML preview isolation', () => {
 					? chunk.data
 					: new Function(
 							'$settings',
+							'allowScripts',
 							`return (${htmlSource.slice(chunk.expression.start, chunk.expression.end)});`
-						)({ iframeSandboxAllowSameOrigin: true })
+						)({ iframeSandboxAllowSameOrigin: true }, true)
 			)
 			.join('')
 			.split(/\s+/);

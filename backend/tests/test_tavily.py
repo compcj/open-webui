@@ -46,7 +46,7 @@ def test_default_request_explicitly_uses_basic_depth():
     runtime['get_filtered_results'].assert_not_called()
 
 
-@pytest.mark.parametrize('depth', ['basic', 'advanced'])
+@pytest.mark.parametrize('depth', ['ultra-fast', 'fast', 'basic', 'advanced'])
 def test_selected_search_depth_is_sent_to_tavily(depth):
     response = Mock()
     response.json.return_value = {'results': []}

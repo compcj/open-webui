@@ -14,7 +14,7 @@ import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from open_webui.config import TERMINAL_PROXY_HEADERS
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, WEBUI_SECRET_KEY
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, ENABLE_TOOL_SERVERS, WEBUI_SECRET_KEY
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.chats import Chats
@@ -96,8 +96,10 @@ def _sanitize_proxy_path(path: str) -> str | None:
 @router.get('/')
 async def list_terminal_servers(request: Request, user=Depends(get_verified_user)):
     """Return terminal servers the authenticated user has access to."""
+    if not ENABLE_TOOL_SERVERS:
+        return []
     connections = await Config.get('terminal_server.connections', []) or []
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
 
     return [
         {
@@ -153,13 +155,15 @@ def _cross_origin_file_request(request: Request) -> bool:
 
 
 async def _http_terminal_context(server_id, request, user, metadata, *, require_context=False):
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(403, 'Tool servers are disabled')
     connections = await Config.get('terminal_server.connections', []) or []
     connection = next((c for c in connections if c.get('id') == server_id), None)
     if connection is None:
         raise HTTPException(404, 'Terminal server not found')
     if not connection.get('enabled', True):
         raise HTTPException(403, 'Terminal server disabled')
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
     if not await has_connection_access(user, connection, user_group_ids):
         raise HTTPException(403, 'Access denied')
     base_url = get_terminal_server_url(connection)
@@ -219,6 +223,7 @@ async def display_terminal_image(server_id: str, ref: str, request: Request, use
 
 
 @router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)
+@router.api_route('/{server_id}/chats/{chat_id}/{path:path}', methods=PROXY_METHODS)
 async def proxy_terminal(server_id: str, path: str, request: Request, user=Depends(get_verified_user)):
     return await _proxy_http(server_id, path, request, user)
 
@@ -235,7 +240,7 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
     # endpoint with the same name as a protected delivery endpoint.
     if safe_path.rstrip('/') in {'files/download', 'files/image'}:
         return _terminal_error(405, 'Method not allowed')
-    metadata = {'chat_id': request.headers.get('x-session-id')}
+    metadata = {'chat_id': request.path_params.get('chat_id') or request.headers.get('x-session-id')}
     payload = None
     if reference is not None:
         try:
@@ -423,7 +428,11 @@ async def _resolve_authenticated_connection(ws: WebSocket, server_id: str):
         return None
     user, connection = result
     chat_id = payload.get('chat_id', '')
-    return user, connection, chat_id if isinstance(chat_id, str) else '', token
+    chat_id = chat_id if isinstance(chat_id, str) else ''
+    if is_saved_chat_id(chat_id) and not await Chats.get_chat_by_id_for_user(chat_id, user):
+        await ws.close(code=4003, reason='Chat access denied')
+        return None
+    return user, connection, chat_id, token
 
 
 async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
@@ -444,6 +453,9 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
         return None
 
     # Resolve terminal server
+    if not ENABLE_TOOL_SERVERS:
+        await ws.close(code=4003, reason='Tool servers are disabled')
+        return None
     connections = await Config.get('terminal_server.connections', []) or []
     connection = next((c for c in connections if c.get('id') == server_id), None)
 
@@ -583,7 +595,13 @@ async def ws_terminal(
                     while True:
                         # Poll current state so revocation also works across workers.
                         await asyncio.sleep(10)
-                        if await _resolve_terminal_access(ws, server_id, token) is None:
+                        current_access = await _resolve_terminal_access(ws, server_id, token)
+                        if current_access is None:
+                            return
+                        if is_saved_chat_id(chat_id) and not await Chats.get_chat_by_id_for_user(
+                            chat_id, current_access[0]
+                        ):
+                            await ws.close(code=4003, reason='Chat access denied')
                             return
                 except Exception:
                     log.exception('Terminal access recheck failed')

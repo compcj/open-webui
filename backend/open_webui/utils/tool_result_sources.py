@@ -63,7 +63,16 @@ def batch_id(call_ids: list[str]) -> str:
     return 'tool-batch-' + hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:24]
 
 
-def annotate_output_batch(output: list[dict], call_ids: list[str]) -> None:
+def registered_tool_kind(name: str, tools: dict | None, *, default: str = 'native') -> str:
+    """Only a trusted server registration can opt a builtin into exact reductions."""
+    exact_kinds = {'search_tools': 'tool_schema', 'view_skill': 'skill_page', 'read_skill_file': 'skill_page'}
+    registered = (tools or {}).get(name) or {}
+    if registered.get('type') == 'builtin' and registered.get('tool_id') == f'builtin:{name}':
+        return exact_kinds.get(name, default)
+    return default
+
+
+def annotate_output_batch(output: list[dict], call_ids: list[str], *, tools: dict | None = None) -> None:
     """Assign a response batch before approval splits it into deferred subsets."""
     calls = [item for item in output if item.get('type') == 'function_call' and item.get('call_id') in call_ids]
     existing = next(
@@ -72,12 +81,14 @@ def annotate_output_batch(output: list[dict], call_ids: list[str]) -> None:
     )
     group = existing or batch_id(call_ids)
     for item in calls:
+        name = item.get('name')
+        trusted_kind = registered_tool_kind(name, tools, default='read' if name == 'read_tool_result' else 'native')
         item.setdefault(
             'tool_result',
             {
                 'batch_id': group,
                 'name': item.get('name') or 'tool',
-                'kind': 'read' if item.get('name') == 'read_tool_result' else 'native',
+                'kind': trusted_kind,
             },
         )
 

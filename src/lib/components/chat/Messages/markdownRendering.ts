@@ -17,6 +17,7 @@ marked.use(footnoteExtension());
 marked.use(colonFenceExtension(options));
 marked.use(disableSingleTilde as MarkedExtension);
 marked.use({
+	breaks: true,
 	extensions: [
 		mentionExtension({ triggerChar: '@' }),
 		mentionExtension({ triggerChar: '#' }),

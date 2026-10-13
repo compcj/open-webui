@@ -2,8 +2,9 @@
 
 import ast
 import logging
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -29,6 +30,16 @@ def load_functions(path, names, namespace):
     )
     exec(compile(ast.fix_missing_locations(module), str(path), 'exec'), namespace)
     return namespace
+
+
+@pytest.fixture(autouse=True)
+def persistent_auth(monkeypatch):
+    module = ModuleType('open_webui.utils.mfa')
+    module.get_auth = AsyncMock(return_value=SimpleNamespace(session_stamp=None, mfa=None))
+    module.get_mfa_config = AsyncMock(return_value=SimpleNamespace(ENABLE_MFA=False))
+    module.is_mfa_required = lambda method, config: config.ENABLE_MFA
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module
 
 
 def auth_runtime(redis):
@@ -93,8 +104,56 @@ async def test_terminal_auth_outage_closes_with_retry_code():
     ws = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=object())), close=AsyncMock())
     ns = {
         'HTTPException': HTTPException,
+        'ENABLE_TOOL_SERVERS': True,
         'get_verified_user_by_token': AsyncMock(side_effect=HTTPException(503, 'Temporarily unavailable')),
     }
     load_functions('routers/terminals.py', {'_resolve_terminal_access'}, ns)
     assert await ns['_resolve_terminal_access'](ws, 'terminal-1', 'synthetic') is None
     assert ws.close.call_args.kwargs['code'] == 1013
+
+
+@pytest.mark.asyncio
+async def test_persistent_stamp_revokes_without_redis(persistent_auth):
+    ns, decoded, _ = auth_runtime(None)
+    persistent_auth.get_auth.return_value.session_stamp = 'new-stamp'
+    assert await ns['is_valid_token'](decoded) is False
+
+
+@pytest.mark.asyncio
+async def test_mfa_enforcement_rejects_existing_unverified_session(persistent_auth):
+    ns, decoded, _ = auth_runtime(None)
+    persistent_auth.get_mfa_config.return_value.ENABLE_MFA = True
+    assert await ns['is_valid_token'](decoded) is False
+    decoded['mfa_verified'] = True
+    persistent_auth.get_auth.return_value.mfa = SimpleNamespace(secret='encrypted-synthetic', reset_required=False)
+    assert await ns['is_valid_token'](decoded) is True
+    persistent_auth.get_auth.return_value.mfa.reset_required = True
+    assert await ns['is_valid_token'](decoded) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typ,expected', [('automation', True), ('subagent', True), ('mfa', False)])
+async def test_token_purpose_still_rejects_challenge_tokens(persistent_auth, typ, expected):
+    ns, decoded, _ = auth_runtime(None)
+    decoded['typ'] = typ
+    persistent_auth.get_mfa_config.return_value.ENABLE_MFA = True
+    assert await ns['is_valid_token'](decoded) is expected
+
+
+@pytest.mark.asyncio
+async def test_optional_auth_preserves_retryable_failure():
+    ns = {
+        'get_http_authorization_cred': lambda _: None,
+        'HTTPException': HTTPException,
+        'get_verified_user_by_token': AsyncMock(side_effect=HTTPException(503, 'retry')),
+    }
+    load_functions('utils/auth.py', {'get_optional_verified_user_from_request'}, ns)
+    request = SimpleNamespace(
+        headers={},
+        cookies={'token': 'synthetic'},
+        state=SimpleNamespace(),
+        app=SimpleNamespace(state=SimpleNamespace(redis=object())),
+    )
+    with pytest.raises(HTTPException) as caught:
+        await ns['get_optional_verified_user_from_request'](request)
+    assert caught.value.status_code == 503

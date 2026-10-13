@@ -67,8 +67,23 @@ def _as_str_list(value) -> list[str]:
 ####################
 
 
+def skill_frontmatter(skill) -> dict:
+    from open_webui.utils.skill_files import frontmatter
+
+    data = _get(skill, 'data') or {}
+    if isinstance(data.get('files'), list):
+        root = next((f for f in data['files'] if f['path'] == 'SKILL.md'), None)
+        return frontmatter(root['content']) if root else {}
+    return openclaw_frontmatter(openclaw_meta(skill))
+
+
 def openclaw_meta(skill) -> dict:
     """Return the ``meta.openclaw`` dict of a skill (model or dict), or {}."""
+    data = _get(skill, 'data') or {}
+    if isinstance(data.get('files'), list):
+        from open_webui.utils.skill_compat import projected_openclaw
+
+        return projected_openclaw(skill)
     meta = _get(skill, 'meta')
     if meta is None:
         return {}
@@ -655,7 +670,16 @@ async def sync_skill_files(request, user, terminal_id, metadata, skill_id, files
             cache = {}
             request.app.state.SKILL_TERMINAL_SYNC = cache
         fingerprint = files_fingerprint(files, env)
-        cache_key = (terminal_id, metadata.get('chat_id') or metadata.get('session_id'), skill_id)
+        # Match the identity/context actually sent to the terminal; shared chat
+        # metadata alone cannot prove files were synced for the current actor.
+        cache_key = (
+            terminal_id,
+            server_data['url'],
+            headers.get('X-User-Id') or _get(_normalize_user(user), 'id'),
+            headers.get('X-Terminal-Context-Id'),
+            headers.get('X-Session-Id'),
+            skill_id,
+        )
         cached = cache.get(cache_key)
         if cached and cached.get('fingerprint') == fingerprint:
             return cached.get('base_dir')

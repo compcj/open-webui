@@ -15,9 +15,9 @@ def test_router_contract():
     required = [
         'from open_webui.retrieval.web.search1api import search_search1api',
         "'SEARCH1API_API_KEY': 'web.search.search1api_api_key'",
-        "'SEARCH1API_API_KEY': config.SEARCH1API_API_KEY",
+        "'SEARCH1API_API_KEY': config['web.search.search1api_api_key']",
         'SEARCH1API_API_KEY: str | None = None',
-        'config.SEARCH1API_API_KEY = form_data.web.SEARCH1API_API_KEY',
+        'form_data.web.model_dump(exclude_unset=True)',
         "elif engine == 'search1api':",
         'return await search_search1api(',
         "'No SEARCH1API_API_KEY found in environment variables'",

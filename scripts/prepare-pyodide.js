@@ -13,7 +13,8 @@ const packages = [
 	'tiktoken',
 	'pytz',
 	'black',
-	'openai'
+	'openai',
+	'lxml'
 ];
 
 // Pure-Python packages whose wheels must be downloaded from PyPI and saved into
@@ -28,18 +29,33 @@ const pypiPackages = [
 	'pytokens',
 	'openpyxl',
 	'et-xmlfile',
-	'seaborn'
+	'seaborn',
+	'python-pptx',
+	'python-docx',
+	'xlsxwriter'
 ];
 
 const pypiDepends = {
 	black: ['click', 'mypy-extensions', 'packaging', 'pathspec', 'platformdirs', 'pytokens'],
 	openpyxl: ['et-xmlfile'],
-	seaborn: ['matplotlib', 'numpy', 'pandas']
+	seaborn: ['matplotlib', 'numpy', 'pandas'],
+	'python-pptx': ['lxml', 'pillow', 'xlsxwriter', 'typing-extensions'],
+	'python-docx': ['lxml', 'typing-extensions']
 };
 
 import { loadPyodide } from 'pyodide';
 import { setGlobalDispatcher, ProxyAgent } from 'undici';
-import { writeFile, readFile, copyFile, readdir, rmdir, access, mkdir, rm } from 'fs/promises';
+import {
+	writeFile,
+	readFile,
+	copyFile,
+	readdir,
+	rmdir,
+	access,
+	mkdir,
+	rm,
+	rename
+} from 'fs/promises';
 
 /**
  * Loading network proxy configurations from the environment variables.
@@ -129,6 +145,18 @@ async function downloadPackages() {
 	}
 }
 
+// Replace the generated lock atomically: Windows readers can map the existing file,
+// making truncation fail even though replacing its directory entry is allowed.
+async function writePyodideLock(lockPath, lockData) {
+	const temporaryPath = `${lockPath}.${process.pid}.tmp`;
+	try {
+		await writeFile(temporaryPath, JSON.stringify(lockData, null, 2));
+		await rename(temporaryPath, lockPath);
+	} finally {
+		await rm(temporaryPath, { force: true });
+	}
+}
+
 async function copyPyodide() {
 	console.log('Copying Pyodide files into static directory');
 	// Copy all files from node_modules/pyodide to static/pyodide
@@ -203,7 +231,7 @@ async function downloadPyPIWheels() {
 		}
 	}
 
-	await writeFile(lockPath, JSON.stringify(lockData, null, 2));
+	await writePyodideLock(lockPath, lockData);
 	console.log('Updated pyodide-lock.json with PyPI packages');
 }
 
@@ -248,7 +276,7 @@ if (process.env.USE_SLIM === 'true') {
 			`https://cdn.jsdelivr.net/pyodide/v${version}/full/`
 		).href;
 	}
-	await writeFile(lockPath, JSON.stringify(lockData, null, 2));
+	await writePyodideLock(lockPath, lockData);
 } else {
 	await downloadPackages();
 	await copyPyodide();

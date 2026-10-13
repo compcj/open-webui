@@ -1,3 +1,5 @@
+import { get } from 'svelte/store';
+import { config } from '$lib/stores';
 import { WEBUI_BASE_URL } from '$lib/constants';
 import { convertOpenApiToToolPayload, resolveSchema } from '$lib/utils';
 import { normalizeTags } from '$lib/utils/tags';
@@ -392,6 +394,7 @@ export const getTaskIdsByChatId = async (token: string, chat_id: string) => {
 };
 
 export const getToolServerData = async (token: string, url: string) => {
+	if (!get(config)?.features?.enable_tool_servers) throw new Error('Tool servers are disabled');
 	let error = null;
 
 	const res = await fetch(`${url}`, {
@@ -435,6 +438,7 @@ export const getToolServerData = async (token: string, url: string) => {
 };
 
 export const getToolServersData = async (servers: object[]) => {
+	if (!get(config)?.features?.enable_tool_servers) return [];
 	return (
 		await Promise.all(
 			servers
@@ -546,6 +550,7 @@ export const executeToolServer = async (
 	serverData: { openapi: any; info: any; specs: any },
 	sessionId?: string
 ) => {
+	if (!get(config)?.features?.enable_tool_servers) throw new Error('Tool servers are disabled');
 	let error = null;
 
 	try {
@@ -1771,21 +1776,75 @@ export interface ModelConfig {
 	id: string;
 	name: string;
 	meta: ModelMeta;
-	base_model_id?: string;
+	base_model_id?: string | null;
 	params: ModelParams;
+	user_id?: string;
+	version_id?: string | null;
+	access_grants?: {
+		id?: string;
+		principal_type: 'user' | 'group' | 'anyone';
+		principal_id: string;
+		permission: 'read' | 'write';
+	}[];
 }
 
 export interface ModelMeta {
-	toolIds: never[];
-	description?: string;
+	user?: { community?: boolean; username?: string; name?: string };
+	voice_avatar?: import('$lib/utils/voice-avatar').VoiceAvatarConfig | null;
+	voice?: { voice?: string };
+	toolIds?: string[];
+	skillIds?: string[];
+	filterIds?: string[];
+	defaultFilterIds?: string[];
+	actionIds?: string[];
+	defaultFeatureIds?: string[];
+	builtinTools?: Record<string, boolean>;
+	terminalId?: string;
+	tts?: { voice?: string };
+	description?: string | null;
 	i18n?: Record<string, Record<string, any>>;
 	hidden?: boolean;
-	capabilities?: object;
+	capabilities?: Record<string, boolean | undefined>;
 	profile_image_url?: string;
 	available_reasoning_effort?: string[];
 	context_window?: number | null;
 	default_reasoning_effort?: string;
 	background_image_url?: string | null;
+	tags?: { name: string }[];
+	suggestion_prompts?: { content: string; title?: string[] }[] | null;
+	knowledge?: {
+		id: string | null;
+		type: string;
+		name?: string;
+		description?: string;
+		status?: string;
+		itemId?: string;
+		[key: string]: unknown;
+	}[];
+	chat_variables_schema?: {
+		fields?: {
+			key: string;
+			type?: string;
+			required?: boolean;
+			default?: unknown;
+			[key: string]: unknown;
+		}[];
+	};
 }
 
-export interface ModelParams {}
+export interface ModelControl {
+	display?: 'menu' | 'slider';
+	label: string;
+	description?: string;
+	default?: string | null;
+	options: Record<string, { label: string; params?: Record<string, any> }>;
+}
+
+export interface ModelParams {
+	model_controls?: Record<string, ModelControl>;
+	system?: string | null;
+	stop?: string | string[] | null;
+	custom_params?: Record<string, unknown>;
+	reasoning_effort?: string | null;
+	[key: string]: unknown;
+}

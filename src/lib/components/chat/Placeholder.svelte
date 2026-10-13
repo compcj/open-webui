@@ -16,6 +16,7 @@
 		config,
 		user,
 		models as _models,
+		type Model,
 		temporaryChatEnabled,
 		selectedFolder
 	} from '$lib/stores';
@@ -42,9 +43,17 @@
 	export let stopResponse: Function;
 
 	export let autoScroll = false;
+	export let callActive = false;
 
 	export let atSelectedModel: Model | undefined;
-	export let selectedModels: [''];
+	export let selectedModels: string[];
+	export let modelControlSelections = {};
+	export let modelControlAdvancedParams = {};
+	export let onModelControlChange: (
+		modelId: string,
+		controlId: string,
+		value: string
+	) => void = () => {};
 	export let reasoningEffortByModel: Record<string, string> = {};
 	export let onReasoningEffortChange: (modelId: string, value: string) => void = () => {};
 
@@ -52,7 +61,7 @@
 
 	export let prompt = '';
 	export let files = [];
-	export let messageInput = null;
+	export let messageInput: MessageInput | null | undefined = null;
 
 	export let selectedToolIds = [];
 	export let selectedSkillIds = [];
@@ -236,16 +245,16 @@
 							{#if models[selectedModelIdx]?.info?.meta?.user}
 								<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
 									{$i18n.t('By')}
-									{#if models[selectedModelIdx]?.info?.meta?.user.community}
+									{#if models[selectedModelIdx]?.info?.meta?.user?.community}
 										<a
 											href="https://openwebui.com/m/{models[selectedModelIdx]?.info?.meta?.user
-												.username}"
-											>{models[selectedModelIdx]?.info?.meta?.user.name
-												? models[selectedModelIdx]?.info?.meta?.user.name
-												: `@${models[selectedModelIdx]?.info?.meta?.user.username}`}</a
+												?.username}"
+											>{models[selectedModelIdx]?.info?.meta?.user?.name
+												? models[selectedModelIdx]?.info?.meta?.user?.name
+												: `@${models[selectedModelIdx]?.info?.meta?.user?.username}`}</a
 										>
 									{:else}
-										{models[selectedModelIdx]?.info?.meta?.user.name}
+										{models[selectedModelIdx]?.info?.meta?.user?.name}
 									{/if}
 								</div>
 							{/if}
@@ -257,10 +266,14 @@
 			<div class="text-base font-normal @md:max-w-3xl w-full py-3 {atSelectedModel ? 'mt-2' : ''}">
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
+						{callActive}
 						bind:this={messageInput}
 						{history}
 						bind:selectedModels
 						{reasoningEffortByModel}
+						{modelControlSelections}
+						{modelControlAdvancedParams}
+						{onModelControlChange}
 						{onReasoningEffortChange}
 						bind:files
 						bind:prompt

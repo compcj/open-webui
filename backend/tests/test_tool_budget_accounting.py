@@ -4,7 +4,7 @@ import ast
 import asyncio
 import copy
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -153,7 +153,14 @@ async def test_context_usage_persists_accounting_without_a_status_notice():
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
-    namespace = dict(Chats=chats, sio=sio, WEBSOCKET_MANAGER='', is_saved_chat_id=lambda id: id == 'chat')
+    namespace = dict(
+        Chats=chats,
+        Users=SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='owner'))),
+        sio=sio,
+        WEBSOCKET_MANAGER='',
+        is_saved_chat_id=lambda id: id == 'chat',
+    )
+    chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
     emitter = await namespace['get_event_emitter']({'user_id': 'owner', 'chat_id': 'chat', 'message_id': 'a'})
     await emitter({'type': 'context_usage', 'data': {'mode': 'v2', 'tool_budget_accounting': accounting}})
@@ -338,6 +345,7 @@ async def test_accounting_atomic_write_reload_preserves_originals_and_rejects_st
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name
             in {
+                '_chat_transaction',
                 'merge_history',
                 'upsert_message_to_history',
                 'update_chat_by_id',
@@ -345,8 +353,11 @@ async def test_accounting_atomic_write_reload_preserves_originals_and_rejects_st
             }
         ]
         for item in methods:
-            item.decorator_list = []
+            if item.name != '_chat_transaction':
+                item.decorator_list = []
         namespace.update(
+            asynccontextmanager=asynccontextmanager,
+            get_async_db=context,
             time=time,
             select=select,
             ChatModel=SimpleNamespace(model_validate=lambda row: row),
@@ -369,6 +380,7 @@ async def test_accounting_atomic_write_reload_preserves_originals_and_rejects_st
             ),
             namespace,
         )
+        table._chat_transaction = lambda id: namespace['_chat_transaction'](table, id)
         table.merge_history = namespace['merge_history']
         table._clean_null_bytes = lambda value: value
         table.get_current_message_id = lambda chat: chat['history']['currentId']
@@ -396,7 +408,8 @@ async def test_accounting_atomic_write_reload_preserves_originals_and_rejects_st
             )
             is not None
         )
-        saved_data = namespace['ChatMessages'].upsert_message.await_args.kwargs['data']
+        saved_call = namespace['ChatMessages'].upsert_message.await_args
+        saved_data = saved_call.kwargs['data'] if 'data' in saved_call.kwargs else saved_call.args[3]
         assert saved_data['meta']['tool_budget_accounting']['model'] == newer
         async with sessions() as session:
             # Source edits reject the write without touching content/output/meta.
@@ -420,7 +433,14 @@ async def test_failed_accounting_write_reports_usage_error_without_status_or_ori
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
-    namespace = dict(Chats=chats, sio=sio, WEBSOCKET_MANAGER='', is_saved_chat_id=lambda id: id == 'chat')
+    namespace = dict(
+        Chats=chats,
+        Users=SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='owner'))),
+        sio=sio,
+        WEBSOCKET_MANAGER='',
+        is_saved_chat_id=lambda id: id == 'chat',
+    )
+    chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
     emitter = await namespace['get_event_emitter']({'user_id': 'owner', 'chat_id': 'chat', 'message_id': 'a'})
     event = {'type': 'context_usage', 'data': {'mode': 'v2', 'tool_budget_accounting': accounting}}
@@ -586,7 +606,7 @@ async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tm
                 if (
                     writer_kind == 'bulk'
                     and asyncio.current_task().get_name() == 'paused-normalized'
-                    and statement.is_select
+                    and statement.is_insert
                 ):
                     paused.set()
                     await release.wait()
@@ -600,6 +620,7 @@ async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tm
     read_snapshot = snapshot_namespace['read_snapshot_in_session']
     namespace = dict(
         copy=copy,
+        nullcontext=nullcontext,
         time=time,
         select=select,
         text=sql_text,
@@ -727,6 +748,7 @@ async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tm
                 assert cached.meta['tool_budget_accounting']['model'] == older
                 assert await save(None, 'chat', 'a', newest)
                 await write(db=session)
+                await session.commit()
         else:
             assert await save(None, 'chat', 'a', newest)
             await write()
@@ -735,8 +757,13 @@ async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tm
             saved = snapshot['messages_map']['a']
             assert saved['meta']['tool_budget_accounting']['model'] == newest
             assert saved['meta']['tool_budget_accounting']['other'] == other
-            assert saved['meta']['client'] is True
-            assert saved['content'] == 'completed answer'
+            if writer_kind == 'single':
+                assert saved['meta']['client'] is True
+                assert saved['content'] == 'completed answer'
+            else:
+                # Upstream bulk backfill inserts missing rows only, preserving existing data.
+                assert 'client' not in saved['meta']
+                assert saved['content'] == raw['a']['content']
             assert saved['output'] == raw['a']['output']
         assert data['meta']['tool_budget_accounting']['model'] == older
         # Omitting accounting and clearing other metadata still keeps the server map.

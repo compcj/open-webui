@@ -61,6 +61,8 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		user.subscribe(value => $user = value);
 		const localStorage = { token: 'synthetic-token' };
 		const window = { setTimeout, clearTimeout };
+		const tick = async () => {};
+		const callMode = 'current';
 		const $i18n = { t: text => text };
 		const console = { error: () => {} };
 		let $config = { features: {

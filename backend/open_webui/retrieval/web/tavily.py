@@ -22,7 +22,7 @@ def search_tavily(
         api_key (str): A Tavily Search API key
         query (str): The query to search for
         count (int): The maximum number of results to return
-        search_depth (str): The search depth (basic or advanced)
+        search_depth (str): Tavily search depth
 
     Returns:
         A list of SearchResult objects.

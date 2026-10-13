@@ -16,15 +16,15 @@ def load_search_web_function(get_retrieval_config):
         type_ignores=[],
     )
     ast.fix_missing_locations(module)
-    namespace = {'get_retrieval_config': get_retrieval_config}
+    namespace = {'Config': SimpleNamespace(get_many=get_retrieval_config), 'RETRIEVAL_CONFIG_KEYS': {}}
     exec(compile(module, router_path, 'exec'), namespace)
     return namespace['search_web']
 
 
 @pytest.mark.asyncio
 async def test_search_web_requires_search1api_api_key():
-    async def fake_get_retrieval_config():
-        return SimpleNamespace(SEARCH1API_API_KEY='')
+    async def fake_get_retrieval_config(*keys):
+        return {'web.search.search1api_api_key': ''}
 
     search_web = load_search_web_function(fake_get_retrieval_config)
 

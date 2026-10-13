@@ -7,6 +7,7 @@
 
 	import {
 		chatId,
+		config,
 		selectedTerminalId,
 		settings,
 		terminalServers,
@@ -477,6 +478,10 @@
 								aria-pressed={webSearchEnabled}
 								on:click={() => {
 									webSearchEnabled = !webSearchEnabled;
+									// Left open, this menu would swallow the first click on the confirmation dialog
+									if (webSearchEnabled && $config?.features?.enable_web_search_confirmation) {
+										show = false;
+									}
 									onWebSearchToggle(webSearchEnabled);
 								}}
 							>

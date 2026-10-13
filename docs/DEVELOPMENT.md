@@ -155,7 +155,7 @@ repository-wide cleanup solely to make an unrelated check green.
 ## Fork regression map
 
 Read [the upstream merge index](upstream/README.md) and the
-[v0.11.4 decisions](upstream/v0.11.4-decisions.md) before comparing or merging upstream.
+[v0.12.0 decisions](upstream/v0.12.0-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
 
@@ -188,7 +188,7 @@ another worker's temp directory to unblock a test. Use the selected supported Py
 Before upgrading, review third-party Tools/Functions requirements: upstream no longer bundles some
 previously implicit packages such as `langchain-community`. Review standard/slim differences,
 Cookie-forwarding defaults, direct-integration visibility, and the new skill discovery opt-ins in the
-[upgrade record](upstream/v0.11.4-decisions.md#升级与回滚). Existing PostgreSQL vector indexes require
+[upgrade record](upstream/v0.12.0-decisions.md#升级与回滚). Existing PostgreSQL vector indexes require
 explicit inspection before deciding on a rebuild; this merge does not automatically rebuild them.
 
 The fork also adjusts `.github/workflows/docker.yaml`: the current image workflow publishes through
@@ -478,3 +478,52 @@ Tool-result budget acceptance extends the walkthrough above:
    loading and sending a history-only request: both must reject stale selected text before admission.
    Manual history compaction must not prepare pending tools. Status GET must never
    create selections or summaries; source history and timestamps must remain unchanged.
+
+## v0.12.0 merge acceptance
+
+Use Node 22 and Python 3.11/3.12. Run full frontend/backend suites and confirm their collected counts,
+then `npm run check` and `npm run build`. Type diagnostics must be compared by file and diagnostic
+against the pre-merge baseline; a lower total is not a pass. Install/update locks with npm and uv,
+check `uv lock --check`, and inspect generated `static/pyodide/pyodide-lock.json` changes and downloaded
+wheel hashes. The build writes that generated lock atomically to support Windows mapped-file readers. If Node
+exhausts its default heap, set `NODE_OPTIONS=--max-old-space-size=8192` for the build (PowerShell:
+`$env:NODE_OPTIONS="--max-old-space-size=8192"`).
+Do not manually edit its dependency resolutions.
+
+The migration graph joins fork `f9a4b2d6c805` and official `b8f2c6d91a04` at `a120d13e0001`,
+then converts current skill packages at `a120d13e0002` and adds shared provenance at `a120d13e0003`.
+Run `python -m pytest backend/tests/test_v012_migrations.py -q` with isolated data/static directories.
+The test runs real Alembic upgrades for empty, fork and official SQLite databases, rejects conflicting
+legacy attachments without advancing the head, and checks immutable snapshots and idempotence.
+Model control regressions exercise actual parameter conversion for OpenAI/Ollama, including null and
+non-object defaults. Shared response regressions cover exports, lists, mutations and clone persistence;
+compare author metadata as well as top-level owner settings. Continuation members need explicit read
+and write grants, since the upstream ACL stores them independently.
+
+PostgreSQL DDL compilation is not PostgreSQL execution: also run the upgrade cases against a disposable
+PostgreSQL instance before claiming that database's runtime migration acceptance.
+
+| Contract                                                              | Regression entry points                                                                                                                            |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Canonical skills, old snapshots and concurrent edits                  | `test_skill_compat.py`, `test_skill_files_compat.py`, `test_skill_persistence_compat.py`, `test_skills_runtime.py`, `test_skill_runtime_paging.py` |
+| Shared V2 provenance, private-input exclusion, immutable raw fallback | `test_context_compaction_shared.py`, `test_chat_context_copy.py`, `test_context_compaction_api.py`, `test_chat_response_privacy.py`                |
+| Controls migration, precedence and reset/account isolation            | `test_model_controls_compat.py`, `src/lib/utils/model-controls.test.ts`, `src/lib/components/chat/Chat.model-controls.test.ts`                     |
+| Exact schemas and skill pages, bounded final payload                  | `test_exact_tool_results.py`, `test_tool_result_budget.py`, `test_tool_result_budget_integration.py`                                               |
+| Author approvals, continuations and frozen citations                  | `test_tool_citation_replay.py`, `test_web_tool_citations.py`, `test_terminal_agents_attachments.py`                                                |
+| Revocation/terminal boundaries and real Socket.IO adapter             | `test_auth_revocation.py`, `test_terminal_websocket.py`, `test_socket_chat_access.py`                                                              |
+
+Backend test names in this table are under `backend/tests/`. Test helper stubs and synthetic provider
+responses do not establish live provider, Redis, Realtime, or MFA acceptance. Exercise owner, writer,
+reader and stranger identities; revoke a writer's group/share access and verify subsequent reads,
+approvals, stops and socket events are refused. Check nested groups and group model defaults, clone
+snapshot isolation, concurrent shared V2 sends, and explicit skill dependency installation.
+
+Manually exercise model controls after import, refresh, reset, account switches and direct connections;
+include keyboard/Chinese IME and narrow-screen layout. Run translation extraction twice (`npm run i18n:parse`) and compare locale hashes after each run. Validate links in changed Markdown and run
+Prettier, Ruff and `git diff --check` on actual changed files. Preserve historical decision records.
+
+Start the complete application using disposable SQLite/data/static directories and a synthetic secret,
+check health/version/config and a synthetic account workflow. Standard container startup remains a
+separate acceptance step, including native dependencies and mounted storage. Slim adds upstream S3
+storage but does not imply standard-image processing dependencies or tested external services. Record
+actual runtime/container checks and omissions in the [version record](upstream/v0.12.0-decisions.md).

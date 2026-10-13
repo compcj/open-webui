@@ -46,6 +46,7 @@
 
 	export let overlay = false;
 	export let readOnly = false;
+	export let allowScripts: boolean | undefined = undefined;
 
 	export let onSave: ((content: string) => Promise<void>) | null = null;
 	export let searchTarget: {
@@ -367,6 +368,7 @@
 		{#if searchTarget}
 			<div class="absolute inset-0">
 				<FileCodeEditor
+					{readOnly}
 					bind:this={fileCodeEditorRef}
 					value={fileContent ?? ''}
 					filePath={selectedFile}
@@ -389,7 +391,7 @@
 			{/if}
 			<iframe
 				srcdoc={injectCsp(fileContent, $config?.ui?.iframe_csp ?? '')}
-				sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
+				sandbox="{(allowScripts ?? $settings?.iframeSandboxAllowScripts ?? true)
 					? 'allow-scripts'
 					: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
 					? ' allow-downloads'
@@ -400,6 +402,7 @@
 		{:else if isHtml && showRaw}
 			<div class="absolute inset-0">
 				<FileCodeEditor
+					{readOnly}
 					bind:this={fileCodeEditorRef}
 					value={fileContent ?? ''}
 					filePath={selectedFile}
@@ -413,6 +416,7 @@
 		{:else if isMarkdown && showRaw}
 			<div class="absolute inset-0">
 				<FileCodeEditor
+					{readOnly}
 					bind:this={fileCodeEditorRef}
 					value={fileContent ?? ''}
 					filePath={selectedFile}
@@ -448,7 +452,13 @@
 			</div>
 		{:else if isNotebook && !showRaw && parsedNotebook}
 			<div class="overflow-auto h-full">
-				<NotebookView notebook={parsedNotebook} filePath={selectedFile ?? ''} {baseUrl} {apiKey} />
+				<NotebookView
+					notebook={parsedNotebook}
+					filePath={selectedFile ?? ''}
+					{baseUrl}
+					{apiKey}
+					{readOnly}
+				/>
 			</div>
 		{:else if isJson && !showRaw && parsedJson !== undefined}
 			<div class="overflow-auto h-full">
@@ -465,6 +475,7 @@
 		{:else if isCode && !showRaw}
 			<div class="absolute inset-0">
 				<FileCodeEditor
+					{readOnly}
 					bind:this={fileCodeEditorRef}
 					value={fileContent ?? ''}
 					filePath={selectedFile}

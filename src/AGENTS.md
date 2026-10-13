@@ -15,11 +15,12 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   events with their backend producer or consumer. Distinguish absent values from explicit overrides.
 - Put user-visible text through the existing i18n context (`$i18n.t(...)`). Preserve translation
   interpolation variables and avoid mass changes to locale files unrelated to the task.
-- `lib/utils/skills.ts` owns OpenClaw `SKILL.md` parsing/serialization and zip bundle extraction
-  (single parsing pipeline for file, zip, and URL imports). The workspace skill editor keeps
-  `meta.openclaw` intact on submit and renders its OpenClaw section (gating summary, non-secret
-  `env`/`config` bags, explicit dependency install). The `$` mention picker (`IntegrationsMenu.svelte`)
-  hides `user-invocable: false` skills. Preserve these contracts when touching skills UI.
+- Skills edit only `data.files`. `lib/utils/skills.ts` adapts legacy OpenClaw packages and preserves
+  unknown metadata; canonical `SKILL.md` supplies frontmatter. Keep non-secret env/config controls,
+  gating display, export and explicit dependency install. Use `expected_version_id`; surface 409
+  conflicts/refresh-required errors and never retry a stale edit by dropping its version. New URL
+  imports request `response_format=packages`; keep multi-skill selection and file/history UI.
+  The `$` mention picker hides `user-invocable: false` skills.
 - `npm run i18n:parse` regenerates and formats catalogs from `src/**/*.{js,ts,svelte}`. Inspect
   added and removed keys, preserve existing translations and placeholders, and verify a second run
   produces no changes before pushing UI text changes. Dynamic message keys (for example, image-engine
@@ -29,6 +30,14 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 
 ## Integration contracts
 
+- Ordinary models use upstream model controls. Use `model-controls.ts` to migrate old reasoning
+  configuration, custom values and remembered choices to option IDs; explicit new-format maps win.
+  Effective order: chat control → remembered control → chat advanced → personal advanced →
+  control/model default → global. Reset consumes old memory. Direct/pipe models retain the legacy
+  fallback. Show the effective value, not just an empty control label.
+- Shared participants use their own preferences and variables. Do not load/save the owner's private
+  advanced settings as participant defaults. Approval/stop UI belongs to the reply author; `/compact`
+  is owner-only. Shared V2 counts are scoped to the chat/model/branch, with no participant dimension.
 - Preserve the fork composer layout and remembered controls when adding upstream interactions.
   Check follow-up suggestions with Tab, IME composition, and narrow screens.
 - Submit only changed top-level UI settings: omission preserves a value, explicit `null` resets it.
@@ -38,7 +47,7 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   `AUTO_DISCOVERY_SKILL_IDS`. The UI is not an access-control boundary. Expose terminal
   `config.auto_discover_skills` only for admin-managed connections, and clear stale discovery
   results on terminal changes. Preserve manual selections and OpenClaw metadata round trips.
-- Admin Web Search exposes a global Tavily `basic`/`advanced` search-depth selection through
+- Admin Web Search exposes a global Tavily `ultra-fast`/`fast`/`basic`/`advanced` search-depth selection through
   `web.TAVILY_SEARCH_DEPTH`. Preserve its saved value on reload and provider changes, and keep it
   independent of the web loader's `TAVILY_EXTRACT_DEPTH`. New installations default to `basic`;
   this is an admin setting, not a per-user or per-conversation override.
@@ -55,7 +64,7 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
   same-origin port proxies. Do not restore a setting that grants terminal HTML the WebUI origin.
 
-See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and future merge checks.
+See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and future merge checks.
 
 ## Context compaction
 
@@ -99,7 +108,7 @@ See [version decisions](../docs/upstream/v0.11.4-decisions.md) for rationale and
   Its denominator is the resolved summary-model window. Explain that percentage tokens and the
   explicit/inherited absolute output setting take the larger value, then capacity/tool limits may lower
   the actual allowance. Ordinary chat output reservations are unchanged. Keep Chinese/English in sync.
-- `/compact` follows the global mode and stays disabled during generation. Maintain Chinese and
+- `/compact` is owner-only, follows the global mode and stays disabled during generation. Maintain Chinese and
   English labels, parameter validation feedback, inherited values and narrow-screen controls.
 - See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).
 

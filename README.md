@@ -26,24 +26,24 @@ For development in this checkout, see [CONTRIBUTING.md](CONTRIBUTING.md),
 
 ## 与上游的差异 / Differences from upstream
 
-本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支。本次已完整合并官方 **[v0.11.4](https://github.com/open-webui/open-webui/tree/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.11.4-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
+本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支。本次已完整合并官方 **[v0.12.0](https://github.com/open-webui/open-webui/tree/15818d88fd7bde1b73de33590f50d15d21e8d7c1)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.12.0-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
 
-This fork of Open WebUI integrates the official **[v0.11.4](https://github.com/open-webui/open-webui/tree/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.11.4-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
+This fork of Open WebUI integrates the official **[v0.12.0](https://github.com/open-webui/open-webui/tree/15818d88fd7bde1b73de33590f50d15d21e8d7c1)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.12.0-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
 
 ### 保留的功能 / Retained capabilities
 
-| 功能 / Feature                        | 本分支行为 / Fork behavior                                                                                                                                                                                                                                                               |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search1API                            | 管理员可配置搜索提供商与 API Key，支持规范化结果和域名过滤；`SEARCH1API_API_KEY` 提供环境默认值。<br>Admin-configured search provider with normalized results and domain filtering; `SEARCH1API_API_KEY` supplies an environment default.                                                |
-| Tavily 搜索深度 / Search depth        | 管理员在“设置 → 网络搜索”选择 Tavily 后，可切换 `basic` / `advanced`，保存后全局生效，默认 `basic`。<br>Admins can select `basic` / `advanced` under Settings → Web Search → Tavily; the saved setting applies globally and defaults to `basic`.                                         |
-| 推理强度 / Reasoning effort           | 模型可配置标准或自定义档位，聊天显示有效默认值，按用户和模型记忆选择，保留窄屏输入区布局。<br>Per-model standard/custom effort choices, effective defaults, remembered user/model selections, and the existing narrow-screen composer layout.                                            |
-| OpenClaw 技能 / Skills                | 支持原生技能及 `SKILL.md`、ZIP、直接链接、GitHub、skills.sh、ClawHub 导入；保留元数据和附带文件，多技能归档提供选择器。<br>Native and OpenClaw skills with file/ZIP/URL imports, metadata and bundled-file round trips, and a picker for multi-skill archives.                           |
-| 终端技能运行 / Terminal skill runtime | 实际加载时检查运行条件、同步文件及替换 `{baseDir}`；依赖安装需显式操作，终端失败时降级。<br>Checks requirements, syncs files, and expands `{baseDir}` when loading; dependency installation is explicit and terminal failures degrade gracefully.                                        |
-| 工具与偏好 / Tools and preferences    | 搜索、图像、知识、记忆和笔记控制按用户及模型记忆。关闭发现仍可按原权限读取已附加内容；设置按变化字段排队保存。<br>Remembered per-user/model controls for search, images, knowledge, memory, and notes; attached content retains authorized access and settings use queued field updates. |
-| 图像引擎 / Image engines              | 命名的生成与编辑引擎配对、可配置工具说明、编辑开关及 ComfyUI 错误详情；保留图像上下文并避免重复附件。<br>Named generation/editing engine pairs, tool descriptions, edit controls, ComfyUI error details, and deduplicated image context.                                                 |
-| 聊天访问 / Chat access                | 临时聊天与 Direct API Chat 有独立开关，默认开启，管理员豁免；详见[访问控制](docs/chat-access-controls.md)。<br>Independent temporary-chat and Direct API Chat switches, enabled by default with admin exemption; see [access controls](docs/chat-access-controls.md).                    |
-| 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.           |
-| 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                 |
+| 功能 / Feature                        | 本分支行为 / Fork behavior                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search1API                            | 管理员可配置搜索提供商与 API Key，支持规范化结果和域名过滤；`SEARCH1API_API_KEY` 提供环境默认值。<br>Admin-configured search provider with normalized results and domain filtering; `SEARCH1API_API_KEY` supplies an environment default.                                                                                  |
+| Tavily 搜索深度 / Search depth        | 管理员在“设置 → 网络搜索”选择 Tavily 后，可切换 `ultra-fast` / `fast` / `basic` / `advanced`，保存后全局生效，默认 `basic`。<br>Admins can select `ultra-fast` / `fast` / `basic` / `advanced` under Settings → Web Search → Tavily; the saved setting applies globally and defaults to `basic`.                           |
+| 推理强度 / Reasoning effort           | 普通模型使用上游模型控件，兼容旧标准／自定义档位和记忆；直连等场景保留原入口。<br>Server models use upstream controls with legacy/custom choices and preference migration; direct connections retain the compatible selector.                                                                                              |
+| OpenClaw 技能 / Skills                | 支持原生技能及 `SKILL.md`、ZIP、直接链接、GitHub、skills.sh、ClawHub 导入；保留未知元数据，附件统一保存为 `data.files` 并接入版本历史；多技能归档提供选择器。<br>Native and OpenClaw skills with file/ZIP/URL imports, preserved metadata, canonical `data.files`, version history, and a picker for multi-skill archives. |
+| 终端技能运行 / Terminal skill runtime | 实际加载时检查运行条件、同步文件及替换 `{baseDir}`；依赖安装需显式操作，终端失败时降级。<br>Checks requirements, syncs files, and expands `{baseDir}` when loading; dependency installation is explicit and terminal failures degrade gracefully.                                                                          |
+| 工具与偏好 / Tools and preferences    | 搜索、图像、知识、记忆和笔记控制按用户及模型记忆。关闭发现仍可按原权限读取已附加内容；设置按变化字段排队保存。<br>Remembered per-user/model controls for search, images, knowledge, memory, and notes; attached content retains authorized access and settings use queued field updates.                                   |
+| 图像引擎 / Image engines              | 命名的生成与编辑引擎配对、可配置工具说明、编辑开关及 ComfyUI 错误详情；保留图像上下文并避免重复附件。<br>Named generation/editing engine pairs, tool descriptions, edit controls, ComfyUI error details, and deduplicated image context.                                                                                   |
+| 聊天访问 / Chat access                | 临时聊天与 Direct API Chat 有独立开关，默认开启，管理员豁免；详见[访问控制](docs/chat-access-controls.md)。<br>Independent temporary-chat and Direct API Chat switches, enabled by default with admin exemption; see [access controls](docs/chat-access-controls.md).                                                      |
+| 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.                                             |
+| 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                                                   |
 
 ### 工具引用与输入缓存 / Tool citations and input caching
 
@@ -102,25 +102,59 @@ can override or inherit its compaction context window. Upgrades keep the previou
 switching modes preserves raw history and each algorithm's summaries. See the
 [configuration and troubleshooting guide](docs/context-compaction.md).
 
+### 控件、共享聊天与技能升级 / Controls, shared chats and skill upgrades
+
+模型控件按“会话显式选择 → 用户记忆 → 会话高级参数 → 个人高级参数 → 控件／模型默认 → 全局默认”取值。
+默认／重置会清除显式选择和旧记忆，显示实际生效值；新格式已有配置优先，不同时维护两份设置。
+多人续写使用各参与者自己的模型、工具、终端和凭证授权；审批与停止只作用于自己的回复，`/compact` 仅聊天所有者可用。
+
+Controls resolve chat choices, remembered choices, chat advanced parameters, personal advanced parameters,
+control/model defaults, then global defaults. Reset clears explicit choices and obsolete memory. Shared
+chat participants use their own permissions and credentials; approval and stop actions belong to the
+reply author, and only the owner can run `/compact`.
+
+Legacy 已采用 v0.12 轮间压缩；V2 独立处理最终请求和超窗重试，同一请求只走一套算法。
+共享 V2 状态按聊天、模型、有效分支共用，摘要只取已保存的共享历史；个人指令、变量及终端上下文仅用于当前请求。
+无法证明来自共享历史的旧摘要保留在数据库中，共享时回放原文。Tool Search 定义保留完整条目，技能精确读取按页缩小；连必要条目也放不下时返回可操作错误。
+
+Legacy now uses v0.12 between-round compaction. V2 independently guards final sends and overflow retries.
+Participants share V2 state for the same chat/model/valid branch. Shared summaries contain saved history;
+private instructions, variables and terminal context stay in the current request. Old summaries without
+shared provenance replay raw content. Tool schemas remain whole entries and skill reads use exact pages;
+an entry that cannot fit produces an actionable error.
+
+技能编辑以文件树为唯一来源，旧 OpenClaw 附件无损迁入 `data.files`；冲突或无法转换的数据会报告技能 ID／路径并停止迁移。
+更新需带 `expected_version_id`，过期版本返回冲突；缺失版本的旧附件编辑请求要求刷新客户端。
+URL 导入保留旧下载描述格式，新客户端请求 `response_format=packages`；两者共用上游网络、重定向、归档和大小限制。
+管理员与具有 `skills_import` 权限的用户均可导入。
+
+The skill file tree is authoritative. Legacy OpenClaw attachments migrate losslessly to `data.files`;
+conversion conflicts stop migration with a skill ID/path. File edits require `expected_version_id`;
+stale versions conflict and old versionless attachment clients must refresh. URL imports retain the
+legacy descriptor response and accept `response_format=packages` for new clients. Both use the same
+network, redirect, archive and size checks; admins and users with `skills_import` may import.
+
 ### Tavily 搜索深度 / Tavily search depth
 
-`TAVILY_SEARCH_DEPTH=basic` 提供初始默认值，可设为 `advanced`；启用持久化时，已保存的管理员设置优先于环境默认值。此设置同时适用于聊天内置搜索和联网检索，与网页内容提取的 `TAVILY_EXTRACT_DEPTH` 独立。
+`TAVILY_SEARCH_DEPTH=basic` 提供初始默认值，可设为 `ultra-fast`、`fast`、`basic` 或 `advanced`；启用持久化时，已保存的管理员设置优先于环境默认值。此设置同时适用于聊天内置搜索和联网检索，与网页内容提取的 `TAVILY_EXTRACT_DEPTH` 独立。
 
-`TAVILY_SEARCH_DEPTH=basic` supplies the initial default and also accepts `advanced`. With persistent configuration enabled, saved admin settings take precedence over environment defaults. The setting applies to both built-in chat search and web retrieval, independently of the page loader's `TAVILY_EXTRACT_DEPTH`.
+`TAVILY_SEARCH_DEPTH=basic` supplies the initial default; accepted values are `ultra-fast`, `fast`, `basic`, and `advanced`. With persistent configuration enabled, saved admin settings take precedence over environment defaults. The setting applies to both built-in chat search and web retrieval, independently of the page loader's `TAVILY_EXTRACT_DEPTH`.
 
-按 [Tavily 官方说明](https://docs.tavily.com/documentation/api-reference/endpoint/search)，`advanced` 提供更高相关性、耗时更高，每次搜索使用 2 credits；`basic` 每次使用 1 credit。<br>According to the [Tavily API documentation](https://docs.tavily.com/documentation/api-reference/endpoint/search), `advanced` prioritizes relevance with increased latency and uses 2 credits per search; `basic` uses 1 credit.
+深度值严格校验；更新请求省略此字段或传入 `null` 时保留已有设置。服务能力和费用以 [Tavily 官方说明](https://docs.tavily.com/documentation/api-reference/endpoint/search)为准。<br>Depth values are validated strictly; omitted or `null` updates preserve the saved value. See the [Tavily API documentation](https://docs.tavily.com/documentation/api-reference/endpoint/search) for service capabilities and pricing.
 
-### v0.11.4 配置默认值 / Configuration defaults
+### v0.12.0 配置默认值 / Configuration defaults
+
+Tool Search、强制 MFA 和 Realtime 通话采用上游默认；升级不主动开启。新增知识文件浏览、资源版本历史和独立插件开关来自上游。<br>Tool Search, mandatory MFA and Realtime calls retain upstream defaults and are not enabled by the upgrade. Knowledge file browsing, resource history and independent plugin switches are upstream capabilities.
 
 - **技能自动发现默认关闭**：管理员在“设置 → 集成”选择工作区技能白名单；白名单仍受原有访问权限约束，管理员也不豁免。终端按管理员连接单独开启，开启后包含现有和以后新增的技能。手动选择和模型预设保持原有行为。<br>**Automatic skill discovery starts disabled**: admins select workspace skills under Settings → Integrations, subject to existing access rights for every role. Terminal connections opt in separately and include present and future terminal skills. Manual selection and model presets retain their behavior.
 - **终端 AGENTS.md 独立加载**：每轮读取所选终端 home 下的工作说明；读取失败继续聊天。<br>**Terminal AGENTS.md loads independently** each turn from the selected terminal's home directory; failed reads do not stop chat.
 - **个人直连配置入口默认隐藏**，管理员可以开启，已有连接继续可用；与 Direct API Chat 开关不同。Cookie 转发默认关闭。<br>**Personal direct-integration configuration is hidden by default**, can be enabled by an admin, and does not disable existing connections. It is distinct from Direct API Chat. Cookie forwarding is opt-in.
 - **Redis 撤销检查失败时拒绝请求**并提示重试，保留登录 Cookie；未配置 Redis 的部署保持原有行为。<br>**Unavailable Redis revocation checks reject requests with a retryable error**, preserving login cookies. Deployments without Redis retain their existing behavior.
-- **标准镜像为主要支持目标**。slim 面向外部 AI 服务、SQLite/PostgreSQL、pgvector 和本地文件存储，不提供标准镜像的全部本地处理与集成依赖。<br>**The standard image is the primary supported target**. Slim targets external AI services, SQLite/PostgreSQL, pgvector, and local storage, with fewer local-processing and integration dependencies.
+- **标准镜像为主要支持目标**。slim 面向外部 AI 服务、SQLite/PostgreSQL、pgvector、本地或 S3 文件存储，不提供标准镜像的全部本地处理与集成依赖。<br>**The standard image is the primary supported target**. Slim targets external AI services, SQLite/PostgreSQL, pgvector, and local or S3 storage, with fewer local-processing and integration dependencies.
 
-Responses 参数映射、终端 HTTP/WS 身份传递等与上游等价的修复已按共同实现维护，不再列为分支独有修复。Tika 继续保留 JSON 返回协商，并兼容上游版本处理。升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.11.4-decisions.md#升级与回滚)。
+Responses 参数映射、终端 HTTP/WS 身份传递等与上游等价的修复已按共同实现维护，不再列为分支独有修复。Tika 继续保留 JSON 返回协商，并兼容上游版本处理。升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.12.0-decisions.md#升级与回滚)。
 
-Equivalent upstream fixes, including Responses parameter mapping and terminal HTTP/WS identity forwarding, are maintained together rather than advertised as fork-only fixes. Tika retains JSON response negotiation alongside upstream version handling. Read the [upgrade and rollback checks](docs/upstream/v0.11.4-decisions.md#升级与回滚) before upgrading.
+Equivalent upstream fixes, including Responses parameter mapping and terminal HTTP/WS identity forwarding, are maintained together rather than advertised as fork-only fixes. Tika retains JSON response negotiation alongside upstream version handling. Read the [upgrade and rollback checks](docs/upstream/v0.12.0-decisions.md#升级与回滚) before upgrading.
 
 > [!NOTE]
 > 下方的 `pip install open-webui` 和 `ghcr.io/open-webui/open-webui` 示例安装上游发行物。使用本分支功能需从本仓库源码构建；参见[开发指南](docs/DEVELOPMENT.md)。

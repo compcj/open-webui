@@ -418,3 +418,52 @@ async def test_canonical_payload_guard_rolls_back_fresh_members_of_partial_race(
     saved = await db.selections.list_selections('chat', 'model', 'leaf')
     assert next(row for row in saved if row['output_id'] == 'second')['state'] == 'pending'
     assert next(row for row in saved if row['output_id'] == 'out')['id'] == first[0]['id']
+
+
+@pytest.mark.asyncio
+async def test_shared_mixed_batch_reports_effective_raw_fallback_without_rewriting_history(database, monkeypatch):
+    from open_webui.utils.context_compaction_v2 import estimate_text
+
+    db = database
+    context = await candidate(db, branch='a')
+    await db.selections.register_pending('chat', 'model', [descriptor(db)], branch_id='a')
+    first = await db.selections.prepare_selections(
+        'chat', 'model', branch_id='a', choices=[choice(db, context)], batch_reports=[report(db)]
+    )
+    frozen = copy.deepcopy(first[0])
+    extra = {**db.raw['a']['output'][0], 'id': 'second', 'call_id': 'second-call'}
+    await edit(db, 'a', output=[*db.raw['a']['output'], extra])
+    second = {**descriptor(db), 'output_id': 'second', 'call_id': 'second-call'}
+    await db.selections.register_pending('chat', 'model', [second], branch_id='a')
+    module = __import__('open_webui.models.chat_tool_result_selections', fromlist=['_snapshot'])
+    snapshot = module._snapshot
+    shared = {'enabled': True}
+
+    async def current_snapshot(*args, **kwargs):
+        data = await snapshot(*args, **kwargs)
+        if data and shared['enabled']:
+            data['shared_history'] = True
+        return data
+
+    monkeypatch.setattr(module, '_snapshot', current_snapshot)
+    batch = report(db, 'shared-current', method='original', processed=1000)
+    batch['results'][0]['description'] = 'Original shared history'
+    batch['results'].append({**batch['results'][0], 'output_id': 'second'})
+    selected = await db.selections.prepare_selections(
+        'chat',
+        'model',
+        branch_id='leaf',
+        choices=[choice(db), {**choice(db), 'descriptor': second}],
+        batch_reports=[batch],
+    )
+    assert selected[0]['id'] == frozen['id'] and selected[0]['context_id'] is None
+    assert selected[0]['method'] == 'original' and selected[0]['text'] == db.text
+    statistics = await db.selections.latest_accounting('chat', 'model', 'leaf')
+    assert statistics is not None
+    result = statistics['last_tool_batch']['results'][0]
+    assert result['context_id'] is None and result['method'] == 'original'
+    assert result['processed_tokens'] == result['allocated_tokens'] == estimate_text(db.text)
+    assert statistics['last_tool_batch']['processed_tokens'] == estimate_text(db.text) + 1000
+    shared['enabled'] = False
+    restored = await db.selections.list_selections('chat', 'model', 'leaf')
+    assert next(row for row in restored if row['id'] == frozen['id']) == frozen

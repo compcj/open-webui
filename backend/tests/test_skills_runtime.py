@@ -534,3 +534,83 @@ def test_resolve_github_skill_url_rejects_other_urls():
     assert sr.resolve_github_skill_url('https://github.com/owner') is None
     assert sr.resolve_github_skill_url('') is None
     assert sr.resolve_github_skill_url(None) is None
+
+
+def test_canonical_runtime_projects_gating_files_and_metadata():
+    skill = {
+        'meta': {'openclaw': {'source': {'type': 'zip'}, 'config': {'enabled': True}, 'env': {'DEMO': 'value'}}},
+        'data': {
+            'files': [
+                {
+                    'path': 'SKILL.md',
+                    'content': '---\nmetadata:\n  openclaw:\n    requires:\n      bins: [uv]\n---\nbody',
+                },
+                {'path': 'a.bin', 'content': 'AP8=', 'encoding': 'base64'},
+            ]
+        },
+    }
+    oc = sr.openclaw_meta(skill)
+    assert sr.gating_requirements(sr.skill_frontmatter(skill))['bins'] == ['uv']
+    assert sr.skill_files(oc)['a.bin'] == {'content': 'AP8=', 'encoding': 'base64'}
+    assert sr.skill_config(oc) == {'enabled': True}
+    assert sr.skill_env(oc) == {'DEMO': 'value'}
+    assert oc['source'] == {'type': 'zip'}
+    assert 'frontmatter' not in skill['meta']['openclaw']
+
+
+def test_canonical_runtime_preserves_empty_openclaw_bag_as_package_marker():
+    skill = {
+        'meta': {'openclaw': {}},
+        'data': {'files': [{'path': 'SKILL.md', 'content': 'body'}, {'path': 'run.sh', 'content': 'echo ok'}]},
+    }
+    assert sr.skill_files(sr.openclaw_meta(skill))['run.sh']['content'] == 'echo ok'
+
+
+def test_terminal_sync_cache_isolates_actor_and_effective_terminal_context(monkeypatch):
+    import asyncio
+    import types
+    from unittest.mock import AsyncMock
+
+    tools = types.ModuleType('open_webui.utils.tools')
+    tools.execute_tool_server = AsyncMock(return_value=({}, None))
+
+    async def cwd(url, headers, cookies):
+        return f'/users/{headers["X-User-Id"]}/{headers["X-Terminal-Context-Id"]}'
+
+    tools.get_terminal_cwd = AsyncMock(side_effect=cwd)
+    monkeypatch.setitem(sys.modules, tools.__name__, tools)
+
+    async def context(request, user, terminal_id, metadata):
+        actor = user['id'] if isinstance(user, dict) else user.id
+        return (
+            {'url': 'https://terminal.test', 'specs': [{'name': 'run_command'}]},
+            {
+                'X-User-Id': actor,
+                'X-Session-Id': metadata['chat_id'],
+                'X-Terminal-Context-Id': metadata['effective_context'],
+            },
+            {},
+        )
+
+    monkeypatch.setattr(sr, '_terminal_request_context', context)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    files = {'run.py': {'content': 'print(1)', 'encoding': 'utf-8'}}
+
+    async def exercise():
+        metadata = {'chat_id': 'shared', 'effective_context': 'chat:shared'}
+        owner = await sr.sync_skill_files(request, {'id': 'owner'}, 'terminal', metadata, 'demo', files, {})
+        writer = await sr.sync_skill_files(
+            request, SimpleNamespace(id='writer'), 'terminal', metadata, 'demo', files, {}
+        )
+        assert owner.startswith('/users/owner/')
+        assert writer.startswith('/users/writer/')
+        calls = tools.execute_tool_server.await_count
+        assert await sr.sync_skill_files(request, {'id': 'writer'}, 'terminal', metadata, 'demo', files, {}) == writer
+        assert tools.execute_tool_server.await_count == calls
+        alternate = {**metadata, 'effective_context': 'automation:other'}
+        other = await sr.sync_skill_files(request, {'id': 'writer'}, 'terminal', alternate, 'demo', files, {})
+        assert other.startswith('/users/writer/automation:other/')
+        assert tools.execute_tool_server.await_count > calls
+        assert tools.get_terminal_cwd.await_count == 3
+
+    asyncio.run(exercise())

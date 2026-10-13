@@ -89,7 +89,7 @@ def api(monkeypatch):
         'open_webui.config': {
             'TERMINAL_PROXY_HEADERS': {'Content-Type': 'text/html', 'content-security-policy': 'unsafe'}
         },
-        'open_webui.env': {'AIOHTTP_CLIENT_SESSION_SSL': True, 'WEBUI_SECRET_KEY': SECRET},
+        'open_webui.env': {'AIOHTTP_CLIENT_SESSION_SSL': True, 'ENABLE_TOOL_SERVERS': True, 'WEBUI_SECRET_KEY': SECRET},
         'open_webui.events': {'EVENTS': SimpleNamespace(), 'publish_event': AsyncMock()},
         'open_webui.models.config': {'Config': config},
         'open_webui.models.chats': {'Chats': chats},

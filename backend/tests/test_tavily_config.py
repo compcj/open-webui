@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Literal, Union
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -150,7 +150,7 @@ async def test_get_config_returns_default_basic_depth(runtime):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('depth', ['basic', 'advanced'])
+@pytest.mark.parametrize('depth', ['ultra-fast', 'fast', 'basic', 'advanced'])
 async def test_admin_update_persists_depth_and_get_reads_saved_value(runtime, depth):
     async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
         response = await client.post('/config/update', json={'web': {'TAVILY_SEARCH_DEPTH': depth}})
@@ -164,8 +164,8 @@ async def test_admin_update_persists_depth_and_get_reads_saved_value(runtime, de
 @pytest.mark.asyncio
 async def test_saved_depth_takes_precedence_over_environment_default(runtime):
     await runtime['Config'].upsert({DEPTH_KEY: 'advanced'})
-    config = await runtime['get_retrieval_config']()
-    assert getattr(config, 'TAVILY_SEARCH_DEPTH', None) == 'advanced'
+    config = await runtime['Config'].get_many(DEPTH_KEY)
+    assert config[DEPTH_KEY] == 'advanced'
 
 
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_invalid_depth_returns_422_without_mutating_saved_value(runtime, i
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('depth', ['basic', 'advanced'])
+@pytest.mark.parametrize('depth', ['ultra-fast', 'fast', 'basic', 'advanced'])
 async def test_unified_search_router_forwards_configured_depth_by_keyword(runtime, depth):
     await runtime['Config'].upsert(
         {
@@ -225,3 +225,34 @@ def test_web_config_omission_and_null_remain_optional():
     assert 'TAVILY_SEARCH_DEPTH' in namespace['WebConfig'].model_fields
     assert namespace['WebConfig']().TAVILY_SEARCH_DEPTH is None
     assert namespace['WebConfig'](TAVILY_SEARCH_DEPTH=None).TAVILY_SEARCH_DEPTH is None
+
+
+@pytest.mark.asyncio
+async def test_search_and_extract_depth_are_independent(runtime):
+    await runtime['Config'].upsert({DEPTH_KEY: 'fast', 'web.search.tavily_extract_depth': 'advanced'})
+    async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
+        response = await client.post('/config/update', json={'web': {'TAVILY_SEARCH_DEPTH': 'ultra-fast'}})
+    assert response.status_code == 200
+    assert response.json()['web']['TAVILY_SEARCH_DEPTH'] == 'ultra-fast'
+    assert response.json()['web']['TAVILY_EXTRACT_DEPTH'] == 'advanced'
+
+
+@pytest.mark.asyncio
+async def test_search1api_persists_and_dispatches_with_its_config(runtime):
+    async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
+        response = await client.post(
+            '/config/update',
+            json={
+                'web': {
+                    'SEARCH1API_API_KEY': 'synthetic-search-key',
+                    'WEB_SEARCH_RESULT_COUNT': 3,
+                    'WEB_SEARCH_DOMAIN_FILTER_LIST': ['allowed.example'],
+                }
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()['web']['SEARCH1API_API_KEY'] == 'synthetic-search-key'
+    provider = AsyncMock(return_value=['result'])
+    runtime['search_search1api'] = provider
+    assert await runtime['search_web'](None, 'search1api', 'query') == ['result']
+    provider.assert_awaited_once_with('synthetic-search-key', 'query', 3, ['allowed.example'])

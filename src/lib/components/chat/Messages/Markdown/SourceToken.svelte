@@ -61,7 +61,7 @@
 				</button>
 			</LinkPreview.Trigger>
 			<LinkPreview.Portal>
-				<LinkPreview.Content class="z-[999]" align="start" strategy="fixed" sideOffset={6}>
+				<LinkPreview.Content class="z-[999]" align="start" sideOffset={6}>
 					<div class="bg-gray-50 dark:bg-gray-850 rounded-xl p-1 cursor-pointer">
 						{#each token.citationIdentifiers ?? token.ids as identifier}
 							{@const id =

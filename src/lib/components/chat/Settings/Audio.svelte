@@ -56,7 +56,7 @@
 				};
 			});
 		} else {
-			if ($config.audio.tts.engine === '') {
+			if ($config.audio?.tts.engine === '') {
 				const getVoicesLoop = setInterval(async () => {
 					voices = await speechSynthesis.getVoices();
 
@@ -100,10 +100,10 @@
 		TTSEngine = $settings?.audio?.tts?.engine ?? '';
 		TTSEngineConfig = $settings?.audio?.tts?.engineConfig ?? {};
 
-		if ($settings?.audio?.tts?.defaultVoice === $config.audio.tts.voice) {
-			voice = $settings?.audio?.tts?.voice ?? $config.audio.tts.voice ?? '';
+		if ($settings?.audio?.tts?.defaultVoice === $config.audio?.tts.voice) {
+			voice = $settings?.audio?.tts?.voice ?? $config.audio?.tts.voice ?? '';
 		} else {
-			voice = $config.audio.tts.voice ?? '';
+			voice = $config.audio?.tts.voice ?? '';
 		}
 
 		nonLocalVoices = $settings.audio?.tts?.nonLocalVoices ?? false;
@@ -174,7 +174,7 @@
 					playbackRate: playbackRate,
 					voice: voice !== '' ? voice : undefined,
 					defaultVoice: $config?.audio?.tts?.voice ?? '',
-					nonLocalVoices: $config.audio.tts.engine === '' ? nonLocalVoices : undefined
+					nonLocalVoices: $config.audio?.tts.engine === '' ? nonLocalVoices : undefined
 				}
 			}
 		});
@@ -187,7 +187,7 @@
 
 	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
 		<UserSettingSection title={$i18n.t('settings.personal.audio.sections.sttSettings.title')} first>
-			{#if $config.audio.stt.engine !== 'web'}
+			{#if $config.audio?.stt.engine !== 'web'}
 				<UserSettingRow
 					label={$i18n.t('settings.personal.audio.speechToTextEngine.label')}
 					description={$i18n.t('settings.personal.audio.speechToTextEngine.description')}
@@ -346,7 +346,7 @@
 					</div>
 				</UserSettingSection>
 			{/if}
-		{:else if $config.audio.tts.engine === ''}
+		{:else if $config.audio?.tts.engine === ''}
 			<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
 				<UserSettingField
 					label={$i18n.t('settings.personal.audio.browserVoice.label')}
@@ -374,7 +374,7 @@
 					<Switch bind:state={nonLocalVoices} />
 				</UserSettingRow>
 			</UserSettingSection>
-		{:else if $config.audio.tts.engine !== ''}
+		{:else if $config.audio?.tts.engine !== ''}
 			<UserSettingSection title={$i18n.t('settings.personal.audio.sections.voice.title')}>
 				<UserSettingField
 					label={$i18n.t('settings.personal.audio.serviceVoice.label')}
@@ -400,7 +400,7 @@
 
 	<div class="shrink-0 flex justify-end text-sm font-normal">
 		<button
-			class="px-3.5 py-1.5 text-sm font-normal bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+			class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
 			type="submit"
 		>
 			{$i18n.t('Save')}

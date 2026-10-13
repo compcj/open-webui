@@ -8,7 +8,7 @@ import logging
 import re
 from functools import cache
 from types import SimpleNamespace
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, Optional, get_type_hints
 from unittest.mock import AsyncMock
 
 import pytest
@@ -35,6 +35,7 @@ def tool_context():
         re=re,
         copy=copy,
         Any=Any,
+        Optional=Optional,
         Callable=Callable,
         BaseModel=BaseModel,
         Field=Field,

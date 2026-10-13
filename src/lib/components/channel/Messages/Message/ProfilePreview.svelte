@@ -19,8 +19,8 @@
 
 	export let user = null;
 
-	export let align = 'center';
-	export let side = 'right';
+	export let align: 'start' | 'center' | 'end' = 'center';
+	export let side: 'top' | 'right' | 'bottom' | 'left' = 'right';
 	export let sideOffset = 8;
 
 	let openPreview = false;

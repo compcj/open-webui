@@ -83,7 +83,7 @@ async def _readable_result(user, chat_id, result_id, branch_id):
 
     if user is None or getattr(user, 'role', None) not in {'user', 'admin'}:
         raise HTTPException(status_code=404, detail='Tool result not found.')
-    if not await Chats.get_chat_by_id_for_user(chat_id, user):
+    if not await Chats.get_accessible_chat_by_id(chat_id, user):
         raise HTTPException(status_code=404, detail='Tool result not found.')
     record = await get_tool_result_store().get_result(result_id, branch_id=branch_id)
     if record is None or record['chat_id'] != chat_id:

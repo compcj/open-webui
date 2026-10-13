@@ -579,6 +579,8 @@ def source_refs(messages: list[dict]) -> list[dict]:
         # Output-bearing assistant content is a rendered aggregate that can grow
         # while its completed output prefix remains unchanged.
         data = {key: message.get(key) for key in ('role', 'parentId', 'files', 'sources', 'embeds', 'tool_calls')}
+        if as_dict(message.get('meta')).get('voice'):
+            data['voice'] = copy.deepcopy(message['meta']['voice'])
         sidecars = message.get('tool_results') or as_dict(message.get('meta')).get('tool_results')
         if sidecars:
             data['tool_results'] = sidecars
@@ -747,6 +749,36 @@ def history_message(summary: str) -> dict:
     }
 
 
+def checkpoint_usable(checkpoint: dict, snapshot: dict) -> bool:
+    return not snapshot.get('shared_history') or checkpoint.get('source_scope') == 'saved_history_v1'
+
+
+def saved_summary_messages(raw: list[dict], refs: list[dict]) -> list[dict]:
+    """Only persisted, source-validated branch facts can enter a shared summary."""
+    sources = {message['id']: message for message in raw}
+    if not source_refs_match(refs, sources):
+        raise CompactionFailure('Shared history changed; reload before compacting')
+    result = []
+    for ref in refs:
+        source = sources[ref['id']]
+        message = {
+            key: copy.deepcopy(source[key])
+            for key in ('role', 'content', 'files', 'sources', 'embeds', 'tool_calls')
+            if key in source
+        }
+        if source.get('output'):
+            message['output'] = copy.deepcopy(source['output'][: len(ref.get('output_prefix') or [])])
+            message.pop('content', None)  # Rendered aggregate may contain a newer suffix.
+        sidecars = source.get('tool_results') or as_dict(source.get('meta')).get('tool_results')
+        if sidecars:
+            message['tool_results'] = copy.deepcopy(sidecars)
+        if as_dict(source.get('meta')).get('voice'):
+            message['voice'] = copy.deepcopy(source['meta']['voice'])
+        message['_saved_summary_source'] = True
+        result.append(message)
+    return result
+
+
 def apply_checkpoint(messages: list[dict], checkpoint: dict) -> tuple[list[dict], bool]:
     historical = history_message(checkpoint['summary'])
     summary_indices = {i for i, m in enumerate(messages) if wire_message(m) == historical}
@@ -822,6 +854,30 @@ def summary_units(messages: list[dict]) -> list[str | dict]:
     for message in messages:
         transcript = copy.deepcopy(wire_message(message))
         media = []
+        if message.get('_saved_summary_source'):
+            transcript.update(
+                {
+                    key: copy.deepcopy(message[key])
+                    for key in ('output', 'tool_results', 'files', 'sources', 'embeds', 'voice')
+                    if key in message
+                }
+            )
+
+            def extract_media(value):
+                if isinstance(value, list):
+                    return [extract_media(item) for item in value]
+                if isinstance(value, dict):
+                    if value.get('type') in media_types:
+                        part = value
+                        if part.get('type') == 'input_image':
+                            part = {'type': 'image_url', 'image_url': {'url': part.get('image_url', '')}}
+                        media.append(part)
+                        return {'type': 'media_reference', 'index': len(media)}
+                    return {key: extract_media(item) for key, item in value.items()}
+                return value
+
+            transcript = extract_media(transcript)
+
         if isinstance(transcript.get('content'), list):
             content = []
             for part in transcript['content']:
@@ -1078,9 +1134,16 @@ async def generate_summary(
         if re.match(r'^o\d+', provider_id) or (gpt_version and int(gpt_version.group(1)) >= 5):
             output_key = 'max_completion_tokens'
     payload = {'model': summary_id, 'messages': [], 'stream': False, 'metadata': {'task': 'context_compaction_v2'}}
-    system = await resolve_system_prompt(
-        params.get('system'), metadata=copy.deepcopy(getattr(request.state, 'metadata', {})), user=user
+    shared_history = bool(as_dict(getattr(request.state, 'context_compaction', None)).get('shared_history'))
+    system = (
+        None
+        if shared_history
+        else await resolve_system_prompt(
+            params.get('system'), metadata=copy.deepcopy(getattr(request.state, 'metadata', {})), user=user
+        )
     )
+    if shared_history:
+        params.pop('system', None)
     if system:
         payload['messages'].append({'role': 'system', 'content': system})
     payload = apply_params_to_form_data(payload, models[summary_id], params)
@@ -1120,10 +1183,14 @@ async def generate_summary(
         if hasattr(request.state, 'model'):
             summary_request.state.model = copy.deepcopy(request.state.model)
         summary_request.state.context_compaction = None
-        summary_request.state.metadata = {
-            **copy.deepcopy(as_dict(getattr(request.state, 'metadata', {}))),
-            'task': 'context_compaction_v2',
-        }
+        summary_metadata = copy.deepcopy(as_dict(getattr(request.state, 'metadata', {})))
+        if shared_history:
+            # Transport identity is actor-local; user variables, model prompts,
+            # terminal context and plugin metadata cannot enter reusable summaries.
+            summary_metadata = {
+                key: summary_metadata[key] for key in ('user_id', 'session_id') if key in summary_metadata
+            }
+        summary_request.state.metadata = {**summary_metadata, 'task': 'context_compaction_v2'}
         allocated = positive_int(
             as_dict(body.get('options')).get(output_key) if output_key == 'num_predict' else body.get(output_key)
         )
@@ -1204,6 +1271,7 @@ async def prepare_v2_request(
     snapshot = await store.read_snapshot(state['chat_id'])
     if not snapshot:
         return payload
+    state['shared_history'] = bool(snapshot.get('shared_history'))
     raw_map = snapshot['messages_map']
     user_id = state.get('user_message_id')
     current_id = metadata.get('message_id')
@@ -1219,6 +1287,8 @@ async def prepare_v2_request(
     previous, checkpoint = '', None
     checkpoints = await store.list_checkpoints(state['chat_id'], model_id)
     for candidate in checkpoints:
+        if not checkpoint_usable(candidate, snapshot):
+            continue
         if candidate['branch_anchor_id'] not in branch_ids or not source_refs_match(candidate['source_refs'], raw_map):
             continue
         rebuilt, applied = apply_checkpoint(messages, candidate)
@@ -1324,7 +1394,16 @@ async def prepare_v2_request(
                     if i not in allowed and (not checkpoint or wire_message(m) != history_message(previous))
                 ]
                 refs = coverage_refs(raw, compacted, checkpoint)
-                summary = await generate_summary(request, user, model_id, models, compacted, previous, settings)
+                summary_input = saved_summary_messages(raw, refs) if state['shared_history'] else compacted
+                summary = await generate_summary(
+                    request,
+                    user,
+                    model_id,
+                    models,
+                    summary_input,
+                    '' if state['shared_history'] else previous,
+                    settings,
+                )
                 if not isinstance(summary, str) or not summary.strip():
                     raise CompactionFailure('Summary model returned no final content')
                 result = {
@@ -1368,6 +1447,7 @@ async def prepare_v2_request(
                 'covered_message_keys': keys,
                 'covered_output_ids': [identity for ref in refs for identity in ref['output_ids'] if identity],
                 'summary': summary.strip(),
+                'source_scope': 'saved_history_v1' if state['shared_history'] else None,
             }
             saved = await store.save_checkpoint(data, expected_version=expected_version)
             if saved is None:
@@ -1492,8 +1572,7 @@ async def prepare_v2_request(
 
 
 async def _history_payload(snapshot: dict, model_id: str, models: dict | None = None) -> tuple[dict, list[dict]]:
-    from open_webui.utils.middleware import get_reasoning_format
-    from open_webui.utils.misc import convert_output_to_messages
+    from open_webui.utils.middleware import get_reasoning_format, process_messages_with_output
     from open_webui.utils.payload import convert_messages_openai_to_ollama
 
     chain = model_chain(model_id, models or {})
@@ -1505,28 +1584,40 @@ async def _history_payload(snapshot: dict, model_id: str, models: dict | None = 
     reasoning_format = get_reasoning_format(model)
     include_images = as_dict(as_dict(as_dict(model.get('info')).get('meta')).get('capabilities')).get('vision', True)
     raw = branch_messages(snapshot['messages_map'], snapshot.get('current_id'))
-    from open_webui.utils.tool_result_sources import injected_message
-
-    messages = []
-    for message in raw:
-        sidecars = message.get('tool_results') or as_dict(message.get('meta')).get('tool_results') or []
-        if sidecars:
-            messages.append(injected_message(sidecars, message['id']))
-        if message.get('role') == 'assistant' and message.get('output'):
-            converted = convert_output_to_messages(
-                message['output'],
-                raw=True,
-                reasoning_format=reasoning_format,
-                flatten_tool_images=True,
-                include_tool_images=include_images,
-                include_tool_result_refs=True,
-            )
-            messages.extend({**m, '_context_message_id': message['id']} for m in converted)
-        else:
-            messages.append({**wire_message(message), '_context_message_id': message['id']})
+    # Use the same saved voice/tool projection as live replay. Source records also
+    # contain DB/UI fields that must never become provider parameters.
+    replay = [
+        copy.deepcopy(
+            {
+                **wire_message(message),
+                **{
+                    key: message[key]
+                    for key in ('id', 'files', 'meta', 'tool_results', 'output', 'model')
+                    if key in message
+                },
+            }
+        )
+        for message in raw
+    ]
+    messages = process_messages_with_output(
+        replay,
+        reasoning_format=reasoning_format,
+        include_tool_images=include_images,
+        preserve_compaction_ids=True,
+        # Stored usage has no actor-specific native-tool/file-context settings.
+        include_file_context=False,
+    )
+    messages = [
+        {
+            **wire_message(message),
+            **{key: message[key] for key in ('_context_message_id', '_tool_result_refs') if key in message},
+        }
+        for message in messages
+    ]
     if model.get('owned_by') == 'ollama':
         messages = convert_messages_openai_to_ollama(messages)
-    payload = {'model': model_id, 'messages': messages, **as_dict(snapshot.get('chat', {}).get('params'))}
+    params = {} if snapshot.get('shared_history') else as_dict(snapshot.get('chat', {}).get('params'))
+    payload = {'model': model_id, 'messages': messages, **params}
     return payload, raw
 
 
@@ -1571,6 +1662,8 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
     payload, raw = await _history_payload(snapshot, model_id, models)
     branch_ids = {m['id'] for m in raw}
     for checkpoint in await get_checkpoint_store().list_checkpoints(chat.id, model_id):
+        if not checkpoint_usable(checkpoint, snapshot):
+            continue
         if checkpoint['branch_anchor_id'] in branch_ids and source_refs_match(
             checkpoint['source_refs'], snapshot['messages_map']
         ):

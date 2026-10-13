@@ -53,7 +53,7 @@ def test_invalid_admin_values_rejected(field, value):
 
 
 def test_model_context_window_is_metadata_and_round_trips():
-    from typing import Any
+    from typing import Any, Literal
 
     ns = dict(
         BaseModel=BaseModel,
@@ -63,11 +63,16 @@ def test_model_context_window_is_metadata_and_round_trips():
         field_validator=field_validator,
         model_validator=model_validator,
         Any=Any,
+        Literal=Literal,
         validate_image_url=lambda v, **kw: v,
         normalize_model_tags=lambda v: v,
         strip_extracted_content_from_model_knowledge=lambda v: v,
     )
-    meta = load_nodes('backend/open_webui/models/models.py', {'ModelMeta'}, ns)['ModelMeta']
+    meta = load_nodes(
+        'backend/open_webui/models/models.py',
+        {'ModelVoice', 'ModelAvatarAnimation', 'ModelAvatarGesture', 'ModelVoiceAvatar', 'ModelMeta'},
+        ns,
+    )['ModelMeta']
     assert meta().context_window is None
     assert meta.model_validate(meta(context_window=262144).model_dump()).context_window == 262144
     assert meta(context_window=None).context_window is None
@@ -83,7 +88,7 @@ def test_compaction_endpoints_require_expected_roles():
         assert 'Depends(get_admin_user)' in ast.unparse(functions[name])
     assert 'Depends(get_verified_user)' in ast.unparse(functions['compact_chat_by_id'])
     assert 'has_active_tasks' in ast.unparse(functions['compact_chat_by_id'])
-    assert 'get_chat_by_id_for_user' in ast.unparse(functions['get_chat_context_usage_by_id'])
+    assert 'get_accessible_chat_by_id' in ast.unparse(functions['get_chat_context_usage_by_id'])
     assert 'get_compaction_models' in ast.unparse(functions['get_chat_context_usage_by_id'])
     assert 'check_model_access' in ast.unparse(functions['get_compaction_models'])
 
@@ -198,9 +203,9 @@ def compaction_app():
     from unittest.mock import AsyncMock
 
     chat = SimpleNamespace(
-        id='saved', chat={'history': {'messages': {}}, 'models': ['model']}, current_message_id='leaf'
+        id='saved', user_id='owner', chat={'history': {'messages': {}}, 'models': ['model']}, current_message_id='leaf'
     )
-    state = SimpleNamespace(active=False, calls=[])
+    state = SimpleNamespace(active=False, calls=[], readers={'owner', 'reader', 'member'})
 
     async def verified(authorization: str | None = Header(default=None)):
         if not authorization:
@@ -210,8 +215,8 @@ def compaction_app():
     async def owned(chat_id, user_id):
         return chat if chat_id == 'saved' and user_id == 'owner' else None
 
-    async def accessible(chat_id, user):
-        return await owned(chat_id, user.id)
+    async def accessible(chat_id, user, **kwargs):
+        return chat if chat_id == 'saved' and user.id in state.readers else None
 
     async def active(*args):
         return state.active
@@ -256,6 +261,7 @@ def compaction_app():
         Chats=SimpleNamespace(
             get_chat_by_id_and_user_id=owned,
             get_chat_by_id_for_user=accessible,
+            get_accessible_chat_by_id=accessible,
             get_messages_map_by_chat_id=AsyncMock(return_value={}),
         ),
         ERROR_MESSAGES=SimpleNamespace(NOT_FOUND='not found'),
@@ -417,3 +423,21 @@ async def test_summary_output_percent_admin_round_trip_and_old_client_omission(c
         assert values['chat.context_compaction.v2.summary_output_percent'] == 7
         for invalid in (0, 101, True, '5', 1.5):
             assert (await client.post('/config', headers=headers, json={key: invalid})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_shared_readers_share_usage_but_manual_compaction_is_owner_only(compaction_app):
+    import httpx
+
+    app, state = compaction_app
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        for actor in ['reader', 'member']:
+            headers = {'authorization': actor}
+            usage = await client.get('/saved/context-usage?model=model&message_id=leaf', headers=headers)
+            assert usage.status_code == 200 and usage.json()['branch_id'] == 'leaf'
+            manual = await client.post('/saved/compact', headers=headers, json={'model': 'model'})
+            assert manual.status_code == 401
+        assert state.calls == []
+        state.readers.remove('member')
+        revoked = await client.get('/saved/context-usage?model=model', headers={'authorization': 'member'})
+        assert revoked.status_code == 401
