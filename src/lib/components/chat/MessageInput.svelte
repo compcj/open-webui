@@ -2684,7 +2684,10 @@
 											<ReasoningEffortSelector
 												{available}
 												label={reasoningEffortModels.length > 1 ? model.name : ''}
-												defaultEffort={getEffectiveDefaultReasoningEffort(model, $settings?.params)}
+												defaultEffort={getEffectiveDefaultReasoningEffort(
+													model,
+													modelControlAdvancedParams
+												)}
 												value={resolveReasoningEffortOverride(
 													reasoningEffortByModel[model.id],
 													available

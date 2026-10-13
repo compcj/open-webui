@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from typing import BinaryIO, Dict, Tuple
 
@@ -166,15 +167,28 @@ class S3StorageProvider(StorageProvider):
 
     def get_file(self, file_path: str) -> str:
         """Handles downloading of the file from S3 storage."""
+        temporary_path = None
         try:
             s3_key = self._extract_s3_key(file_path)
             local_file_path = self._get_local_file_path(s3_key)
-            # download_file's temp name caps characters, not bytes, so non-ASCII names can exceed NAME_MAX
-            with open(local_file_path, 'wb') as local_file:
+            # Use a short adjacent name so long multibyte filenames remain valid,
+            # and readers never observe another request's unfinished download.
+            with tempfile.NamedTemporaryFile(
+                mode='wb', prefix='.s3-', dir=os.path.dirname(local_file_path), delete=False
+            ) as local_file:
+                temporary_path = local_file.name
                 self.s3_client.download_fileobj(self.bucket_name, s3_key, local_file)
+            os.replace(temporary_path, local_file_path)
+            temporary_path = None
             return local_file_path
         except ClientError as e:
             raise RuntimeError(f'Error downloading file from S3: {e}')
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
     def delete_file(self, file_path: str) -> None:
         """Handles deletion of the file from S3 storage."""

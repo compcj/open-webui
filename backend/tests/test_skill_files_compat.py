@@ -103,7 +103,10 @@ def fake_network(monkeypatch, responses):
 
     module.validate_url = validate
     module.get_ssrf_safe_session = lambda **kwargs: session
+    env = types.ModuleType('open_webui.env')
+    env.AIOHTTP_CLIENT_SESSION_SSL = True
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setitem(sys.modules, env.__name__, env)
     return checked, session
 
 

@@ -168,7 +168,8 @@ def apply_params_to_form_data(form_data: dict, model: dict, params: dict | None 
 
     if custom_params:
         for key, value in custom_params.items():
-            if isinstance(value, str):
+            # Reasoning effort is a literal string, including JSON-looking legacy choices.
+            if isinstance(value, str) and key != 'reasoning_effort':
                 try:
                     custom_params[key] = JSONCodec.loads(value)
                 except JSONCodec.JSONDecodeError:
@@ -233,7 +234,8 @@ def apply_model_params_to_body_openai(params: dict, form_data: dict) -> dict:
     if custom_params:
         # Attempt to parse custom_params if they are strings
         for key, value in custom_params.items():
-            if isinstance(value, str):
+            # Reasoning effort is a literal string, including JSON-looking legacy choices.
+            if isinstance(value, str) and key != 'reasoning_effort':
                 try:
                     # Attempt to parse the string as JSON
                     custom_params[key] = JSONCodec.loads(value)
@@ -267,7 +269,8 @@ def apply_model_params_to_body_ollama(params: dict, form_data: dict) -> dict:
     if custom_params:
         # Attempt to parse custom_params if they are strings
         for key, value in custom_params.items():
-            if isinstance(value, str):
+            # Reasoning effort is a literal string, including JSON-looking legacy choices.
+            if isinstance(value, str) and key != 'reasoning_effort':
                 try:
                     # Attempt to parse the string as JSON
                     custom_params[key] = JSONCodec.loads(value)

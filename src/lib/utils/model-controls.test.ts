@@ -100,3 +100,8 @@ it('remembers unselected controls for a model while chat choices override matchi
 		)
 	).toEqual({ m: { reasoning: 'high', tone: 'brief' } });
 });
+
+it('keeps arena models outside the provider controls capability', () => {
+	expect(supportsModelControls({ ...model, owned_by: 'arena' })).toBe(false);
+	expect(supportsModelControls({ ...model, arena: true })).toBe(false);
+});

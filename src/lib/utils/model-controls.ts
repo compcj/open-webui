@@ -7,6 +7,8 @@ export function supportsModelControls(model: any): boolean {
 		!!model &&
 		!model.direct &&
 		!model.pipe &&
+		!model.arena &&
+		model.owned_by !== 'arena' &&
 		Object.keys(model.info?.params?.model_controls ?? {}).length > 0
 	);
 }

@@ -19,6 +19,7 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_SKILL_BYTES = 50 * 1024 * 1024
 MAX_IMPORT_BYTES = 200 * 1024 * 1024
 MAX_FILES = 1000
+MARKDOWN_CONTENT_TYPES = ('text/markdown', 'text/x-markdown', 'text/plain', 'application/octet-stream')
 SKILL_CONTENT_MAX_CHARS = 100_000
 SKILL_MANIFEST_MAX_ENTRIES = 50
 SKILL_MANIFEST_MAX_CHARS = 5_000
@@ -171,6 +172,39 @@ def file_summaries(files: list[dict]) -> list[dict]:
     return [{'path': f['path'], 'size': len(file_bytes(f)), 'encoding': f.get('encoding')} for f in files]
 
 
+def _is_html_document(content: str) -> bool:
+    """Inspect the document prefix without consuming Markdown code indentation."""
+    offset = 1 if content.startswith('\ufeff') else 0
+    at_line_start = True
+    while offset < len(content):
+        indent = 0
+        while offset < len(content) and content[offset] in ' \t':
+            indent += 1 if content[offset] == ' ' else 4 - indent % 4
+            offset += 1
+        if offset == len(content):
+            return False
+        if content[offset] in '\r\n':
+            offset += 1
+            at_line_start = True
+            continue
+        if at_line_start and indent >= 4:
+            return False
+
+        if content.startswith('<!--', offset):
+            end = content.find('-->', offset + 4)
+            marker_length = 3
+        elif content.startswith('<?', offset):
+            end = content.find('?>', offset + 2)
+            marker_length = 2
+        else:
+            return bool(re.match(r'(?i)(?:<!doctype\s+html\b|<(?:html|head|body)\b)', content[offset:]))
+        if end < 0:
+            return False
+        offset = end + marker_length
+        at_line_start = False
+    return False
+
+
 def parse_import(
     data: bytes,
     filename: str,
@@ -178,6 +212,7 @@ def parse_import(
     discover_skills: bool = False,
     directory: str | None = None,
     source_type: Literal['file', 'zip', 'folder'] | None = None,
+    content_type: str | None = None,
 ) -> list[dict]:
     if len(data) > MAX_IMPORT_BYTES:
         raise ValueError('Import exceeds 200 MiB')
@@ -218,7 +253,19 @@ def parse_import(
             {'files': [encode_file(p[len(root) :], value) for p, value in entries.items() if p.startswith(root)]}
             for root in roots
         ]
-    elif filename.lower().endswith('.md'):
+    elif filename.lower().endswith('.md') or content_type in MARKDOWN_CONTENT_TYPES:
+        # URL downloads may have no extension. Only accept supported text responses
+        # as Markdown; file imports retain their extension-based format selection.
+        if content_type is not None:
+            if content_type not in MARKDOWN_CONTENT_TYPES:
+                raise ValueError('Use JSON, ZIP, or Markdown')
+            content = data.decode('utf-8')
+            if not content:
+                raise ValueError('No data received from the URL')
+            if data.startswith(b'%PDF-') or re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', content):
+                raise ValueError('A skill requires a UTF-8 SKILL.md at its root')
+            if _is_html_document(content):
+                raise ValueError('The URL returned a web page. Use a raw skill file or a ZIP download link.')
         source_type = source_type or 'file'
         packages = [{'files': [encode_file('SKILL.md', data)]}]
     else:
@@ -309,6 +356,7 @@ def skill_import_source(url: str) -> tuple[str, str | None]:
 
 
 async def download_skill_url(url: str) -> tuple[bytes, str, str]:
+    from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
     from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
 
     url, _ = skill_import_source(url)
@@ -319,7 +367,7 @@ async def download_skill_url(url: str) -> tuple[bytes, str, str]:
                 if target.username or target.password:
                     raise ValueError('Use a URL without embedded credentials')
                 await asyncio.to_thread(validate_url, url)
-                async with session.get(url, allow_redirects=False) as response:
+                async with session.get(url, allow_redirects=False, ssl=AIOHTTP_CLIENT_SESSION_SSL) as response:
                     if response.status in (301, 302, 303, 307, 308):
                         url = urljoin(url, response.headers.get('Location', ''))
                         continue
@@ -346,7 +394,7 @@ async def download_skill_url(url: str) -> tuple[bytes, str, str]:
                     filename = {
                         'application/json': 'skills.json',
                         'text/markdown': 'SKILL.md',
-                    }.get(content_type, unquote(urlsplit(url).path))
+                    }.get(content_type, unquote(urlsplit(url).path).rstrip('/').rsplit('/', 1)[-1] or 'SKILL.md')
                     if data.startswith(b'PK'):
                         filename = 'skills.zip'
                     return bytes(data), filename, content_type
@@ -357,5 +405,7 @@ async def download_skill_url(url: str) -> tuple[bytes, str, str]:
 
 async def load_skill_from_url(url: str) -> list[dict]:
     _, directory = skill_import_source(url)
-    data, filename, _ = await download_skill_url(url)
-    return await asyncio.to_thread(parse_import, data, filename, discover_skills=True, directory=directory)
+    data, filename, content_type = await download_skill_url(url)
+    return await asyncio.to_thread(
+        parse_import, data, filename, discover_skills=True, directory=directory, content_type=content_type
+    )

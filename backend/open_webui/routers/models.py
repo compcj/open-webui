@@ -43,6 +43,7 @@ from open_webui.models.models import (
     ModelParams,
     ModelResponse,
     Models,
+    migrate_legacy_model_controls,
 )
 from open_webui.storage.provider import Storage
 from open_webui.utils.access_control import filter_allowed_access_grants, has_access, has_permission
@@ -69,18 +70,36 @@ def model_response(model):
     return model.model_dump() if model is not None else None
 
 
+def _is_legacy_pipe_reasoning_controls(controls):
+    """Recognize only the scalar reasoning shape emitted by the legacy adapter."""
+    if set(controls) != {'reasoning'}:
+        return False
+    control = controls['reasoning']
+    options = control.get('options', {})
+    option_ids = [f'option{index + 1}' for index in range(len(options))]
+    if set(options) != set(option_ids):
+        return False
+    # Portable JSON exports may reorder object keys; generated IDs retain the legacy order.
+    meta = {'available_reasoning_effort': [options[key]['params'].get('reasoning_effort') for key in option_ids]}
+    default = options.get(control.get('default'))
+    if default:
+        meta['default_reasoning_effort'] = default['params'].get('reasoning_effort')
+    migrated = migrate_legacy_model_controls({'params': {}, 'meta': meta})
+    return migrated['params'].get('model_controls') == controls
+
+
 async def _check_model_controls(form, previous, user, request):
     old = previous.params.model_dump().get('model_controls', {}) if previous else {}
-    if 'model_controls' not in form.params.model_fields_set:
-        if old:
-            form.params.model_controls = previous.params.model_controls
-        return
+    if 'model_controls' not in form.params.model_fields_set and old:
+        form.params.model_controls = previous.params.model_controls
     controls = form.params.model_dump().get('model_controls', {})
     if controls:
         if not request.app.state.MODELS:
             await get_all_models(request, user=user)
         base = request.app.state.MODELS.get(form.base_model_id or form.id, {})
-        if 'pipe' in base or base.get('direct') or base.get('owned_by') == 'arena':
+        if base.get('direct') or base.get('owned_by') == 'arena':
+            raise HTTPException(400, 'Model controls require a server-managed provider model.')
+        if 'pipe' in base and not _is_legacy_pipe_reasoning_controls(controls):
             raise HTTPException(400, 'Model controls require a server-managed provider model.')
 
 

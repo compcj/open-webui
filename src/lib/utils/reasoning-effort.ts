@@ -154,19 +154,44 @@ function trimReasoningEffort(value: unknown): string | undefined {
 export function getDefaultReasoningEffort(
 	model:
 		| {
-				info?: { meta?: { default_reasoning_effort?: unknown } };
+				info?: {
+					meta?: { default_reasoning_effort?: unknown };
+					params?: {
+						model_controls?: Record<
+							string,
+							{
+								default?: string | null;
+								options: Record<string, { params?: { reasoning_effort?: unknown } }>;
+							}
+						>;
+					};
+				};
 		  }
 		| null
 		| undefined
 ): string | undefined {
-	return trimReasoningEffort(model?.info?.meta?.default_reasoning_effort);
+	let effort: string | undefined;
+	for (const control of Object.values(model?.info?.params?.model_controls ?? {})) {
+		const value = trimReasoningEffort(
+			control.options[control.default ?? '']?.params?.reasoning_effort
+		);
+		if (value) effort = value;
+	}
+	return effort ?? trimReasoningEffort(model?.info?.meta?.default_reasoning_effort);
 }
 
 export function getEffectiveDefaultReasoningEffort(
-	model: { info?: { meta?: { default_reasoning_effort?: unknown } } } | null | undefined,
-	settingsParams: { reasoning_effort?: unknown } | null | undefined
+	model: Parameters<typeof getDefaultReasoningEffort>[0],
+	settingsParams:
+		| { reasoning_effort?: unknown; custom_params?: { reasoning_effort?: unknown } | null }
+		| null
+		| undefined
 ): string | undefined {
-	return trimReasoningEffort(settingsParams?.reasoning_effort) ?? getDefaultReasoningEffort(model);
+	return (
+		trimReasoningEffort(settingsParams?.custom_params?.reasoning_effort) ??
+		trimReasoningEffort(settingsParams?.reasoning_effort) ??
+		getDefaultReasoningEffort(model)
+	);
 }
 
 export function formatDefaultReasoningEffortLabel(

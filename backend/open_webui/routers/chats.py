@@ -1610,6 +1610,95 @@ async def update_chat_by_id(
 ############################
 # UpdateChatMessageById
 ############################
+class VoiceMessageForm(BaseModel):
+    id: str = Field(min_length=1, max_length=200, pattern=r'^[^\x00]+$')
+    parent_id: str | None = None
+    branch_id: str | None = None
+    role: Literal['user', 'assistant']
+    content: str
+    voice: dict = Field(default_factory=dict)
+
+
+class VoiceMetadataForm(BaseModel):
+    voice: dict
+
+
+def voice_message_response_for_user(chat, message_ids, inserted_id, user_id=None):
+    history = chat_response_for_user(chat, user_id).chat['history']
+    messages = history['messages']
+    return {
+        'messages': {
+            mid: messages[mid]
+            if mid == inserted_id
+            else {key: messages[mid][key] for key in ('id', 'parentId', 'childrenIds') if key in messages[mid]}
+            for mid in message_ids
+        },
+        'currentId': history['currentId'],
+        'replaceLinks': True,
+    }
+
+
+@router.post('/{id}/voice/messages')
+async def insert_chat_voice_message(
+    request: Request, id: str, form_data: VoiceMessageForm, user=Depends(get_verified_user)
+):
+    if len(JSONCodec.dumps(form_data.voice)) > 100000:
+        raise HTTPException(400, 'Voice metadata is too large')
+    chat, message_ids = await Chats.insert_voice_message(id, user, form_data.model_dump())
+    event_emitter = await get_event_emitter({'user_id': user.id, 'chat_id': id, 'message_id': form_data.id}, False)
+    if event_emitter:
+        # Shared delivery retains the existing live ACL guard and carries no private metadata.
+        await event_emitter(
+            {
+                'type': 'chat:messages',
+                'data': voice_message_response_for_user(chat, message_ids, form_data.id),
+            }
+        )
+    await publish_event(
+        request,
+        EVENTS.MESSAGE_UPDATED,
+        actor=user,
+        subject_id=form_data.id,
+        data={'chat_id': id, 'content_preview': form_data.content[:300]},
+    )
+    return voice_message_response_for_user(chat, message_ids, form_data.id, user.id)
+
+
+@router.post('/{id}/messages/{message_id}/voice', response_model=ChatResponse)
+async def update_chat_voice_message(
+    request: Request,
+    id: str,
+    message_id: str,
+    form_data: VoiceMetadataForm,
+    user=Depends(get_verified_user),
+):
+    if len(JSONCodec.dumps(form_data.voice)) > 100000:
+        raise HTTPException(400, 'Voice metadata is too large')
+    chat = await Chats.update_voice_message(id, message_id, user, form_data.voice)
+    voice = chat.chat['history']['messages'][message_id]['meta']['voice']
+    event_emitter = await get_event_emitter({'user_id': user.id, 'chat_id': id, 'message_id': message_id}, False)
+    if event_emitter:
+        # Speech metadata is private to the message author, like request/approval metadata.
+        await event_emitter(
+            {
+                'type': 'chat:message:voice',
+                'data': {
+                    'chat_id': id,
+                    'message_id': message_id,
+                    'voice': voice,
+                },
+            }
+        )
+    await publish_event(
+        request,
+        EVENTS.MESSAGE_UPDATED,
+        actor=user,
+        subject_id=message_id,
+        data={'chat_id': id, 'content_preview': ''},
+    )
+    return chat_response_for_user(chat, user.id)
+
+
 class MessageForm(BaseModel):
     content: str | None = None
     voice: dict | None = None

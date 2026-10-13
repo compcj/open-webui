@@ -296,14 +296,14 @@ async def load_skill_from_url(
             url = resolved['download_url']
 
     try:
-        raw, downloaded_name, _ = await download_skill_url(url)
+        raw, downloaded_name, content_type = await download_skill_url(url)
         filename = file_name or downloaded_name
         if force_zip or raw.startswith(b'PK'):
             filename = 'skills.zip'
-        packages = parse_import(raw, filename, discover_skills=True)
+        packages = parse_import(raw, filename, discover_skills=True, content_type=content_type)
         if select and select.get('path'):
             _, directory = skill_import_source(form_data.url)
-            packages = parse_import(raw, filename, discover_skills=True, directory=directory)
+            packages = parse_import(raw, filename, discover_skills=True, directory=directory, content_type=content_type)
         if select and select.get('name'):
             chosen = [
                 package for package in packages if package['id'] == select['name'] or package['name'] == select['name']

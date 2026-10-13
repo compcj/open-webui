@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -76,7 +76,16 @@ def api(monkeypatch):
         'config': {'contexts': {'chat': {'context_id': 'chat_id'}}},
     }
     config = SimpleNamespace(get=AsyncMock(return_value=[connection]))
-    chats = SimpleNamespace(get_chat_by_id_for_user=AsyncMock(return_value=object()))
+    # Bind the storage double to the real table API so deleted methods cannot
+    # silently keep HTTP and WebSocket tests passing.
+    table = next(
+        node
+        for node in ast.parse((BACKEND / 'models/chats.py').read_text(encoding='utf-8')).body
+        if isinstance(node, ast.ClassDef) and node.name == 'ChatTable'
+    )
+    methods = [node.name for node in table.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    chats = Mock(spec_set=methods)
+    chats.get_accessible_chat_by_id = AsyncMock(return_value=object())
     access = AsyncMock(return_value=True)
 
     async def verified(request: Request):
@@ -196,7 +205,7 @@ def test_revoked_or_tampered_links_are_denied_before_upstream(api, change):
     elif change == 'access':
         api.access.return_value = False
     elif change == 'chat':
-        api.chats.get_chat_by_id_for_user.return_value = None
+        api.chats.get_accessible_chat_by_id.return_value = None
     else:
         api.connection['config']['contexts']['chat'] = {'context_id': 'default'}
     assert api.client.get(url, headers={'Authorization': 'owner'}).status_code in (403, 404)
@@ -503,3 +512,50 @@ def test_proxy_cookies_require_explicit_forwarding(api, auth_type, forward):
     )
     assert response.status_code == 200
     assert bool(api.state.calls[0]['cookies']) is forward
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('allowed', [False, True])
+async def test_websocket_saved_chat_uses_current_live_access_api(api, monkeypatch, allowed):
+    user = SimpleNamespace(id='user-1', role='user')
+    monkeypatch.setattr(api.router, '_resolve_terminal_access', AsyncMock(return_value=(user, api.connection)))
+    api.chats.get_accessible_chat_by_id.return_value = object() if allowed else None
+    socket = SimpleNamespace(
+        receive_text=AsyncMock(return_value=json.dumps({'type': 'auth', 'token': 'owner', 'chat_id': 'chat-1'})),
+        close=AsyncMock(),
+    )
+    result = await api.router._resolve_authenticated_connection(socket, 'terminal-1')
+    if allowed:
+        assert result == (user, api.connection, 'chat-1', 'owner')
+        socket.close.assert_not_awaited()
+    else:
+        assert result is None
+        socket.close.assert_awaited_once_with(code=4003, reason='Chat access denied')
+    api.chats.get_accessible_chat_by_id.assert_awaited_once_with('chat-1', user)
+
+
+@pytest.mark.asyncio
+async def test_open_websocket_rechecks_chat_access_after_revocation(api):
+    user = SimpleNamespace(id='user-1', role='user')
+    api.chats.get_accessible_chat_by_id.side_effect = [object(), None]
+    socket = SimpleNamespace(close=AsyncMock())
+    source = ast.parse((BACKEND / 'routers/terminals.py').read_text(encoding='utf-8'))
+    watcher = next(
+        node for node in ast.walk(source) if isinstance(node, ast.AsyncFunctionDef) and node.name == '_watch_access'
+    )
+    namespace = {
+        'asyncio': SimpleNamespace(sleep=AsyncMock()),
+        '_resolve_terminal_access': AsyncMock(return_value=(user, api.connection)),
+        'Chats': api.chats,
+        'is_saved_chat_id': api.router.is_saved_chat_id,
+        'chat_id': 'chat-1',
+        'server_id': 'terminal-1',
+        'token': 'owner',
+        'ws': socket,
+        'log': api.router.log,
+    }
+    exec(compile(ast.Module(body=[watcher], type_ignores=[]), 'terminal_access_watch', 'exec'), namespace)
+    await namespace['_watch_access']()
+    assert api.chats.get_accessible_chat_by_id.await_count == 2
+    api.chats.get_accessible_chat_by_id.assert_awaited_with('chat-1', user)
+    socket.close.assert_awaited_once_with(code=4003, reason='Chat access denied')

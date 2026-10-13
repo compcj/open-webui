@@ -209,3 +209,40 @@ describe('STANDARD_REASONING_EFFORTS', () => {
 		]);
 	});
 });
+
+describe('canonical pipe defaults', () => {
+	const model = {
+		pipe: {},
+		info: {
+			meta: { default_reasoning_effort: 'low' },
+			params: {
+				model_controls: {
+					reasoning: {
+						default: 'option2',
+						options: {
+							option1: { params: { reasoning_effort: 'low' } },
+							option2: { params: { reasoning_effort: 'high' } }
+						}
+					}
+				}
+			}
+		}
+	};
+	it('reads a canonical default before stale public/global metadata', () => {
+		expect(getDefaultReasoningEffort(model)).toBe('high');
+		expect(
+			formatDefaultReasoningEffortLabel('Default', getEffectiveDefaultReasoningEffort(model, {}))
+		).toBe('Default [high]');
+	});
+	it('keeps custom advanced overrides before ordinary advanced and canonical defaults', () => {
+		expect(
+			getEffectiveDefaultReasoningEffort(model, {
+				reasoning_effort: 'medium',
+				custom_params: { reasoning_effort: 'true' }
+			})
+		).toBe('true');
+		expect(getEffectiveDefaultReasoningEffort(model, { reasoning_effort: 'medium' })).toBe(
+			'medium'
+		);
+	});
+});

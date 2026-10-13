@@ -104,6 +104,8 @@
 	} from './Messages/structuredOutput';
 
 	import {
+		addChatVoiceMessage,
+		updateChatVoiceMessage,
 		archiveChatById,
 		compactChatById,
 		createNewChat,
@@ -1761,8 +1763,9 @@
 	$: if (!prompt.trim()) emitTyping(false);
 
 	const mergeChatMessages = (
-		incoming: typeof history,
-		baseline: Record<string, any> | null = null
+		incoming: typeof history & { replaceLinks?: boolean },
+		baseline: Record<string, any> | null = null,
+		linksBaseline: Record<string, { parentId?: string | null; childrenIds: string[] }> | null = null
 	) => {
 		const currentId = history.currentId;
 		const next = incoming?.messages ?? {};
@@ -1784,13 +1787,37 @@
 				local?.done === false &&
 				(local.user_id ?? chat?.user_id) === $user?.id &&
 				(taskIds?.length || generating);
+			const previousLinks = linksBaseline?.[id];
+			const childrenIds = local?.childrenIds ?? [];
+			const linksUnchanged =
+				!local ||
+				(linksBaseline
+					? previousLinks &&
+						previousLinks.parentId === local.parentId &&
+						previousLinks.childrenIds.length === childrenIds.length &&
+						previousLinks.childrenIds.every((childId, index) => childId === childrenIds[index])
+					: !baseline || baseline[id] === local);
 			if (!local || (!ownActive && (!baseline || baseline[id] === local))) {
-				history.messages[id] = { ...local, ...message };
+				history.messages[id] = {
+					...local,
+					...message,
+					...(incoming.replaceLinks && !linksUnchanged
+						? { parentId: local.parentId, childrenIds: local.childrenIds }
+						: {})
+				};
 			}
 			if (local) {
-				history.messages[id].childrenIds = [
-					...new Set([...(local.childrenIds ?? []), ...(message.childrenIds ?? [])])
-				];
+				if (incoming.replaceLinks) {
+					if (linksUnchanged) {
+						for (const key of ['parentId', 'childrenIds']) {
+							if (key in message) history.messages[id][key] = message[key];
+						}
+					}
+				} else {
+					history.messages[id].childrenIds = [
+						...new Set([...(local.childrenIds ?? []), ...(message.childrenIds ?? [])])
+					];
+				}
 			}
 		}
 		if ((!currentId || follow) && incoming.currentId && next[incoming.currentId]) {
@@ -2664,6 +2691,44 @@
 		voice: any,
 		parentId: string | null = history.currentId
 	) => {
+		const id = uuidv4();
+		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
+			const savedChatId = $chatId;
+			const currentId = history.currentId;
+			const baseline = { ...history.messages };
+			// Socket updates can mutate active messages in place, so copy links before awaiting HTTP.
+			const linksBaseline = Object.fromEntries(
+				Object.entries(baseline).map(([id, message]: [string, any]) => [
+					id,
+					{ parentId: message.parentId, childrenIds: [...(message.childrenIds ?? [])] }
+				])
+			);
+			const turn = await addChatVoiceMessage(localStorage.token, savedChatId, {
+				id,
+				parent_id: parentId,
+				branch_id: currentId,
+				role: role as 'user' | 'assistant',
+				content,
+				voice
+			});
+			if ($chatId !== savedChatId) return id;
+			mergeChatMessages(turn, baseline, linksBaseline);
+			const currentMessage = history.messages[id];
+			const savedMessage = turn.messages[id];
+			if (currentMessage && savedMessage?.meta) {
+				// The public socket frame omits author-private metadata; keep any newer local metadata.
+				history.messages[id] = {
+					...currentMessage,
+					meta: { ...savedMessage.meta, ...currentMessage.meta }
+				};
+				history = history;
+			}
+			if (history.currentId === currentId && currentId === turn.messages[id]?.parentId) {
+				history.currentId = id;
+				history = history;
+			}
+			return id;
+		}
 		const branch = createMessagesList(history, history.currentId);
 		let parentIndex = branch.findIndex((entry) => entry.id === parentId);
 		// A chat answer can have been inserted while this spoken reply was being generated.
@@ -2673,7 +2738,6 @@
 			parentId = branch[parentIndex].id;
 		}
 		const nextMessage = parentIndex >= 0 ? branch[parentIndex + 1] : null;
-		const id = uuidv4();
 		const message = {
 			id,
 			parentId,
@@ -2685,7 +2749,6 @@
 			meta: { voice },
 			...(role === 'assistant' ? { model: voice.model, modelName: voice.model, modelIdx: 0 } : {})
 		};
-		const changedMessages: Record<string, any> = { [id]: message };
 		history.messages[id] = message;
 		if (parentId && history.messages[parentId]) {
 			history.messages[parentId].childrenIds.push(id);
@@ -2697,18 +2760,11 @@
 				history.messages[parentId].childrenIds = history.messages[parentId].childrenIds.filter(
 					(childId: string) => childId !== nextMessage.id
 				);
-				changedMessages[nextMessage.id] = nextMessage;
 			}
 		}
 		if (history.currentId === parentId) history.currentId = id;
 		history = history;
 		if (!$chatId) await initChatHandler(history);
-		else if (!$temporaryChatEnabled) {
-			// Patch only the new message, so a running backend turn keeps its current output.
-			await updateChatById(localStorage.token, $chatId, {
-				history: { currentId: history.currentId, messages: changedMessages }
-			});
-		}
 		return id;
 	};
 
@@ -2721,16 +2777,15 @@
 		const merged = { ...previous, ...voice, speech: [...speech.values()] };
 		message.meta = { ...message.meta, voice: merged };
 		history = history;
-		if ($chatId && !$temporaryChatEnabled) {
-			const response = await fetch(`${WEBUI_API_BASE_URL}/chats/${$chatId}/messages/${id}`, {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${localStorage.token}`,
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({ voice: merged })
-			});
-			if (!response.ok) throw new Error('Could not save voice metadata');
+		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
+			const savedChatId = $chatId;
+			const saved = await updateChatVoiceMessage(localStorage.token, savedChatId, id, merged);
+			if ($chatId !== savedChatId) return;
+			const savedVoice = saved?.chat?.history?.messages?.[id]?.meta?.voice;
+			if (savedVoice && history.messages[id]) {
+				history.messages[id].meta = { ...history.messages[id].meta, voice: savedVoice };
+				history = history;
+			}
 		}
 	};
 

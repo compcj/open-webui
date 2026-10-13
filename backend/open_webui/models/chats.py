@@ -22,6 +22,7 @@ from open_webui.models.chat_tool_results import ChatToolResult, ChatToolResultCo
 from open_webui.models.chat_tool_result_selections import ChatToolResultSelection
 from open_webui.models.folders import Folders
 from open_webui.models.tags import Tag, TagModel, Tags
+from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_output_text, sanitize_data_for_db, sanitize_text_for_db
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import (
@@ -1365,6 +1366,153 @@ class ChatTable:
             if parent_id:
                 turn[parent_id] = history['messages'][parent_id]
             return {'messages': turn, 'currentId': history['currentId']}
+
+    async def insert_voice_message(self, chat_id: str, user, data: dict):
+        """Insert one actor-authored transcript without accepting a browser history snapshot."""
+        from fastapi import HTTPException
+
+        async with self._chat_transaction(chat_id) as (db, chat):
+            if not chat or not await self.get_accessible_chat_by_id(
+                chat_id, user, db=db, permission='write', chat=chat
+            ):
+                raise HTTPException(403, 'Chat continuation is not allowed.')
+            data = self._clean_null_bytes(data)
+            history = deepcopy((chat.chat or {}).get('history') or {'messages': {}, 'currentId': None})
+            messages = history.setdefault('messages', {})
+            message_id = data['id']
+            if not message_id or message_id in messages or await db.get(ChatMessage, f'{chat_id}-{message_id}'):
+                raise HTTPException(409, 'Message already exists or has an invalid ID.')
+            parent_id = data.get('parent_id')
+            if parent_id is not None and parent_id not in messages:
+                raise HTTPException(409, 'Parent message no longer exists.')
+
+            def branch_ids(tip):
+                branch, visited = [], set()
+                while tip is not None:
+                    if tip in visited or tip not in messages:
+                        raise HTTPException(409, 'Voice message branch no longer exists.')
+                    visited.add(tip)
+                    branch.append(tip)
+                    tip = messages[tip].get('parentId')
+                return list(reversed(branch))
+
+            branch_id = data.get('branch_id')
+            current_id = history.get('currentId')
+            branch = branch_ids(branch_id if branch_id is not None else current_id)
+            server_branch = branch_ids(current_id)
+            # Include backend replies added after the browser selected this branch.
+            if branch_id in server_branch:
+                branch = server_branch
+            if parent_id is not None and parent_id not in branch:
+                raise HTTPException(409, 'Voice message parent is outside the selected branch.')
+            next_id = None
+            if data['role'] == 'assistant' and parent_id in branch:
+                index = branch.index(parent_id)
+                while index + 1 < len(branch) and messages[branch[index + 1]].get('role') == 'assistant':
+                    index += 1
+                parent_id = branch[index]
+                next_id = branch[index + 1] if index + 1 < len(branch) else None
+            message = {
+                'id': message_id,
+                'parentId': parent_id,
+                'childrenIds': [],
+                'role': data['role'],
+                'content': data['content'],
+                'done': True,
+                'timestamp': int(time.time()),
+                'user_id': user.id,
+                'meta': {'voice': data['voice']},
+            }
+            if data['role'] == 'user':
+                message['user'] = {'id': user.id, 'name': user.name}
+            elif isinstance(data['voice'].get('model'), str):
+                message.update(model=data['voice']['model'], modelName=data['voice']['model'], modelIdx=0)
+            self.upsert_message_to_history(history, message_id, message)
+            if current_id != parent_id:
+                history['currentId'] = current_id
+            changed_ids = [message_id]
+            if parent_id is not None:
+                changed_ids.append(parent_id)
+            if next_id and messages[next_id].get('role') == 'user':
+                next_message = messages[next_id]
+                next_row = await db.get(ChatMessage, f'{chat_id}-{next_id}', with_for_update=True)
+                author_id = (
+                    (next_row.user_id if next_row else None)
+                    or next_message.get('user_id')
+                    or (next_message.get('user') or {}).get('id')
+                    or chat.user_id
+                )
+                # A delayed spoken answer may splice into the actor's next turn only.
+                if author_id == user.id:
+                    next_message['parentId'] = message_id
+                    message['childrenIds'].append(next_id)
+                    messages[parent_id]['childrenIds'] = [
+                        child_id for child_id in messages[parent_id]['childrenIds'] if child_id != next_id
+                    ]
+                    await ChatMessages.upsert_message(
+                        next_id, chat_id, user.id, next_message if next_row is None else {'parentId': message_id}, db=db
+                    )
+                    changed_ids.append(next_id)
+            await ChatMessages.upsert_message(message_id, chat_id, user.id, message, db=db)
+            chat.chat = {**(chat.chat or {}), 'history': history}
+            flag_modified(chat, 'chat')
+            chat.current_message_id = history['currentId']
+            chat.updated_at = int(time.time())
+            return ChatModel.model_validate(chat), changed_ids
+
+    async def update_voice_message(self, chat_id: str, message_id: str, user, voice: dict) -> ChatModel:
+        """Update only the author's speech metadata while retaining both stores' tool state."""
+        from fastapi import HTTPException
+
+        async with self._chat_transaction(chat_id) as (db, chat):
+            if not chat or not await self.get_accessible_chat_by_id(
+                chat_id, user, db=db, permission='write', chat=chat
+            ):
+                raise HTTPException(403, 'Chat continuation is not allowed.')
+            history = deepcopy((chat.chat or {}).get('history') or {})
+            messages = history.setdefault('messages', {})
+            embedded = messages.get(message_id) or {}
+            row = await db.get(ChatMessage, f'{chat_id}-{message_id}', with_for_update=True)
+            if not embedded and row is None:
+                raise HTTPException(404, 'Message not found.')
+            author = embedded.get('user') if isinstance(embedded.get('user'), dict) else {}
+            author_id = (row.user_id if row else None) or embedded.get('user_id') or author.get('id') or chat.user_id
+            if author_id != user.id:
+                raise HTTPException(403, 'You can only update voice metadata on your own messages.')
+            message = dict(embedded)
+            if row is not None:
+                message.update(
+                    {
+                        ChatMessages.DB_TO_JSON_KEY_MAP.get(column.key, column.key): getattr(row, column.key)
+                        for column in ChatMessage.__table__.columns
+                        if column.key not in ChatMessages.EXCLUDED_COLUMNS
+                    }
+                )
+            message['id'] = message_id
+            meta = {**(embedded.get('meta') or {}), **(message.get('meta') or {})}
+            previous = meta.get('voice')
+            previous = previous if isinstance(previous, dict) else {}
+            merged = {**previous, **voice}
+            if 'speech' in voice:
+                if not isinstance(voice['speech'], list) or not all(isinstance(item, dict) for item in voice['speech']):
+                    raise HTTPException(400, 'Invalid voice speech metadata')
+                previous_speech = previous.get('speech')
+                previous_speech = previous_speech if isinstance(previous_speech, list) else []
+                speech = {item.get('item_id'): item for item in previous_speech if isinstance(item, dict)}
+                speech.update({item.get('item_id'): item for item in voice['speech']})
+                merged['speech'] = list(speech.values())
+            if len(JSONCodec.dumps(merged)) > 100000:
+                raise HTTPException(400, 'Voice metadata is too large')
+            message['meta'] = self._clean_null_bytes({**meta, 'voice': merged})
+            messages[message_id] = message
+            # Patch existing normalized rows only; a legacy backfill retains the full raw message.
+            await ChatMessages.upsert_message(
+                message_id, chat_id, user.id, message if row is None else {'meta': message['meta']}, db=db
+            )
+            chat.chat = {**(chat.chat or {}), 'history': history}
+            flag_modified(chat, 'chat')
+            chat.updated_at = int(time.time())
+            return ChatModel.model_validate(chat)
 
     async def upsert_message_to_chat_by_id_and_message_id(
         self, id: str, message_id: str, message: dict, *, touch: bool = True

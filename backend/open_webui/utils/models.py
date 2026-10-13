@@ -22,6 +22,7 @@ from open_webui.utils.access_control import has_access, has_base_model_access
 from open_webui.utils.chat_variables import get_chat_variables_schema
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import merge_model_params
+from open_webui.utils.payload import apply_model_controls
 from open_webui.utils.plugin import (
     get_function_module_from_cache,
     get_functions_cache,
@@ -34,8 +35,15 @@ BASE_MODELS_CACHE_KEY = f'{REDIS_KEY_PREFIX}:models:base'
 
 
 def effective_reasoning_effort(default_params: dict | None, model_params: dict | None) -> str | None:
-    merged = merge_model_params(default_params or {}, model_params or {})
+    model_params = model_params or {}
+    merged = merge_model_params(default_params or {}, model_params)
     value = merged.get('reasoning_effort')
+    custom = merged.get('custom_params')
+    if isinstance(custom, dict):
+        value = custom.get('reasoning_effort', value)
+    # Publish the same control default that the send path expands before transport.
+    control_defaults = apply_model_controls({}, model_params.get('model_controls') or {}, {}).get('custom_params', {})
+    value = control_defaults.get('reasoning_effort', value)
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None

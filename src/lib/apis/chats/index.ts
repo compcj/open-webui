@@ -9,6 +9,54 @@ const getErrorDetail = (err: any) => {
 	return err?.detail ?? err;
 };
 
+export interface VoiceMessage {
+	id: string;
+	parent_id: string | null;
+	branch_id: string | null;
+	role: 'user' | 'assistant';
+	content: string;
+	voice: Record<string, any>;
+}
+
+export const addChatVoiceMessage = async (token: string, chatId: string, message: VoiceMessage) => {
+	const response = await fetch(
+		`${WEBUI_API_BASE_URL}/chats/${encodeURIComponent(chatId)}/voice/messages`,
+		{
+			method: 'POST',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				authorization: `Bearer ${token}`
+			},
+			body: JSON.stringify(message)
+		}
+	);
+	if (!response.ok) throw getErrorDetail(await response.json());
+	return response.json();
+};
+
+export const updateChatVoiceMessage = async (
+	token: string,
+	chatId: string,
+	messageId: string,
+	voice: Record<string, any>
+) => {
+	const response = await fetch(
+		`${WEBUI_API_BASE_URL}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/voice`,
+		{
+			method: 'POST',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				authorization: `Bearer ${token}`
+			},
+			body: JSON.stringify({ voice })
+		}
+	);
+	if (!response.ok) throw getErrorDetail(await response.json());
+	return response.json();
+};
+
 export const getChatConfig = async (token: string) => {
 	let error = null;
 

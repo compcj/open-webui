@@ -170,7 +170,7 @@ async def _http_terminal_context(server_id, request, user, metadata, *, require_
     if not base_url:
         raise HTTPException(503, 'Terminal server URL not configured')
     session_id = metadata.get('chat_id')
-    if is_saved_chat_id(session_id) and not await Chats.get_chat_by_id_for_user(session_id, user):
+    if is_saved_chat_id(session_id) and not await Chats.get_accessible_chat_by_id(session_id, user):
         raise HTTPException(404, 'Chat not found')
     context = 'automation' if metadata.get('automation_id') else 'chat'
     if not terminal_context_available(connection, context):
@@ -429,7 +429,7 @@ async def _resolve_authenticated_connection(ws: WebSocket, server_id: str):
     user, connection = result
     chat_id = payload.get('chat_id', '')
     chat_id = chat_id if isinstance(chat_id, str) else ''
-    if is_saved_chat_id(chat_id) and not await Chats.get_chat_by_id_for_user(chat_id, user):
+    if is_saved_chat_id(chat_id) and not await Chats.get_accessible_chat_by_id(chat_id, user):
         await ws.close(code=4003, reason='Chat access denied')
         return None
     return user, connection, chat_id, token
@@ -598,7 +598,7 @@ async def ws_terminal(
                         current_access = await _resolve_terminal_access(ws, server_id, token)
                         if current_access is None:
                             return
-                        if is_saved_chat_id(chat_id) and not await Chats.get_chat_by_id_for_user(
+                        if is_saved_chat_id(chat_id) and not await Chats.get_accessible_chat_by_id(
                             chat_id, current_access[0]
                         ):
                             await ws.close(code=4003, reason='Chat access denied')
