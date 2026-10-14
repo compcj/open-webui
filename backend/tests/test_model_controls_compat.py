@@ -126,6 +126,7 @@ def model_controls_schema():
         'ModelVoiceAvatar',
         'ModelMeta',
         'ModelModel',
+        'ModelResponse',
         'ModelForm',
     }
     tree = ast.parse((ROOT / 'models/models.py').read_text(encoding='utf8'))
@@ -138,9 +139,12 @@ def model_controls_schema():
             and any(isinstance(target, ast.Name) and target.id == 'ModelControlKey' for target in node.targets)
         )
     ]
-    scope = dict(
-        locals(), deepcopy=deepcopy, AccessGrantModel=BaseModel, validate_image_url=lambda value, **kwargs: value
-    )
+    scope = dict(locals(), deepcopy=deepcopy, validate_image_url=lambda value, **kwargs: value)
+    grant_tree = ast.parse((ROOT / 'models/access_grants.py').read_text(encoding='utf8'))
+    grant_nodes = [
+        node for node in grant_tree.body if isinstance(node, ast.ClassDef) and node.name == 'AccessGrantModel'
+    ]
+    exec(compile(ast.Module(body=grant_nodes, type_ignores=[]), 'access_grants_schema', 'exec'), scope)
     exec(compile(ast.Module(body=selected, type_ignores=[]), 'model_controls_schema', 'exec'), scope)
     return scope
 
@@ -167,6 +171,77 @@ def test_pydantic_model_and_form_migrate_orm_and_preserve_version():
     reset = scope['ModelForm'].model_validate({**form, 'params': {'model_controls': {}}})
     assert reset.params.model_controls == {}
     assert reset.meta.available_reasoning_effort is None
+
+
+@pytest.mark.parametrize('endpoint', ['/all', '/base'])
+@pytest.mark.parametrize(
+    'principals',
+    [
+        [],
+        [('group', 'group-id', 'read'), ('group', 'group-id', 'write')],
+        [('user', 'user-id', 'read')],
+        [('user', '*', 'read')],
+    ],
+    ids=['private', 'group', 'user', 'public'],
+)
+def test_admin_model_responses_preserve_loaded_access_grants(endpoint, principals):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter, Depends, FastAPI
+    from fastapi.testclient import TestClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    schema = model_controls_schema()
+    grants = [
+        {
+            'id': f'grant-{index}',
+            'resource_type': 'model',
+            'resource_id': 'test-model',
+            'principal_type': principal_type,
+            'principal_id': principal_id,
+            'permission': permission,
+            'created_at': 1,
+        }
+        for index, (principal_type, principal_id, permission) in enumerate(principals)
+    ]
+    stored = schema['ModelModel'](
+        id='test-model',
+        name='Test Model',
+        user_id='owner',
+        version_id='production',
+        params={'model_controls': {}},
+        meta={'context_window': 100},
+        is_active=True,
+        created_at=1,
+        updated_at=2,
+        access_grants=grants,
+    )
+    before = stored.model_dump()
+    router = APIRouter()
+    namespace = {
+        **schema,
+        'router': router,
+        'Depends': Depends,
+        'AsyncSession': AsyncSession,
+        'get_async_session': lambda: None,
+        'get_admin_user': lambda: SimpleNamespace(id='admin', role='admin'),
+        'Models': SimpleNamespace(
+            get_all_models=AsyncMock(return_value=[stored]),
+            get_base_models=AsyncMock(return_value=[stored]),
+        ),
+    }
+    helper('routers/models.py', ['get_all_model_records', 'get_base_models'], namespace)
+    app = FastAPI()
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        response = client.get(endpoint)
+
+    assert response.status_code == 200
+    assert response.json()[0]['access_grants'] == grants
+    assert response.json()[0] == before
+    assert stored.model_dump() == before
 
 
 @pytest.mark.parametrize('default_value', [None, 'disabled', 0, [], {'summary': 'auto'}])

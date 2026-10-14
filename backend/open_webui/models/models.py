@@ -82,6 +82,7 @@ def migrate_legacy_model_controls(data):
                 'name',
                 'params',
                 'meta',
+                'access_grants',
                 'is_active',
                 'updated_at',
                 'created_at',
