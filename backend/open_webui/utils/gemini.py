@@ -76,6 +76,10 @@ def _normalize_schema(schema):
     if not isinstance(schema, dict):
         return
 
+    # Native Gemini Schema has no plural examples field. Visit schema nodes
+    # only, so properties with this name and literal default/example data survive.
+    schema.pop('examples', None)
+
     for child in _schema_children(schema):
         _normalize_schema(child)
 
@@ -88,7 +92,7 @@ def _normalize_schema(schema):
 
     # These keywords are independent of sibling schema locations. Moving refs,
     # definitions or object/tuple applicators could change their scope/meaning.
-    annotations = {'title', 'description', 'default', 'examples', 'deprecated', 'readOnly', 'writeOnly'}
+    annotations = {'title', 'description', 'default', 'deprecated', 'readOnly', 'writeOnly'}
     independent = {
         'type',
         'enum',
@@ -114,12 +118,30 @@ def _normalize_schema(schema):
 
     merged = []
     for variant in variants:
+        constant = siblings.get('const', variant.get('const'))
+        if isinstance(constant, str):
+            # A string literal can prove an intersection impossible without
+            # dropping valid alternatives or treating bool/number as strings.
+            if any(
+                ('const' in constraints and constraints['const'] != constant)
+                or not _matches_json_type(constant, constraints.get('type'))
+                or (isinstance(constraints.get('enum'), list) and constant not in constraints['enum'])
+                for constraints in (siblings, variant)
+            ):
+                continue
+
         # Never silently replace a constraint with a different branch constraint.
         # Unsupported intersections retain the original schema for provider validation.
         if any(
             key not in annotations and json.dumps(value, sort_keys=True) != json.dumps(variant[key], sort_keys=True)
             for key, value in siblings.items()
             if key in variant
+            and not (
+                key == 'enum'
+                and isinstance(constant, str)
+                and isinstance(value, list)
+                and isinstance(variant[key], list)
+            )
         ):
             return
         branch = {**deepcopy(siblings), **variant}
@@ -148,6 +170,27 @@ def _normalize_schema(schema):
     schema['anyOf'] = merged
 
 
+def _normalize_string_constants(schema):
+    if not isinstance(schema, dict):
+        return
+
+    # Gemini supports string enums, but not JSON Schema const. Keep the exact
+    # constraint; incompatible types/enums and non-string literals must not be
+    # silently widened or coerced to strings.
+    constant = schema.get('const')
+    if (
+        'anyOf' not in schema
+        and isinstance(constant, str)
+        and ('type' not in schema or schema['type'] == 'string')
+        and ('enum' not in schema or (isinstance(schema['enum'], list) and constant in schema['enum']))
+    ):
+        schema['enum'] = [schema.pop('const')]
+        schema.setdefault('type', 'string')
+
+    for child in _schema_children(schema):
+        _normalize_string_constants(child)
+
+
 def normalize_gemini_tool_schemas(payload: dict, *, model_id: str | None = None) -> dict:
     """Copy Gemini function parameters, keeping cached/shared tool specs intact."""
     model = model_id if model_id is not None else payload.get('model')
@@ -172,7 +215,10 @@ def normalize_gemini_tool_schemas(payload: dict, *, model_id: str | None = None)
             tools.append(tool)
             continue
         parameters = deepcopy(function['parameters'])
+        # Distribute original constraints before const introduces type/enum
+        # fields that would otherwise look like conflicting union constraints.
         _normalize_schema(parameters)
+        _normalize_string_constants(parameters)
         function = {**function, 'parameters': parameters}
         tools.append({**tool, 'function': function} if 'function' in tool else function)
     return {**payload, 'tools': tools}
