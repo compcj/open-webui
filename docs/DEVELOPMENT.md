@@ -221,6 +221,22 @@ GHCR and has removed Helm chart notification and Docker Hub copy steps. During u
 merges, review the current triggers, destinations, permissions, and recent history before restoring
 any removed publishing steps.
 
+### Gemini tool schema verification
+
+The manual Gemini profile targets third-party OpenAI-compatible gateways using Google's restricted
+Schema format. See the [compatibility guide](gemini-tool-compatibility.md) for conversion semantics,
+original-schema validation, upstream references and limits. Use the existing backend dependencies,
+including `jsonschema` from the MCP dependency tree; the minimal helper-only environment needs it too.
+
+```sh
+python -m pytest backend/tests/test_gemini_schema_compiler.py backend/tests/test_gemini_tool_schema.py backend/tests/test_model_tool_schema_compatibility.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_tool_call_rounds.py backend/tests/test_approval_execution_helper.py backend/tests/test_tool_citation_replay.py backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_openai_responses_payload.py backend/tests/test_chat_tool_features.py -q
+```
+
+These tests exercise pure conversion and isolated production send/execution boundaries. They do
+not call a live provider or prove application startup. For gateway acceptance, enable the mode on
+the actual model and exercise nested tools, argument correction, multiple rounds and approval
+resumption without recording credentials or user data in fixtures.
+
 ### Tool citation cache verification
 
 Use Python 3.11/3.12 and the existing development dependencies. These tests isolate production

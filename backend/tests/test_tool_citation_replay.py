@@ -299,6 +299,84 @@ def test_old_results_replay_without_citation_changes(pipeline):
     assert ns['get_tool_citation_source_ids']([], output) == {}
 
 
+def test_saved_gemini_validation_profile_does_not_reach_chat_provider(pipeline):
+    output = [
+        {
+            'type': 'function_call',
+            'call_id': 'old',
+            'name': 'f',
+            'status': 'completed',
+            'arguments': '{}',
+            'tool_schema_compatibility': 'gemini',
+        },
+        {'type': 'function_call_output', 'call_id': 'old', 'output': [{'type': 'input_text', 'text': 'Result'}]},
+    ]
+    messages = pipeline.ns['convert_output_to_messages'](output, raw=True)
+    assert messages[0]['tool_calls'] == [
+        {'id': 'old', 'type': 'function', 'function': {'name': 'f', 'arguments': '{}'}}
+    ]
+    assert 'tool_schema_compatibility' not in json.dumps(messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('direct', [False, True])
+@pytest.mark.parametrize('mode', ['default', 'gemini'])
+async def test_approval_restores_call_validation_and_refreshes_filtered_server_model(pipeline, direct, mode):
+    ns = pipeline.ns
+    message = {
+        'model': 'synthetic',
+        'output': [
+            {
+                'type': 'function_call',
+                'call_id': 'approved',
+                'name': 'f',
+                'arguments': '{}',
+                'status': 'queued',
+                'approved': True,
+                'tool_schema_compatibility': mode,
+            }
+        ],
+    }
+    request = SimpleNamespace(state=SimpleNamespace(direct=direct, model={'id': 'synthetic'}))
+
+    async def request_filter(**kwargs):
+        return {**kwargs['form_data'], 'model': 'filtered'}, {}
+
+    ns.update(
+        ENABLE_FUNCTIONS=True,
+        get_filter_functions=AsyncMock(return_value=['filter']),
+        process_filter_functions=request_filter,
+        get_filter_context=lambda request: None,
+        get_system_oauth_token=AsyncMock(return_value=None),
+        Models=SimpleNamespace(
+            get_model_by_id=AsyncMock(
+                return_value={
+                    'id': 'filtered',
+                    'meta': {'tool_schema_compatibility': 'default'},
+                }
+            )
+        ),
+        Chats=SimpleNamespace(),
+        get_event_emitter_and_caller=AsyncMock(return_value=(ns['event_emitter'], None)),
+        execute_tool_call_for_output=AsyncMock(
+            return_value={'tool_call_id': 'approved', 'content': 'Error: invalid schema'}
+        ),
+    )
+    install_approval_store(ns, message)
+    ns['ENABLE_FUNCTIONS'] = True
+    ns['user'].model_dump = lambda: {'id': 'owner'}
+    metadata = {
+        'chat_id': 'chat',
+        'assistant_message_id': 'assistant',
+        '_tool_schema_validation': {'synthetic': 'gemini'},
+    }
+    await ns['resume_tool_calls'](request, ns['form_data'], ns['user'], ns['model'], metadata, message)
+    ns['Models'].get_model_by_id.assert_awaited_once_with('filtered')
+    assert metadata['_tool_schema_validation']['filtered'] == 'default'
+    ns['execute_tool_call_for_output'].assert_awaited_once()
+    assert ns['execute_tool_call_for_output'].call_args.args[-1]['_gemini_schema_validation'] is (mode == 'gemini')
+
+
 @pytest.mark.asyncio
 async def test_frozen_context_is_not_regenerated(pipeline):
     ns = pipeline.ns

@@ -1538,10 +1538,15 @@ async def generate_chat_completion(
     # All model parameters and injected messages are now resolved. Count the
     # OpenAI-shaped request before Azure/Responses transport conversion.
     from open_webui.utils.context_compaction_dispatch import apply_context_compaction
-    from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
+    from open_webui.utils.gemini import (
+        normalize_gemini_tool_schemas,
+        record_gemini_tool_compatibility,
+        resolve_tool_schema_compatibility,
+    )
 
     compatibility = await resolve_tool_schema_compatibility(model_info, get_model=Models.get_model_by_id)
     payload = normalize_gemini_tool_schemas(payload, compatibility=compatibility)
+    record_gemini_tool_compatibility(metadata, compatibility, form_data['model'])
     payload = await apply_context_compaction(request, user, payload, metadata, form_data['model'])
 
     if api_config.get('azure') or api_config.get('provider') == 'azure':

@@ -345,3 +345,37 @@ async def test_live_fragmented_new_provider_call_keeps_two_intended_split_effect
     executed = [entry.args[-1] for entry in ns['execute_tool_call'].call_args_list]
     assert [entry['function']['arguments'] for entry in executed] == ['{"record":1}', '{"record":2}']
     assert len({entry['id'] for entry in executed}) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+@pytest.mark.parametrize('mode', ['default', 'gemini'])
+async def test_tool_round_freezes_its_actual_model_validation_before_execution(runtime, api, mode):
+    ns = runtime.ns
+    ns['metadata'] = {'_tool_schema_validation': {'initial': 'default', 'later': mode}}
+    ns['form_data'] = {'model': 'later'}
+    ns['output'] = [
+        {
+            'type': 'function_call',
+            'call_id': 'A',
+            'name': 'write_record',
+            'arguments': '{"record":1}{"record":2}',
+            # A provider-supplied marker must not opt into a different profile.
+            'tool_schema_compatibility': 'gemini',
+        }
+    ]
+    if api == 'chat':
+        ns['response_tool_calls'] = [{**call('A', '{"record":1}{"record":2}'), '_gemini_schema_validation': True}]
+    await ns['queue_stream_calls']()
+    assert (ns['output'][0].get('tool_schema_compatibility') == 'gemini') == (mode == 'gemini')
+
+    # Execution closes over the initial request even when a continuation filter
+    # selected another model. Every split child must retain the later contract.
+    ns['form_data'] = {'model': 'initial'}
+    await ns['execute_queued_calls']()
+    executed = [entry.args[-1] for entry in ns['execute_tool_call'].call_args_list]
+    assert len(executed) == 2
+    assert all((entry.get('_gemini_schema_validation') is True) == (mode == 'gemini') for entry in executed)
+    children = [entry for entry in ns['output'] if entry.get('call_id') in {call['id'] for call in executed}]
+    assert len(children) == 2
+    assert all((entry.get('tool_schema_compatibility') == 'gemini') == (mode == 'gemini') for entry in children)

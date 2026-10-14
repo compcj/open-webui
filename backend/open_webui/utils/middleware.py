@@ -2786,6 +2786,19 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             form_data['model'] = selected_model_id
             metadata['selected_model_id'] = selected_model_id
 
+    from open_webui.utils.gemini import configure_gemini_tool_validation
+
+    await configure_gemini_tool_validation(
+        metadata,
+        model,
+        get_model=None
+        if (
+            getattr(request.state, 'direct', False)
+            and getattr(request.state, 'model', {}).get('id') == form_data.get('model')
+        )
+        else Models.get_model_by_id,
+    )
+
     # Keep the template before apply_params_to_form_data consumes the model parameters.
     model_system_prompt_template = (form_data.get('params') or {}).get('system')
 
@@ -3876,15 +3889,31 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call):
             None,
             False,
         )
-    tool_call.setdefault('function', {})['arguments'] = JSONCodec.dumps(params)
-
     tool = metadata.get('tools', {}).get(name)
     if not tool:
         return params, f'Error: Tool "{name}" not found.', None, None, False
     tool_type = tool.get('type', '')
     direct_tool = tool.get('direct', False)
-    allowed_params = tool.get('spec', {}).get('parameters', {}).get('properties', {}).keys()
-    params = {key: value for key, value in params.items() if key in allowed_params}
+    compatibility = metadata.get('_tool_schema_validation', {}).get(
+        form_data.get('model', ''), metadata.get('_tool_schema_compatibility')
+    )
+    validate_schema = tool_call.get('_gemini_schema_validation')
+    if not isinstance(validate_schema, bool):
+        validate_schema = compatibility == 'gemini'
+    if validate_schema:
+        from open_webui.utils.gemini_schema import validate_gemini_tool_arguments
+
+        if any(isinstance(key, str) and key.startswith('__') for key in params):
+            return params, 'Error: Tool arguments cannot set reserved runtime parameters.', tool, tool_type, direct_tool
+        error = validate_gemini_tool_arguments(tool.get('spec', {}).get('parameters', {}), params)
+        if error:
+            return params, error, tool, tool_type, direct_tool
+        # The original schema authorizes keys (including root refs/unions and
+        # additionalProperties); filtering here could change a validated call.
+    tool_call.setdefault('function', {})['arguments'] = JSONCodec.dumps(params)
+    if not validate_schema:
+        allowed_params = tool.get('spec', {}).get('parameters', {}).get('properties', {}).keys()
+        params = {key: value for key, value in params.items() if key in allowed_params}
 
     try:
         if (
@@ -4014,6 +4043,22 @@ async def resume_tool_calls(request, form_data, user, model, metadata, message) 
             )
     normalize_messages_for_model(form_data)
 
+    # Approval resumes can execute before the next provider send. Request
+    # filters may have selected another server model, so resolve its mode here.
+    if (
+        form_data.get('model')
+        and form_data['model'] != model.get('id')
+        and not (
+            getattr(getattr(request, 'state', None), 'direct', False)
+            and getattr(request.state, 'model', {}).get('id') == form_data['model']
+        )
+    ):
+        from open_webui.utils.gemini import record_gemini_tool_compatibility, resolve_tool_schema_compatibility
+
+        selected = await Models.get_model_by_id(form_data['model'])
+        compatibility = await resolve_tool_schema_compatibility(selected, get_model=Models.get_model_by_id)
+        record_gemini_tool_compatibility(metadata, compatibility, form_data['model'])
+
     from open_webui.utils.tool_result_sources import result_metadata, register_tool_results
 
     citation_source_ids = get_tool_citation_source_ids(message.get('sources') or metadata.get('sources', []), output)
@@ -4051,6 +4096,11 @@ async def resume_tool_calls(request, form_data, user, model, metadata, message) 
         tool_call = {
             'id': item.get('call_id', ''),
             'type': 'function',
+            **(
+                {'_gemini_schema_validation': item['tool_schema_compatibility'] == 'gemini'}
+                if item.get('tool_schema_compatibility') in ('default', 'gemini')
+                else {}
+            ),
             'function': {
                 'name': item.get('name', ''),
                 'arguments': item.get('arguments', '{}'),
@@ -6317,6 +6367,9 @@ async def streaming_chat_response_handler(response, ctx):
 
                     if response_tool_calls:
                         response_tool_calls = _deduplicate_tool_calls(response_tool_calls, prior_output + output)
+                        from open_webui.utils.gemini import mark_gemini_tool_calls
+
+                        mark_gemini_tool_calls(response_tool_calls, output, metadata, form_data.get('model', ''))
                         for tc in response_tool_calls:
                             call_id = tc.get('id', '')
                             arguments = tc.get('function', {}).get('arguments', '{}')
@@ -6374,6 +6427,11 @@ async def streaming_chat_response_handler(response, ctx):
                             responses_api_tool_calls, prior_output + output
                         )
                         if responses_api_tool_calls:
+                            from open_webui.utils.gemini import mark_gemini_tool_calls
+
+                            mark_gemini_tool_calls(
+                                responses_api_tool_calls, output, metadata, form_data.get('model', '')
+                            )
                             tool_calls.append(_split_tool_calls(responses_api_tool_calls))
 
                 output_start = len(prior_output)
@@ -6488,6 +6546,15 @@ async def streaming_chat_response_handler(response, ctx):
                                     'name': func.get('name', ''),
                                     'arguments': func.get('arguments', '{}'),
                                     'status': 'in_progress',
+                                    **(
+                                        {
+                                            'tool_schema_compatibility': 'gemini'
+                                            if tc['_gemini_schema_validation']
+                                            else 'default'
+                                        }
+                                        if isinstance(tc.get('_gemini_schema_validation'), bool)
+                                        else {}
+                                    ),
                                 }
                             )
 

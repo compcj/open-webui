@@ -57,11 +57,16 @@ async def generate_direct_chat_completion(
 
     metadata = form_data.pop('metadata', {})
     from open_webui.utils.context_compaction_dispatch import apply_context_compaction
-    from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
+    from open_webui.utils.gemini import (
+        normalize_gemini_tool_schemas,
+        record_gemini_tool_compatibility,
+        resolve_tool_schema_compatibility,
+    )
 
     # Browser-direct requests use only their descriptor's explicit metadata.
     compatibility = await resolve_tool_schema_compatibility(models.get(form_data['model']))
     form_data = normalize_gemini_tool_schemas(form_data, compatibility=compatibility)
+    record_gemini_tool_compatibility(metadata, compatibility, form_data['model'])
     form_data = await apply_context_compaction(request, user, form_data, metadata, form_data['model'])
 
     user_id = metadata.get('user_id')

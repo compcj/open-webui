@@ -77,6 +77,10 @@ async def test_server_send_normalizes_gemini_tools_before_budgeting(
     tool = tushare_tool()
     original = copy.deepcopy(tool)
     body = {'model': selected_id, 'messages': [{'role': 'user', 'content': 'Get minute bars.'}], 'tools': [tool]}
+    # Routing makes shallow metadata copies. The execution context must see
+    # the final sender's mode even when an inlet selected a different model.
+    validation_state = {selected_id: 'default'}
+    body['metadata'] = {'_tool_schema_validation': validation_state}
     captured = {}
     sent = {}
 
@@ -125,6 +129,8 @@ async def test_server_send_normalizes_gemini_tools_before_budgeting(
         await namespace['generate_chat_completion'](request, body, SimpleNamespace(role='admin'))
 
     assert captured['model'] == provider_model
+    expected_mode = 'gemini' if compatibility == 'gemini' or (preset and compatibility is None) else 'default'
+    assert validation_state[selected_id] == expected_mode
     sent_function = sent['tools'][0] if api_type == 'responses' else sent['tools'][0]['function']
     assert sent_function['parameters'] == captured['tools'][0]['function']['parameters']
     assert tool == original
@@ -159,6 +165,8 @@ async def test_direct_send_normalizes_gemini_tools_before_budgeting(monkeypatch,
     tool = tushare_tool()
     original = copy.deepcopy(tool)
     body = {'model': model_id, 'tools': [tool]}
+    validation_state = {model_id: 'default'}
+    body['metadata'] = {'_tool_schema_validation': validation_state}
     captured = {}
 
     async def capture(request, user, payload, metadata, model_id):
@@ -186,6 +194,7 @@ async def test_direct_send_normalizes_gemini_tools_before_budgeting(monkeypatch,
     assert result == {'ok': True}
     assert event_caller.call_args.args[0]['data']['form_data'] == captured
     assert captured['model'] == model_id
+    assert validation_state[model_id] == ('gemini' if compatibility == 'gemini' else 'default')
     if compatibility == 'gemini':
         assert set(captured['tools'][0]['function']['parameters']['properties']['freq']) == {'anyOf'}
         assert captured['tools'][0]['function']['parameters']['properties']['requests']['items']['properties'][
@@ -258,154 +267,6 @@ def normalized_parameters(parameters):
     return result['tools'][0]['function']['parameters']
 
 
-@pytest.mark.parametrize(
-    'path',
-    [
-        ('properties', 'freq'),
-        ('$defs', 'Frequency'),
-        ('definitions', 'Frequency'),
-        ('items',),
-        ('additionalProperties',),
-        ('anyOf', 0),
-        ('oneOf', 0),
-        ('allOf', 0),
-        ('prefixItems', 0),
-    ],
-)
-def test_nested_union_keeps_types_nullability_defaults_and_descriptions(path):
-    schema = {
-        'anyOf': [{'type': 'string', 'description': 'Named frequency.'}, {'type': 'integer'}, {'type': 'null'}],
-        'description': 'Select a frequency.',
-        'default': None,
-    }
-    parameters = schema
-    for part in reversed(path):
-        parameters = [parameters] if isinstance(part, int) else {part: parameters}
-    normalized = normalized_parameters(parameters)
-    for part in path:
-        normalized = normalized[part]
-
-    assert normalized == {
-        'anyOf': [
-            {'type': 'string', 'description': 'Select a frequency.\nNamed frequency.', 'default': None},
-            {'type': 'integer', 'description': 'Select a frequency.', 'default': None},
-            {'type': 'null', 'description': 'Select a frequency.', 'default': None},
-        ]
-    }
-
-
-def test_property_names_and_default_example_data_are_not_schemas():
-    literal = {
-        'anyOf': [{'type': 'string'}, {'type': 'integer'}],
-        'description': 'Literal data.',
-        '$ref': 'literal',
-        'examples': ['literal'],
-        'const': 'literal',
-    }
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'anyOf': {'type': 'string'},
-            'description': {'type': 'string'},
-            'default': {
-                'type': 'object',
-                'default': literal,
-                'examples': [literal],
-                'example': literal,
-                'enum': [literal],
-            },
-            'examples': {'type': 'string'},
-            'const': {'type': 'string'},
-        },
-        'required': ['anyOf', 'description'],
-        'additionalProperties': False,
-    }
-    expected = copy.deepcopy(parameters)
-    del expected['properties']['default']['examples']
-    assert normalized_parameters(parameters) == expected
-
-
-def test_constraints_at_union_and_branch_levels_are_retained():
-    parameters = {
-        'anyOf': [{'type': 'string', 'minLength': 1}, {'type': 'integer', 'minimum': 1}],
-        'enum': ['1min', '5min', 1, 5],
-        'title': 'Frequency',
-    }
-    assert normalized_parameters(parameters) == {
-        'anyOf': [
-            {'type': 'string', 'minLength': 1, 'enum': ['1min', '5min'], 'title': 'Frequency'},
-            {'type': 'integer', 'minimum': 1, 'enum': [1, 5], 'title': 'Frequency'},
-        ]
-    }
-
-
-@pytest.mark.parametrize(
-    'schema_type,expected',
-    [
-        ('string', ['1min']),
-        ('integer', [1, 1.0]),
-        ('number', [1, 1.0, 1.5]),
-        ('boolean', [True, False]),
-        ('null', [None]),
-        ('array', [[]]),
-        ('object', [{}]),
-    ],
-)
-def test_finite_enums_only_keep_values_accepted_by_each_branch_type(schema_type, expected):
-    parameters = {
-        'anyOf': [{'type': schema_type}],
-        'enum': ['1min', 1, 1.0, 1.5, True, False, None, [], {}],
-    }
-    result = normalized_parameters(parameters)
-    assert result == {'anyOf': [{'type': schema_type, 'enum': expected}]}
-
-
-def test_an_impossible_union_remains_invalid_instead_of_becoming_permissive():
-    parameters = {'anyOf': [{'type': 'integer'}], 'enum': ['1min']}
-    assert normalized_parameters(parameters) == parameters
-
-
-def test_references_to_union_branches_keep_their_original_target_and_meaning():
-    parameters = {
-        'type': 'object',
-        'definitions': {
-            'frequency': {'anyOf': [{'type': 'integer'}, {'type': 'string'}], 'enum': ['1min']},
-        },
-        'properties': {
-            'count': {'$ref': '#/definitions/frequency/anyOf/0'},
-            'freq': {'$ref': '#/definitions/frequency'},
-        },
-    }
-    assert normalized_parameters(parameters) == parameters
-
-
-@pytest.mark.parametrize('reference_key', ['$ref', '$dynamicRef', '$recursiveRef', '$id', '$anchor', '$dynamicAnchor'])
-def test_addressable_schema_documents_are_not_restructured(reference_key):
-    parameters = {
-        'anyOf': [{'type': 'integer', reference_key: 'frequency'}, {'type': 'string'}],
-        'enum': ['1min'],
-    }
-    assert normalized_parameters(parameters) == parameters
-
-
-@pytest.mark.parametrize(
-    'parameters',
-    [
-        {'anyOf': [{'type': 'string'}, {'type': 'integer'}], 'type': 'string'},
-        {'anyOf': [{'enum': ['1min']}, {'enum': ['5min']}], 'enum': ['1min', '5min']},
-        {'anyOf': [{'const': 1}, {'const': True}], 'const': True},
-        {'anyOf': [{'enum': [1]}, {'enum': [True]}], 'enum': [True]},
-        {'anyOf': [{'$ref': '#/definitions/Frequency'}, {'type': 'integer'}], 'enum': ['1min', '5min']},
-        {'anyOf': [{'$ref': '#/$defs/Frequency'}], '$defs': {'Frequency': {'type': 'string'}}},
-        {'anyOf': [{'properties': {'freq': {'type': 'string'}}}], 'additionalProperties': False},
-        {'anyOf': [True, False], 'description': 'Boolean schemas.'},
-        {'anyOf': [], 'description': 'Invalid empty union.'},
-    ],
-)
-def test_unsupported_intersections_are_not_silently_weakened(parameters):
-    assert normalized_parameters(parameters) == parameters
-
-
 @pytest.mark.parametrize('model', ['gemini-4-argon', 'google/gemini-4-argon', 'gpt-control', '', None])
 @pytest.mark.parametrize('compatibility', [None, 'default', 'auto', True])
 def test_model_names_never_enable_conversion(model, compatibility):
@@ -431,58 +292,6 @@ def test_response_tools_and_other_tool_kinds(model):
 def test_absent_empty_or_malformed_tools_do_not_break_requests(tools):
     payload = {'model': 'gemini-4-argon', 'tools': tools}
     assert normalize_gemini_tool_schemas(payload, compatibility='gemini') == payload
-
-
-@pytest.mark.parametrize(
-    'path',
-    [
-        (),
-        ('properties', 'kind'),
-        ('items', 'properties', 'kind'),
-        ('anyOf', 0, 'properties', 'kind'),
-        ('allOf', 0, 'properties', 'kind'),
-        ('oneOf', 0, 'properties', 'kind'),
-        ('additionalProperties',),
-        ('$defs', 'Kind'),
-        ('definitions', 'Kind'),
-    ],
-)
-def test_examples_and_string_constants_are_adapted_at_nested_schema_nodes(path):
-    parameters = {'type': 'string', 'const': 'minute', 'examples': ['minute'], 'description': 'Request kind.'}
-    for part in reversed(path):
-        parameters = [parameters] if isinstance(part, int) else {part: parameters}
-    result = normalized_parameters(parameters)
-    for part in path:
-        result = result[part]
-    assert result == {'type': 'string', 'enum': ['minute'], 'description': 'Request kind.'}
-
-
-@pytest.mark.parametrize('value', ['minute', ''])
-@pytest.mark.parametrize('enum', [None, ['', 'minute', 'daily']])
-def test_string_constant_keeps_exact_value_and_tightens_a_compatible_enum(value, enum):
-    parameters = {'const': value}
-    if enum is not None:
-        parameters['enum'] = enum
-    assert normalized_parameters(parameters) == {'type': 'string', 'enum': [value]}
-
-
-@pytest.mark.parametrize(
-    'parameters',
-    [
-        {'type': 'string', 'const': 'minute', 'enum': ['daily']},
-        {'type': 'integer', 'const': 'minute'},
-        {'type': 'string', 'const': 'minute', 'enum': None},
-        {'type': None, 'const': 'minute'},
-        {'type': 'string', 'const': 'minute', 'enum': []},
-        {'type': 'boolean', 'const': True},
-        {'type': 'integer', 'const': 1},
-        {'const': None},
-        {'const': ['minute']},
-        {'const': {'kind': 'minute'}},
-    ],
-)
-def test_unsupported_or_conflicting_constants_are_not_weakened(parameters):
-    assert normalized_parameters(parameters) == parameters
 
 
 def test_literal_conversion_preserves_anyof_only_nodes():
@@ -543,19 +352,6 @@ def test_string_constant_preserves_the_intersection_of_different_enum_lists():
         'enum': ['minute', 'weekly'],
     }
     assert normalized_parameters(parameters) == {'anyOf': [{'type': 'string', 'enum': ['minute']}]}
-
-
-def test_string_constant_with_no_valid_union_branch_remains_invalid():
-    parameters = {'anyOf': [{'type': 'integer'}], 'const': 'minute'}
-    assert normalized_parameters(parameters) == parameters
-
-
-def test_nested_unions_settle_before_parent_intersections_on_the_first_send():
-    parameters = {
-        'anyOf': [{'anyOf': [{'type': 'string'}], 'enum': ['minute', 1]}],
-        'enum': ['minute'],
-    }
-    assert normalized_parameters(parameters) == {'anyOf': [{'anyOf': [{'enum': ['minute'], 'type': 'string'}]}]}
 
 
 def test_resolved_tushare_union_keeps_both_types_and_property_descriptions():

@@ -45,6 +45,17 @@ This fork of Open WebUI integrates the official **[v0.12.0](https://github.com/o
 | 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.                                             |
 | 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                                                   |
 
+### Gemini 工具兼容 / Gemini tool compatibility
+
+模型编辑页可手动选择 **Gemini 工具 Schema 兼容性**，用于第三方 OpenAI 兼容网关。
+转换器处理引用、联合类型、常量和嵌套结构，并在 WebUI 执行工具前按原始定义校验参数。
+模型名称不会自动启用转换。支持范围、网关差异和配置说明见 [Gemini 工具兼容指南](docs/gemini-tool-compatibility.md)。
+
+Model settings offer an explicit **Gemini tool schema compatibility** mode for OpenAI-compatible
+gateways. It projects references, unions, constants and nested schemas, then validates arguments
+against the original definition before WebUI executes tools. Model names never enable it automatically.
+See the [compatibility guide](docs/gemini-tool-compatibility.md) for supported conversions and limits.
+
 ### 工具引用与输入缓存 / Tool citations and input caching
 
 联网工具的新来源随对应结果追加，连续搜索和抓取不再为更新引用而重写已有系统提示或历史消息。
