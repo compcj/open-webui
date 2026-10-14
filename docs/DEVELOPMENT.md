@@ -23,7 +23,9 @@ Install frontend dependencies when needed:
 npm ci --force
 ```
 
-This is the frozen-lock install used by frontend unit-test CI and Docker. It replaces `node_modules`;
+This is the frozen-lock install used by frontend unit-test CI. Docker runs it through
+`scripts/npm-ci.sh`, using a temporary cache for each attempt and retrying only cache-file collisions
+up to three times. It replaces `node_modules`;
 coordinate it with other workers in a shared checkout. The format/build CI job instead uses
 `npm install --force`. Do not switch package managers or regenerate the lockfile incidentally.
 
@@ -111,33 +113,43 @@ whose own comment recommends WSL. These scripts can create local secret/data fil
 
 ## Choose verification by change
 
-| Purpose                    | Command (repository root)                                                                       | Meaning / limitation                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Frontend suite, one run    | `npm run test:frontend -- --run`                                                                | Confirm expected tests were collected; the script permits no tests         |
-| Focused frontend test      | `npm run test:frontend -- --run src/lib/utils/reasoning-effort.test.ts`                         | Model reasoning selection/default helpers                                  |
-| Svelte/TypeScript          | `npm run check`                                                                                 | Runs SvelteKit sync and svelte-check; writes generated `.svelte-kit` files |
-| Frontend production build  | `npm run build`                                                                                 | Runs Pyodide preparation, then Vite; network and memory may be required    |
-| Backend helper tests       | `python -m pytest backend/tests -q`                                                             | No live model/search service required by current tests                     |
-| Focused backend regression | `python -m pytest backend/tests/test_openai_responses_payload.py -q`                            | Isolated Responses payload conversion                                      |
-| Python format              | `python -m ruff format --check <changed-python-files>`                                          | Non-mutating; replace placeholder with explicit paths                      |
-| Python CI logic subset     | `python -m ruff check --select=F --ignore=F401,F403,F405,F541,F811,F841 <changed-python-files>` | Same selected rules as active backend CI                                   |
-| Frontend lint              | `npx --no-install eslint <changed-frontend-files>`                                              | Non-mutating; use installed tooling and explicit paths                     |
-| Markdown/frontend format   | `npx --no-install prettier --check <changed-files>`                                             | Uses `.prettierrc` and its Svelte plugin                                   |
-| Patch hygiene              | `git diff --check`                                                                              | Whitespace/conflict-marker check on tracked diffs; inspect new files too   |
+| Purpose                    | Command (repository root)                                                                       | Meaning / limitation                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Frontend suite, one run    | `npm run test:frontend -- --run`                                                                | Confirm expected tests were collected; the script permits no tests                   |
+| Build/release script tests | `node --test scripts/*.test.js`                                                                 | Node 22 built-in tests; no npm install required; requires Bash (Git Bash on Windows) |
+| Workflow validation        | `bash scripts/check-workflows.sh`                                                               | Installed actionlint checks workflow structure and expression contexts               |
+| Focused frontend test      | `npm run test:frontend -- --run src/lib/utils/reasoning-effort.test.ts`                         | Model reasoning selection/default helpers                                            |
+| Svelte/TypeScript          | `npm run check`                                                                                 | Runs SvelteKit sync and svelte-check; writes generated `.svelte-kit` files           |
+| Frontend production build  | `npm run build`                                                                                 | Runs Pyodide preparation, then Vite; network and memory may be required              |
+| Backend helper tests       | `python -m pytest backend/tests -q`                                                             | No live model/search service required by current tests                               |
+| Focused backend regression | `python -m pytest backend/tests/test_openai_responses_payload.py -q`                            | Isolated Responses payload conversion                                                |
+| Python format              | `python -m ruff format --check <changed-python-files>`                                          | Non-mutating; replace placeholder with explicit paths                                |
+| Python CI logic subset     | `python -m ruff check --select=F --ignore=F401,F403,F405,F541,F811,F841 <changed-python-files>` | Same selected rules as active backend CI                                             |
+| Frontend lint              | `npx --no-install eslint <changed-frontend-files>`                                              | Non-mutating; use installed tooling and explicit paths                               |
+| Markdown/frontend format   | `npx --no-install prettier --check <changed-files>`                                             | Uses `.prettierrc` and its Svelte plugin                                             |
+| Patch hygiene              | `git diff --check`                                                                              | Whitespace/conflict-marker check on tracked diffs; inspect new files too             |
 
-On restricted Windows checkouts, Vitest may fail while scanning an inaccessible ignored directory
-such as `.pytest_cache`. `npm run test:frontend -- --run --dir src` limits discovery to frontend
-sources. Report that narrower scope and the original error; do not delete shared caches or change
-permissions as an incidental test fix. Do not use this scope if the task introduces tests elsewhere.
+The frontend script limits Vitest discovery to `src`, keeping Node built-in script tests in their
+separate runner. This also avoids scanning unrelated ignored directories such as `.pytest_cache`
+on restricted Windows checkouts. Run both commands when changing shared build/test configuration;
+do not delete shared caches or change permissions as an incidental test fix.
 
 `npm run build` invokes [scripts/prepare-pyodide.js](../scripts/prepare-pyodide.js), which downloads
 packages and refreshes `static/pyodide/`. Review changes to the tracked `pyodide-lock.json`.
+Transient package/HTTP download failures retry up to three times; exhausted or permanent failures
+stop preparation with the original cause instead of continuing with missing wheels.
 CI gives the build an 8192 MB Node heap; on a memory-constrained machine report the limitation
 instead of claiming the build passed. `hatch_build.py` also invokes npm install/build when packaging
 the Python project; `pip install .` is not a lightweight Python-only setup.
 
 ## What the existing CI actually checks
 
+- [Workflow and build-script CI](../.github/workflows/actions.yaml) validates workflow structure and
+  expression contexts with pinned, checksum-verified actionlint, then runs the Node 22 script tests.
+  It does not install application dependencies or publish a release.
+  The shared validation script narrowly suppresses actionlint 1.7.12's unsupported-key diagnostic
+  for `concurrency.queue` in `release.yml` ([upstream issue](https://github.com/rhysd/actionlint/issues/657));
+  all other diagnostics remain enabled.
 - [Frontend CI](../.github/workflows/frontend.yaml) runs Node 22. One job runs installation,
   `npm run format`, `npm run i18n:parse`, `git diff --exit-code`, and a production build. Another
   runs Vitest. The active workflow does not run `npm run check` or ESLint.
@@ -150,6 +162,11 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
   configured pre-commit hooks modify files. Run targeted checks first and inspect generated diffs.
 - Docker/release workflows can publish artifacts on configured branches/tags. Inspect the relevant
   workflow before treating a push or manual dispatch as a validation-only operation.
+- [Release](../.github/workflows/release.yml) compares package versions at the push's before/head
+  commits. An unchanged version or initial push skips publication. A missing nonzero before commit
+  fails explicitly. Notes over the size limit use an excerpt with an immutable full-changelog link.
+  [GitHub's `queue: max`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
+  retains up to 100 pending runs so a later documentation push does not replace a waiting version-change run.
 
 For documentation-only changes, validate links, paths, formatting, and the diff. Application startup
 and a full dependency install are not needed. For behavior changes, select meaningful tests and

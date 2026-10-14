@@ -52,9 +52,6 @@ jobs:
         python-version: ['3.11', '3.12']
     env:
       PYTHONUTF8: '1'
-      DATA_DIR: ${{ runner.temp }}/backend-tests/data
-      STATIC_DIR: ${{ runner.temp }}/backend-tests/static
-      DATABASE_URL: sqlite:///${{ runner.temp }}/backend-tests/data/webui.db
       WEBUI_SECRET_KEY: synthetic-backend-ci-secret
       ENABLE_DB_MIGRATIONS: 'false'
     steps:
@@ -76,6 +73,10 @@ jobs:
 
       - name: Execute backend suite
         # Invoke the synced Python directly so uv run cannot install the project.
+        env:
+          DATA_DIR: ${{ runner.temp }}/backend-tests/data
+          STATIC_DIR: ${{ runner.temp }}/backend-tests/static
+          DATABASE_URL: sqlite:///${{ runner.temp }}/backend-tests/data/webui.db
         run: |
           mkdir -p "$DATA_DIR" "$STATIC_DIR"
           .venv/bin/python -m pytest backend/tests -q --basetemp "${{ runner.temp }}/backend-pytest"

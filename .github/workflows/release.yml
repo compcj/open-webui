@@ -10,6 +10,8 @@ on:
 
 concurrency:
   group: release-${{ github.ref }}
+  # Retain version-changing pushes when later same-version pushes arrive.
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -22,37 +24,40 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      - name: Abort if package.json unchanged
-        run: |
-          git diff --cached --diff-filter=d package.json || {
-            echo "package.json not modified — skipping release"
-            exit 1
-          }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
 
-      - name: Read version
-        id: pkg
-        run: echo "version=$(jq -r '.version' package.json)" >> $GITHUB_OUTPUT
-
-      - name: Extract release notes from CHANGELOG
-        run: |
-          VER="${{ steps.pkg.outputs.version }}"
-          awk "/^## \[${VER}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" \
-            CHANGELOG.md > /tmp/release-notes.md
+      - name: Check version and prepare release notes
+        id: release
+        env:
+          RELEASE_BEFORE: ${{ github.event.before }}
+          RELEASE_HEAD: ${{ github.sha }}
+          RELEASE_NOTES_PATH: ${{ runner.temp }}/release-notes.md
+        run: node scripts/prepare-release.js
 
       - name: Publish GitHub release
+        if: steps.release.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_NOTES_PATH: ${{ runner.temp }}/release-notes.md
+          RELEASE_HEAD: ${{ github.sha }}
         run: |
-          if gh release view "v${{ steps.pkg.outputs.version }}" &>/dev/null; then
-            echo "Release v${{ steps.pkg.outputs.version }} already exists — skipping creation"
+          if gh release view "v${RELEASE_VERSION}" &>/dev/null; then
+            echo "Release v${RELEASE_VERSION} already exists — skipping creation"
           else
-            gh release create "v${{ steps.pkg.outputs.version }}" \
-              --title "v${{ steps.pkg.outputs.version }}" \
-              --notes-file /tmp/release-notes.md
+            gh release create "v${RELEASE_VERSION}" \
+              --target "$RELEASE_HEAD" \
+              --title "v${RELEASE_VERSION}" \
+              --notes-file "$RELEASE_NOTES_PATH"
           fi
 
       - name: Archive source
+        if: steps.release.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-archive
@@ -63,12 +68,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger Docker build
+        if: steps.release.outputs.changed == 'true'
         uses: actions/github-script@v8
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         with:
           script: |
-            github.rest.actions.createWorkflowDispatch({
+            await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'docker.yaml',
-              ref: 'v${{ steps.pkg.outputs.version }}',
+              ref: `v${process.env.RELEASE_VERSION}`,
             })
