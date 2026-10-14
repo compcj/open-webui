@@ -365,6 +365,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "ཚད་བཀག་ལན་གྱི་ཆེད་དུ་ཊོཀ་ཀེན་ངེས་ཅན་ལ་ཤུགས་སྣོན་ནམ་ཉེས་ཆད་གཏོང་བ། ཕྱོགས་ཞེན་གྱི་རིན་ཐང་ -100 ནས་ 100 བར་བཙིར་ངེས། (ཚུད་པ།) (སྔོན་སྒྲིག་མེད།)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "ཚེག་རྟགས་ཐོ་གཞུང་།",

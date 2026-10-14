@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Məhdudlaşdırılmış cavablar üçün müəyyən tokenlərin stimullaşdırılması və ya cəzalandırılması. Meyillilik (bias) dəyərləri -100 ilə 100 arasında (daxil olmaqla) məhdudlaşdırılacaq. (Standart: yoxdur)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "yığım · {{hash}}",
 	"Built-in": "Daxili",
 	"Bullet List": "Markerli Siyahı",

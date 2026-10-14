@@ -1103,6 +1103,8 @@ class ChatTable:
 
     @staticmethod
     def upsert_message_to_history(history: dict, message_id: str, message: dict) -> dict:
+        from open_webui.utils.chat_voice import public_voice_provenance
+
         messages = history.setdefault('messages', {})
 
         if message_id in messages:
@@ -1122,6 +1124,9 @@ class ChatTable:
                             **incoming_meta,
                         },
                     }
+            provenance = public_voice_provenance(messages[message_id], messages[message_id].get('user_id'))
+            if provenance and 'meta' in message:
+                message = {**message, 'meta': {**(message.get('meta') or {}), 'voice_provenance': provenance}}
             accounting = (messages[message_id].get('meta') or {}).get('tool_budget_accounting')
             if accounting and 'meta' in message:
                 # Server accounting must survive subsequent tool/assistant meta
@@ -1421,7 +1426,10 @@ class ChatTable:
                 'done': True,
                 'timestamp': int(time.time()),
                 'user_id': user.id,
-                'meta': {'voice': data['voice']},
+                'meta': {
+                    'voice': data['voice'],
+                    'voice_provenance': {'source': 'browser', 'user': {'id': user.id, 'name': user.name}},
+                },
             }
             if data['role'] == 'user':
                 message['user'] = {'id': user.id, 'name': user.name}
@@ -1493,6 +1501,14 @@ class ChatTable:
             previous = meta.get('voice')
             previous = previous if isinstance(previous, dict) else {}
             merged = {**previous, **voice}
+            provenance = meta.get('voice_provenance')
+            if (
+                isinstance(provenance, dict)
+                and provenance.get('source') == 'browser'
+                and message.get('role') == 'assistant'
+            ):
+                # Metadata edits cannot change the configured model of a stored transcript.
+                merged['model'] = message['model']
             if 'speech' in voice:
                 if not isinstance(voice['speech'], list) or not all(isinstance(item, dict) for item in voice['speech']):
                     raise HTTPException(400, 'Invalid voice speech metadata')

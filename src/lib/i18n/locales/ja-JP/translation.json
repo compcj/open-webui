@@ -374,6 +374,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "特定のトークンの強調またはペナルティを適用します。バイアス値は-100から100（包括的）にクランプされます。（デフォルト：なし）",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "ビルド · {{hash}}",
 	"Built-in": "組み込み",
 	"Bullet List": "箇条書きリスト",

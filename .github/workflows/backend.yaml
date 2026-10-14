@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Backend CI — Python formatting checks via Ruff
+# Backend CI — Python formatting, logic checks, and tests
 # Runs on pushes and PRs to main/dev when backend files change
 # ─────────────────────────────────────────────────────────────────────────────
 name: Python CI
@@ -41,3 +41,41 @@ jobs:
 
       - name: Detect logic errors
         run: ruff check --select=F --ignore=F401,F403,F405,F541,F811,F841 --output-format=github .
+
+  backend-tests:
+    name: Backend Tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    env:
+      PYTHONUTF8: '1'
+      DATA_DIR: ${{ runner.temp }}/backend-tests/data
+      STATIC_DIR: ${{ runner.temp }}/backend-tests/static
+      DATABASE_URL: sqlite:///${{ runner.temp }}/backend-tests/data/webui.db
+      WEBUI_SECRET_KEY: synthetic-backend-ci-secret
+      ENABLE_DB_MIGRATIONS: 'false'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.13.0'
+          enable-cache: true
+
+      - name: Install locked backend and test dependencies
+        # Installing the project would run its frontend-building Hatch hook.
+        run: uv sync --locked --no-install-project --python "${{ matrix.python-version }}"
+
+      - name: Execute backend suite
+        # Invoke the synced Python directly so uv run cannot install the project.
+        run: |
+          mkdir -p "$DATA_DIR" "$STATIC_DIR"
+          .venv/bin/python -m pytest backend/tests -q --basetemp "${{ runner.temp }}/backend-pytest"

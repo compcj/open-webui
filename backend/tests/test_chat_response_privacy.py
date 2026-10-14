@@ -233,6 +233,31 @@ def test_shared_projection_is_author_scoped_and_source_immutable(api, actor):
     assert api.source.model_dump() == before
 
 
+@pytest.mark.parametrize('valid', [True, False])
+@pytest.mark.parametrize('name', ['Writer', {'private': 'nested secret'}])
+def test_public_voice_provenance_is_allowlisted_and_matches_message_author(api, valid, name):
+    message = api.source.chat['history']['messages']['writer-assistant']
+    message['meta']['voice_provenance'] = {
+        'source': 'browser',
+        'user': {'id': 'writer' if valid else 'owner', 'name': name, 'email': 'private@example.test'},
+        'private': 'secret speech settings',
+    }
+    message['voice_provenance'] = {'source': 'server', 'private': 'forged public secret'}
+    before = api.source.model_dump()
+    projected = api.chat_response_for_user(api.source, 'owner').chat['history']['messages']['writer-assistant']
+    if valid:
+        assert projected['voice_provenance'] == {
+            'source': 'browser',
+            'user': {'id': 'writer', 'name': name if isinstance(name, str) else 'writer'},
+        }
+    else:
+        assert 'voice_provenance' not in projected
+    assert 'meta' not in projected
+    assert 'private@example.test' not in json.dumps(projected)
+    assert 'secret' not in json.dumps(projected)
+    assert api.source.model_dump() == before
+
+
 def test_ndjson_export_projects_each_batch_without_altering_server_snapshot(api):
     before = api.source.model_dump()
 
@@ -283,7 +308,7 @@ def test_owner_mutation_response_hides_writer_private_snapshot(api, route):
     if route in {'update_chat_message_by_id', 'delete_chat_message_by_id'}:
         kwargs['message_id'] = 'owner-user'
     if route == 'update_chat_message_by_id':
-        kwargs['form_data'] = SimpleNamespace(content='edited', voice=None)
+        kwargs['form_data'] = SimpleNamespace(content='edited', voice=None, model_fields_set={'content'})
     if route == 'update_shared_chat_access_by_id':
         kwargs['form_data'] = SimpleNamespace(access_grants=[], model_fields_set=set())
     result = asyncio.run(getattr(api, route)(**kwargs))

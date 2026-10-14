@@ -215,6 +215,8 @@ class ChatMessageTable:
     @staticmethod
     def _apply_message_data(message: ChatMessage, data: dict, now: int) -> None:
         """Overwrite only the fields the payload carries."""
+        from open_webui.utils.chat_voice import public_voice_provenance
+
         if 'role' in data:
             message.role = data['role']
         if 'parent_id' in data or 'parentId' in data:
@@ -231,8 +233,14 @@ class ChatMessageTable:
             message.sources = data.get('sources')
         if 'embeds' in data:
             message.embeds = data.get('embeds')
-        if 'meta' in data:
-            meta = copy.deepcopy(data.get('meta'))
+        if 'meta' in data or 'voice_provenance' in data:
+            meta = copy.deepcopy(data.get('meta') if 'meta' in data else message.meta)
+            provenance = public_voice_provenance({'meta': message.meta}, message.user_id) or public_voice_provenance(
+                data, message.user_id
+            )
+            if provenance:
+                # Retain public copy/import attribution and never replace a saved actor.
+                meta = {**(meta or {}), 'voice_provenance': provenance}
             accounting = (message.meta or {}).get('tool_budget_accounting')
             if accounting:
                 # Only the dedicated accounting writer may replace this map.
@@ -256,6 +264,13 @@ class ChatMessageTable:
 
     @staticmethod
     def _build_message(composite_id: str, chat_id: str, user_id: str, data: dict, now: int) -> ChatMessage:
+        from open_webui.utils.chat_voice import public_voice_provenance
+
+        meta = copy.deepcopy(data.get('meta'))
+        provenance = public_voice_provenance(data, user_id)
+        if provenance:
+            # Copies omit private meta; persist their allowlisted public attribution in the JSON column.
+            meta = {**(meta or {}), 'voice_provenance': provenance}
         return ChatMessage(
             id=composite_id,
             chat_id=chat_id,
@@ -268,7 +283,7 @@ class ChatMessageTable:
             files=data.get('files'),
             sources=data.get('sources'),
             embeds=data.get('embeds'),
-            meta=data.get('meta'),
+            meta=meta,
             done=data.get('done', True),
             status_history=data.get('status_history') or data.get('statusHistory'),
             error=data.get('error'),

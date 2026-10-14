@@ -385,6 +385,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Pojačava ili potiskuje određene tokene radi ograničavanja odgovora. Vrijednosti pristranosti bit će ograničene na raspon od -100 do 100, uključujući obje granice. (Zadano: ništa)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "verzija · {{hash}}",
 	"Built-in": "Ugrađena",
 	"Bullet List": "Lista s oznakama",

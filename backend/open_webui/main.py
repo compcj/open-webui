@@ -1681,7 +1681,6 @@ async def chat_completion(
                         controls,
                         model_controls.get(form_data['model'], {}),
                         advanced_params=request_params,
-                        model_params=target.params.model_dump() if target else {},
                     )
                 ctx = None
                 # Saved chats load the message after approved tool calls run, so their results are kept

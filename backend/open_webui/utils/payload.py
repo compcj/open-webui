@@ -33,7 +33,6 @@ def apply_model_controls(
     model_options: dict,
     *,
     advanced_params: dict | None = None,
-    model_params: dict | None = None,
 ) -> dict:
     """Explicit choices win; defaults defer to chat/personal advanced parameters.
 

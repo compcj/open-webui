@@ -385,6 +385,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Konkrētu tokenu pastiprinājums vai sodīšana ierobežotām atbildēm. Novirzes vērtības tiks ierobežotas starp -100 un 100 (ieskaitot). (Noklusējums: nav)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "būvējums · {{hash}}",
 	"Built-in": "Iebūvēta",
 	"Bullet List": "Aizzīmju saraksts",

@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Насърчава или потиска конкретни токени за ограничаване на отговорите. Стойностите на отклонението ще бъдат ограничени между -100 и 100 включително. (По подразбиране: няма)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "компилация · {{hash}}",
 	"Built-in": "Вградена",
 	"Bullet List": "Списък с водещи символи",

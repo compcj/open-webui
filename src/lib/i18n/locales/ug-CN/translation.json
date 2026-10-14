@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "چەكلەنگەن ئىنكاسلار ئۈچۈن بەلگىلىك سۆزلەرگە ئالاھىدە ئۈنۈم قوشۇش ياكى جازالاش. ئېغىش قىممىتى 100- دىن 100 گىچە بولىدۇ (كۆرسىتىلگەن قىممەت). (كۆڭۈلدىكى: يوق)",
 	"Brave": "",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "",

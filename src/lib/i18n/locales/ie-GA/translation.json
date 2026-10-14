@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Treisiú nó pionós a ghearradh ar chomharthaí sonracha as freagraí srianta. Déanfar luachanna laofachta a chlampáil idir -100 agus 100 (san áireamh). (Réamhshocrú: ceann ar bith)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "tógáil · {{hash}}",
 	"Built-in": "Ionsuite",
 	"Bullet List": "Liosta Urchair",

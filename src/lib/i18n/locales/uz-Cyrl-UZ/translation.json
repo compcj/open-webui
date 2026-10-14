@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Чекланган жавоблар учун махсус токенларни кучайтириш ёки жазолаш. Йўналтирилган қийматлар -100 ва 100 (шу жумладан) оралиғида маҳкамланади. (Бирламчи: йўқ)",
 	"Brave": "",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "",

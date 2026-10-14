@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "تقویت یا جریمه توکن\u200cهای خاص برای پاسخ\u200cهای محدود. مقادیر بایاس بین -100 و 100 (شامل) محدود خواهند شد. (پیش\u200cفرض: هیچ)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "بیلد · {{hash}}",
 	"Built-in": "داخلی",
 	"Bullet List": "لیست نشانه\u200cدار",

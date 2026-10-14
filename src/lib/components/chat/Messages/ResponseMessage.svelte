@@ -78,6 +78,10 @@
 	interface MessageType {
 		feedbackId?: string;
 		user_id?: string;
+		voice_provenance?: {
+			source: string;
+			user: { id: string; name: string };
+		};
 		id: string;
 		model: string;
 		content: string;
@@ -736,6 +740,14 @@
 						</span>
 					</Tooltip>
 				</Name>
+			{/if}
+
+			{#if message.voice_provenance?.source === 'browser'}
+				<div class="mb-1 text-xs text-gray-600 dark:text-gray-400">
+					{$i18n.t('Browser-submitted voice transcript by {{name}}', {
+						name: message.voice_provenance.user.name || message.voice_provenance.user.id
+					})}
+				</div>
 			{/if}
 
 			<div>

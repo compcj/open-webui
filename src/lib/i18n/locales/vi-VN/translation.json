@@ -365,6 +365,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Tăng cường hoặc phạt các token cụ thể cho các phản hồi bị ràng buộc. Giá trị bias sẽ được giới hạn trong khoảng từ -100 đến 100 (bao gồm). (Mặc định: không có)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "bản dựng · {{hash}}",
 	"Built-in": "Tích hợp sẵn",
 	"Bullet List": "Danh sách dấu đầu dòng",

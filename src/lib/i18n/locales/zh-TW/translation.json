@@ -365,6 +365,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "針對受限的回應，增強或懲罰特定 Token。偏差值將限制在 -100 到 100 (含)。 (預設：none)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "建置 · {{hash}}",
 	"Built-in": "內建",
 	"Bullet List": "無序清單",

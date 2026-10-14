@@ -385,6 +385,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "הגברה או הענשה של אסימונים מסוימים לקבלת תגובות מוגבלות. ערכי ההטיה יוגבלו לטווח שבין מינוס 100 ל-100 (כולל). (ברירת מחדל: ללא)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "גרסת build · {{hash}}",
 	"Built-in": "תנועה מובנית",
 	"Bullet List": "רשימת תבליטים",

@@ -395,6 +395,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Konkrečių žetonų skatinimas arba baudimas, siekiant apriboti atsakymus. Poslinkio reikšmės bus apribotos nuo -100 iki 100 (imtinai). (numatytasis: nėra)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "darinys · {{hash}}",
 	"Built-in": "Integruota",
 	"Bullet List": "Sąrašas su ženkleliais",

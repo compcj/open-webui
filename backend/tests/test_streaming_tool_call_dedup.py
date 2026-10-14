@@ -45,6 +45,8 @@ def runtime():
         'output': [],
         'prior_output': [],
         'response_tool_calls': [],
+        'new_tool_round': False,
+        'round_tool_call_ids': {},
         'tool_calls': [],
         'emit_response_completion_event': AsyncMock(),
         'save_to_chat': False,
@@ -246,7 +248,7 @@ async def test_concatenated_arguments_have_stable_distinct_ids_and_never_repeat_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('history', ['current-round', 'approval-resume'])
-async def test_actual_chat_delta_ingestion_never_renames_completed_provider_ids(runtime, history):
+async def test_replayed_chat_delta_keeps_completed_execution_ids(runtime, history):
     ns = runtime.ns
     frozen = completed('provider-A')
     ns['prior_output' if history == 'approval-resume' else 'output'] = copy.deepcopy(frozen)

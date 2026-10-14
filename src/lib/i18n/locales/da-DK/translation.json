@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Forøg eller reducer specifikke tokens for begrænsede svar. Bias-værdier vil blive begrænset til mellem -100 og 100 (inklusiv). (Standard: ingen)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "build · {{hash}}",
 	"Built-in": "Indbygget",
 	"Bullet List": "Punktliste",

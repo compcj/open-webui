@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Ενίσχυση ή επιβολή ποινής σε συγκεκριμένα token για περιορισμένες απαντήσεις. Οι τιμές μεροληψίας θα περιοριστούν μεταξύ -100 και 100 (συμπεριλαμβανομένων). (Προεπιλογή: καμία)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "δομή · {{hash}}",
 	"Built-in": "Ενσωματωμένη",
 	"Bullet List": "Λίστα με κουκκίδες",

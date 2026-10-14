@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Pagpabor o pagsilot sa piho nga mga token aron malimitahan ang mga tubag. Ang mga bili sa bias limitahan tali sa -100 ug 100, lakip ang duha ka utlanan. (Default: wala)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "Lista nga adunay mga bullet",

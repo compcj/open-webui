@@ -142,6 +142,8 @@ async def can_read_shared_chat(user, shared, db: AsyncSession) -> bool:
 
 def chat_response_for_user(chat, user_id: str | None = None) -> ChatResponse:
     """Project private settings for the actor without mutating server-side history."""
+    from open_webui.utils.chat_voice import public_voice_provenance
+
     data = ChatResponse.model_validate(chat, from_attributes=True).model_dump()
     owner_id = data['user_id']
     if user_id is None or owner_id != user_id:
@@ -155,6 +157,11 @@ def chat_response_for_user(chat, user_id: str | None = None) -> ChatResponse:
             continue
         author = message.get('user')
         author_id = message.get('user_id') or (author.get('id') if isinstance(author, dict) else None) or owner_id
+        provenance = public_voice_provenance(message, author_id)
+        message.pop('voice_provenance', None)
+        if provenance:
+            # Public transcript attribution is separate from private speech/request details.
+            message['voice_provenance'] = provenance
         if user_id is None or author_id != user_id:
             message.pop('meta', None)
     return ChatResponse.model_validate(data)
@@ -1644,7 +1651,15 @@ async def insert_chat_voice_message(
 ):
     if len(JSONCodec.dumps(form_data.voice)) > 100000:
         raise HTTPException(400, 'Voice metadata is too large')
-    chat, message_ids = await Chats.insert_voice_message(id, user, form_data.model_dump())
+    config = await Config.get_many('audio.realtime.enabled', 'audio.realtime.model', 'user.permissions')
+    voice_model = config.get('audio.realtime.model')
+    if not config.get('audio.realtime.enabled') or not isinstance(voice_model, str) or not voice_model.strip():
+        raise HTTPException(403, 'Realtime calls are disabled or not configured.')
+    if user.role != 'admin' and not await has_permission(user.id, 'chat.call', config.get('user.permissions') or {}):
+        raise HTTPException(403, 'Call permission denied.')
+    data = form_data.model_dump()
+    data['voice'] = {**data['voice'], 'model': voice_model}
+    chat, message_ids = await Chats.insert_voice_message(id, user, data)
     event_emitter = await get_event_emitter({'user_id': user.id, 'chat_id': id, 'message_id': form_data.id}, False)
     if event_emitter:
         # Shared delivery retains the existing live ACL guard and carries no private metadata.
@@ -1727,15 +1742,11 @@ async def update_chat_message_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    if 'voice' in form_data.model_fields_set:
+        raise HTTPException(400, 'Use the author-only message voice endpoint for voice metadata.')
     updates = {}
     if form_data.content is not None:
         updates['content'] = form_data.content
-    if form_data.voice is not None:
-        if len(JSONCodec.dumps(form_data.voice)) > 100000:
-            raise HTTPException(400, 'Voice metadata is too large')
-        if not await Chats.get_message_by_id_and_message_id(id, message_id):
-            raise HTTPException(404, ERROR_MESSAGES.NOT_FOUND)
-        updates['meta'] = {'voice': form_data.voice}
     if not updates:
         raise HTTPException(400, 'No message changes supplied')
     chat = await Chats.upsert_message_to_chat_by_id_and_message_id(id, message_id, updates)
@@ -1752,11 +1763,11 @@ async def update_chat_message_by_id(
     if event_emitter:
         await event_emitter(
             {
-                'type': 'chat:message' if form_data.content is not None else 'chat:message:voice',
+                'type': 'chat:message',
                 'data': {
                     'chat_id': id,
                     'message_id': message_id,
-                    **({'content': form_data.content} if form_data.content is not None else {'voice': form_data.voice}),
+                    'content': form_data.content,
                 },
             }
         )

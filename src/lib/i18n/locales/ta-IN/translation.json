@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "கட்டுப்படுத்தப்பட்ட பதில்களுக்கு குறிப்பிட்ட டோக்கன்களை உயர்த்துதல் அல்லது அபராதம் விதித்தல். சார்பு மதிப்புகள் -100 மற்றும் 100 (உள்ளடக்கம்) இடையே பிணைக்கப்படும். (இயல்பு: எதுவுமில்லை)",
 	"Brave": "துணிச்சலான",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "புல்லட் பட்டியல்",

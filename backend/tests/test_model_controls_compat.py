@@ -49,13 +49,8 @@ def test_controls_precedence_and_reset():
         ]
         == 'personal'
     )
-    assert (
-        apply(deepcopy(base), controls, {}, model_params={'reasoning_effort': 'model'})['custom_params'][
-            'reasoning_effort'
-        ]
-        == 'high'
-    )
-    assert apply(deepcopy(base), {}, {}, model_params={'reasoning_effort': 'model'}) == base
+    assert apply(deepcopy(base), controls, {})['custom_params']['reasoning_effort'] == 'high'
+    assert apply(deepcopy(base), {}, {}) == base
     with pytest.raises(HTTPException):
         apply({}, controls, {'reasoning': 'removed'})
 

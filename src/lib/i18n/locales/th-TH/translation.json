@@ -365,6 +365,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "เพิ่มหรือลดน้ำหนักโทเค็นเฉพาะสำหรับการตอบกลับที่มีข้อจำกัด ค่าไบแอสจะถูกจำกัดระหว่าง -100 ถึง 100 (รวม) (ค่าเริ่มต้น: ไม่มี)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "บิลด์ · {{hash}}",
 	"Built-in": "ในตัว",
 	"Bullet List": "รายการหัวข้อย่อย",

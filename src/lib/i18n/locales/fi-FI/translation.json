@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Tiettyjen tokeneiden tehostaminen tai rankaiseminen rajoitetuista vastauksista. Poikkeaman arvot rajoitetaan välille -100 ja 100 (mukaan lukien). (Oletus: ei mitään)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "koontiversio · {{hash}}",
 	"Built-in": "Sisäänrakennettu",
 	"Bullet List": "Luettelo",

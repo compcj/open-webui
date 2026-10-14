@@ -366,6 +366,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "특정 토큰을 가중 상향/하향하여 응답을 제약합니다. 값은 -100 ~ 100(기본값: 없음)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "빌드 · {{hash}}",
 	"Built-in": "내장",
 	"Bullet List": "글머리 기호 목록",

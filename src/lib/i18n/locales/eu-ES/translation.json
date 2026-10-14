@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Token zehatzak sustatu edo zigortzen ditu erantzunak mugatzeko. Joera-balioak -100 eta 100 artean mugatuko dira (biak barne). (Lehenetsia: bat ere ez)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "konpilazioa · {{hash}}",
 	"Built-in": "Integratua",
 	"Bullet List": "Buletdun zerrenda",

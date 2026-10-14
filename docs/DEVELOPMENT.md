@@ -34,7 +34,9 @@ uv sync --locked --no-install-project --python 3.11
 ```
 
 This installs locked dependencies and the default development group into `.venv` while omitting the
-project itself. `--locked` checks lock consistency; `--no-install-project` avoids this project's
+project itself. Pytest adds `backend` to its import path via `pyproject.toml`, so the documented test
+command works from the repository root without an editable project install or `PYTHONPATH` override.
+`--locked` checks lock consistency; `--no-install-project` avoids this project's
 frontend-building Hatch hook. See [uv's sync documentation](https://docs.astral.sh/uv/concepts/projects/sync/).
 Dependency installation can download large ML packages and may need platform-specific native
 libraries. Do not perform it for a documentation-only task or replace an existing shared environment
@@ -139,8 +141,10 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
 - [Frontend CI](../.github/workflows/frontend.yaml) runs Node 22. One job runs installation,
   `npm run format`, `npm run i18n:parse`, `git diff --exit-code`, and a production build. Another
   runs Vitest. The active workflow does not run `npm run check` or ESLint.
-- [Backend CI](../.github/workflows/backend.yaml) runs Ruff formatting and selected `F` logic checks
-  on Python 3.11/3.12. It does not currently run pytest or start the application.
+- [Backend CI](../.github/workflows/backend.yaml) runs Ruff formatting, selected `F` logic checks,
+  and the full `backend/tests` pytest suite on Python 3.11/3.12. Tests use locked dependencies with
+  `--no-install-project` and isolated data/static/SQLite paths. This does not start the full application
+  or verify external services.
 - Files ending in `.disabled` under `.github/workflows/` are not active workflows.
 - `npm run lint:frontend`, `npm run format`, `npm run format:backend`, `npm run i18n:parse`, and the
   configured pre-commit hooks modify files. Run targeted checks first and inspect generated diffs.

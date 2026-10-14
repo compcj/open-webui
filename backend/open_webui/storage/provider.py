@@ -253,15 +253,28 @@ class GCSStorageProvider(StorageProvider):
 
     def get_file(self, file_path: str) -> str:
         """Handles downloading of the file from GCS storage."""
+        temporary_path = None
         try:
             filename = file_path.removeprefix('gs://').split('/')[1]
             local_file_path = os.path.join(UPLOAD_DIR, filename)
             blob = self.bucket.get_blob(filename)
-            blob.download_to_filename(local_file_path)
-
+            with tempfile.NamedTemporaryFile(
+                mode='wb', prefix='.gcs-', dir=os.path.dirname(local_file_path), delete=False
+            ) as local_file:
+                temporary_path = local_file.name
+            # Close the temporary file before the SDK reopens it, including on Windows.
+            blob.download_to_filename(temporary_path)
+            os.replace(temporary_path, local_file_path)
+            temporary_path = None
             return local_file_path
         except NotFound as e:
             raise RuntimeError(f'Error downloading file from GCS: {e}')
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
     def delete_file(self, file_path: str) -> None:
         """Handles deletion of the file from GCS storage."""
@@ -317,15 +330,27 @@ class AzureStorageProvider(StorageProvider):
 
     def get_file(self, file_path: str) -> str:
         """Handles downloading of the file from Azure Blob Storage."""
+        temporary_path = None
         try:
             filename = file_path.split('/')[-1]
             local_file_path = os.path.join(UPLOAD_DIR, filename)
             blob_client = self.container_client.get_blob_client(filename)
-            with open(local_file_path, 'wb') as download_file:
+            with tempfile.NamedTemporaryFile(
+                mode='wb', prefix='.azure-', dir=os.path.dirname(local_file_path), delete=False
+            ) as download_file:
+                temporary_path = download_file.name
                 download_file.write(blob_client.download_blob().readall())
+            os.replace(temporary_path, local_file_path)
+            temporary_path = None
             return local_file_path
         except ResourceNotFoundError as e:
             raise RuntimeError(f'Error downloading file from Azure Blob Storage: {e}')
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
     def delete_file(self, file_path: str) -> None:
         """Handles deletion of the file from Azure Blob Storage."""

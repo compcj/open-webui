@@ -393,7 +393,7 @@ def merge_streamed_reasoning_details(target: list, details) -> None:
 
 
 def _deduplicate_tool_calls(tool_calls: list[dict], handled_output: list[dict]) -> list[dict]:
-    """Keep each provider call ID once; completed results remain authoritative across resumes."""
+    """Keep each execution call ID once; completed results remain authoritative across resumes."""
     seen = {
         item.get('call_id')
         for item in handled_output
@@ -5406,7 +5406,7 @@ async def streaming_chat_response_handler(response, ctx):
                             },
                         )
 
-                async def stream_body_handler(response, form_data):
+                async def stream_body_handler(response, form_data, *, new_tool_round=False):
                     nonlocal usage
                     nonlocal finish_reason
                     nonlocal output
@@ -5414,6 +5414,7 @@ async def streaming_chat_response_handler(response, ctx):
                     nonlocal last_response_id
 
                     response_tool_calls = []
+                    round_tool_call_ids = {}
 
                     delta_count = 0
                     delta_chunk_size = max(
@@ -5809,7 +5810,27 @@ async def streaming_chat_response_handler(response, ctx):
                                                     delta_tool_call.setdefault('function', {})
                                                     if delta_tool_call['function'].get('name') is None:
                                                         delta_tool_call['function']['name'] = ''
-                                                    delta_tool_call['id'] = delta_tool_call.get('id') or output_id('fc')
+                                                    provider_call_id = delta_tool_call.get('id')
+                                                    if new_tool_round and provider_call_id:
+                                                        # Providers may restart IDs (e.g. call_0) after each
+                                                        # executed round. Keep one mapping for this response,
+                                                        # including duplicate entries and argument fragments.
+                                                        # Saved execution queues still use the original IDs.
+                                                        if provider_call_id not in round_tool_call_ids:
+                                                            existing_call_ids = {
+                                                                item.get('call_id')
+                                                                for item in prior_output + output
+                                                                if item.get('type')
+                                                                in ('function_call', 'function_call_output')
+                                                            }
+                                                            round_tool_call_ids[provider_call_id] = (
+                                                                output_id('fc')
+                                                                if provider_call_id in existing_call_ids
+                                                                else provider_call_id
+                                                            )
+                                                        delta_tool_call['id'] = round_tool_call_ids[provider_call_id]
+                                                    else:
+                                                        delta_tool_call['id'] = provider_call_id or output_id('fc')
                                                     delta_arguments = delta_tool_call['function'].get('arguments')
                                                     if not isinstance(delta_arguments, str):
                                                         delta_tool_call['function']['arguments'] = (
@@ -6357,7 +6378,10 @@ async def streaming_chat_response_handler(response, ctx):
 
                 output_start = len(prior_output)
                 try:
-                    await stream_body_handler(response, form_data)
+                    # Approval/Continue already sent saved results to a new provider
+                    # request. Its first stream is a fresh round too; replaying the
+                    # stored execution queue remains guarded by deduplication.
+                    await stream_body_handler(response, form_data, new_tool_round=continuing)
                 finally:
                     if response.background:
                         await response.background()
@@ -6826,7 +6850,7 @@ async def streaming_chat_response_handler(response, ctx):
                                     prior_output.pop()
                             output = []
                             output_start = len(prior_output)
-                            await stream_body_handler(res, new_form_data)
+                            await stream_body_handler(res, new_form_data, new_tool_round=True)
                         elif getattr(res, 'status_code', 200) >= 400:
                             await emit_message_error(get_message_error_content(get_response_error_detail(res)))
                             break

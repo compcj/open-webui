@@ -374,6 +374,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Meningkatkan atau mengurangi bobot token tertentu untuk respons terbatas. Nilai bias akan dibatasi antara -100 dan 100 (inklusif). (Bawaan: tidak ada)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "build · {{hash}}",
 	"Built-in": "Bawaan",
 	"Bullet List": "Daftar Poin",

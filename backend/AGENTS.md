@@ -104,6 +104,10 @@ See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and
   persistence while retaining raw server approval history. Never persist prepared skill root text;
   exact root pages share request-local prepared content. Terminal sync caches include the actual
   outgoing actor, connection and context identity, not just the shared chat ID.
+- Voice transcripts retain public browser-source/author attribution across shared reads, events and
+  copies, independently of private speech metadata. Insertions require Realtime/call permission and
+  use the server-configured model. Generic message updates reject `voice`; the dedicated author-only
+  endpoint cannot change a stored transcript's model identity.
 - Exact builtin tool outputs are classified by registered type/identity, never by an external tool's
   name. `search_tools` retains complete schema entries; skill pages shrink at exact character offsets.
   Do not semantically summarize these results. If minimum valid content cannot fit, fail with an
@@ -235,5 +239,7 @@ Use `python -m ruff format --check <changed-python-files>` and the root guide's 
 logic check. Ruff uses a 120-column limit and single quotes; follow `pyproject.toml`. Existing
 pre-commit hooks and `npm run format:backend` modify files, so inspect their diffs if used.
 
-The active backend CI checks formatting and selected logic errors; it currently does not run pytest.
-Do not use a green CI badge as proof that backend behavior was tested.
+Pytest configures the `backend` import path in `pyproject.toml`; no editable install is needed.
+The active backend CI checks formatting, selected logic errors and the full pytest suite on Python
+3.11/3.12 with locked dependencies. Unit/integration fixtures do not establish live provider or
+deployment acceptance.

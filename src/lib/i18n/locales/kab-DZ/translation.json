@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Aserkem neɣ angal n yiqenṭaren ulmisen i tririt yettwaḥeṛsen. Azalen ibirusanen ad ttwakecfen gar 100 d 100 (asekcam). Lmut: ala",
 	"Brave": "",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "Tabdart s tlilac",

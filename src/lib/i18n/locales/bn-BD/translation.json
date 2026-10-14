@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "সীমিত উত্তরের জন্য নির্দিষ্ট টোকেনকে উৎসাহিত বা নিরুৎসাহিত করে। বায়াসের মান -100 থেকে 100-এর মধ্যে সীমাবদ্ধ থাকবে (উভয় সীমাসহ)। (ডিফল্ট: নেই)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "বিল্ড · {{hash}}",
 	"Built-in": "অন্তর্নির্মিত",
 	"Bullet List": "বুলেট তালিকা",

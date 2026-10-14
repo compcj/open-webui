@@ -385,6 +385,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Amplificarea sau penalizarea anumitor token-uri pentru răspunsuri constrânse. Valorile de bias vor fi limitate între -100 și 100 (inclusiv). (Implicit: niciuna)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "build · {{hash}}",
 	"Built-in": "Integrată",
 	"Bullet List": "Listă cu marcatori",

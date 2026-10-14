@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Konkreetsete tokenite võimendamine või karistamine piiratud vastuste jaoks. Kallutatuse väärtused piiratakse vahemikku -100 kuni 100 (kaasa arvatud). (Vaikimisi: puudub)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "järk · {{hash}}",
 	"Built-in": "Sisseehitatud",
 	"Bullet List": "Täpiline loend",

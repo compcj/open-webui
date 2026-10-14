@@ -1,4 +1,13 @@
-"""Convert legacy OpenClaw packages without rewriting immutable snapshots."""
+"""Convert legacy OpenClaw packages without rewriting immutable snapshots.
+
+Historical dependency: this revision calls skill_compat.canonical_snapshot.
+Changes to that helper must retain its legacy conversion contract and pass the
+fork/upstream upgrade fixtures; otherwise they change the behavior of this revision.
+Validation deliberately retains every changed row and converted snapshot before
+writing, including base64 file bodies. Large installations need memory for this
+full conversion set. This historical revision keeps that behavior; future data
+migrations should freeze their converters and use bounded validation/write passes.
+"""
 
 import uuid
 import sqlalchemy as sa

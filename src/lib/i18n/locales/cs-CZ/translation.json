@@ -395,6 +395,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Zvýhodňování nebo penalizace specifických tokenů pro omezené odpovědi. Hodnoty odchylky budou omezeny v rozmezí -100 až 100 (včetně). (Výchozí: žádné)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "sestavení · {{hash}}",
 	"Built-in": "Vestavěná",
 	"Bullet List": "Seznam s odrážkami",

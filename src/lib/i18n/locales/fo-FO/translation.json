@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Øking ella minking av ávísum tokenum fyri avmarkað svar. Bias-virði verða avmarkað til millum -100 og 100 (bæði íroknað). (Standard: einki)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "",
 	"Built-in": "",
 	"Bullet List": "Punktlisti",

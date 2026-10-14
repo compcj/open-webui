@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Specifikus tokenek növelése vagy büntetése korlátozott válaszokhoz. Az elfogultság értékei -100 és 100 között lesznek rögzítve (beleértve). (Alapértelmezett: nincs)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "build · {{hash}}",
 	"Built-in": "Beépített",
 	"Bullet List": "Felsorolás",

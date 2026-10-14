@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Potencia ou penaliza tokens específicos para obter respostas restrinxidas. Os valores de nesgo limítanse entre -100 e 100 (ambos incluídos). (Predeterminado: ningún)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "compilación · {{hash}}",
 	"Built-in": "Integrada",
 	"Bullet List": "Lista con viñetas",

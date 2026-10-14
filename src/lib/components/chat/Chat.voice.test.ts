@@ -213,6 +213,10 @@ describe('saved shared voice callbacks', () => {
 		const chat = createChat(history(), options);
 		await chat.add('user', 'spoken words', { model: 'voice' });
 		expect(chat.history().messages['voice-1'].content).toBe('spoken words');
+		expect(chat.history().messages['voice-1'].voice_provenance).toEqual({
+			source: 'browser',
+			user: { id: 'writer', name: 'Writer' }
+		});
 		fetcher.mockClear();
 		await chat.save('voice-1', { speech: [{ item_id: 'local' }] });
 		expect(chat.history().messages['voice-1'].meta.voice.speech).toEqual([{ item_id: 'local' }]);

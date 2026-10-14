@@ -385,6 +385,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "Potenziare o penalizzare token specifici per risposte vincolate. I valori di bias saranno limitati tra -100 e 100 (incluso). (Predefinito: nessuno)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "build · {{hash}}",
 	"Built-in": "Integrata",
 	"Bullet List": "Elenco puntato",

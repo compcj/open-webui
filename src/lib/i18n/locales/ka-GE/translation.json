@@ -375,6 +375,7 @@
 	"Boosting or penalizing specific tokens for constrained responses. Bias values will be clamped between -100 and 100 (inclusive). (Default: none)": "კონკრეტული ტოკენების გაძლიერება ან დაჯარიმება შეზღუდული პასუხებისთვის. მიკერძოების მნიშვნელობები შეიზღუდება -100-სა და 100-ს შორის (ჩათვლით). (ნაგულისხმევი: არცერთი)",
 	"Brave": "Brave",
 	"Browse and query knowledge bases": "",
+	"Browser-submitted voice transcript by {{name}}": "",
 	"build · {{hash}}": "ანაწყობი · {{hash}}",
 	"Built-in": "ჩადგმული",
 	"Bullet List": "დაუნომრავი სია",

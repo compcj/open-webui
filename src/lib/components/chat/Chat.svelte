@@ -2747,6 +2747,8 @@
 			done: true,
 			timestamp: Math.floor(Date.now() / 1000),
 			meta: { voice },
+			user_id: $user?.id,
+			voice_provenance: { source: 'browser', user: { id: $user?.id, name: $user?.name } },
 			...(role === 'assistant' ? { model: voice.model, modelName: voice.model, modelIdx: 0 } : {})
 		};
 		history.messages[id] = message;
