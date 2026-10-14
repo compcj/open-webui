@@ -219,10 +219,38 @@
 				(model?.info?.meta?.capabilities?.status_updates ?? true)
 			);
 		});
-	$: hasVisibleStatus = statusEntries.length > 0 && !(statusEntries.at(-1)?.hidden ?? false);
+	$: latestStatus = statusEntries.at(-1);
+	$: hasActiveStatus =
+		latestStatus &&
+		!latestStatus.hidden &&
+		!latestStatus.done &&
+		Boolean(
+			latestStatus.description?.trim() ||
+			['context_compaction', 'tool_result_compaction', 'knowledge_search'].includes(
+				latestStatus.action
+			) ||
+			(['web_search_queries_generated', 'queries_generated'].includes(latestStatus.action) &&
+				latestStatus.queries) ||
+			(latestStatus.action === 'sources_retrieved' && latestStatus.count !== undefined)
+		);
 	$: visibleResponseContent =
 		getOutputText(message.output) || removeAllDetails(message.content ?? '');
-	$: hasResponseContent = Boolean((message.content ?? '').trim() || message.output?.length);
+	$: outputDisplayItems = buildOutputDisplayItems(message.output ?? []);
+	// Empty Responses envelopes do not render any content yet.
+	$: hasResponseContent = message.output?.length
+		? outputDisplayItems.some(
+				(item) =>
+					item.type !== 'file' ||
+					item.item?.displayed ||
+					$settings?.terminalFileDisplay === 'inline'
+			)
+		: Boolean((message.content ?? '').trim());
+	$: isAwaitingUserInput = message.output?.some(
+		(item) =>
+			item?.type === 'function_call' &&
+			item.name === 'ask_user' &&
+			(item.status === 'pending' || item.status === 'in_progress')
+	);
 
 	let edit = false;
 	let editedContent = '';
@@ -232,9 +260,7 @@
 		? getUnrenderedMessageFiles(
 				message.files,
 				message.output?.length
-					? buildOutputDisplayItems(message.output)
-							.filter((item) => item.type === 'message')
-							.map((item) => item.text)
+					? outputDisplayItems.filter((item) => item.type === 'message').map((item) => item.text)
 					: removeAllDetails(message.content ?? ''),
 				($settings?.renderMarkdownInAssistantMessages ?? true) && message.error !== true && !edit,
 				{
@@ -930,12 +956,21 @@
 								/>
 							{/if}
 
-							{#if !message.done && !message.error && (hasResponseContent || !hasVisibleStatus)}
-								<div class="text-[0.9375rem] leading-relaxed">
-									<span
-										class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-cursor-pulse align-text-bottom"
-									></span>
-								</div>
+							{#if !message.done && !message.error && !isAwaitingUserInput}
+								{#if hasResponseContent}
+									<div class="text-[0.9375rem] leading-relaxed">
+										<span
+											class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-cursor-pulse align-text-bottom"
+										></span>
+									</div>
+								{:else if !hasActiveStatus}
+									<div
+										role="status"
+										class="shimmer text-gray-500 dark:text-gray-400 text-[0.9375rem] leading-relaxed"
+									>
+										{$i18n.t('Thinking...')}
+									</div>
+								{/if}
 							{/if}
 
 							{#if message?.error}
