@@ -1538,9 +1538,10 @@ async def generate_chat_completion(
     # All model parameters and injected messages are now resolved. Count the
     # OpenAI-shaped request before Azure/Responses transport conversion.
     from open_webui.utils.context_compaction_dispatch import apply_context_compaction
-    from open_webui.utils.gemini import normalize_gemini_tool_schemas
+    from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
 
-    payload = normalize_gemini_tool_schemas(payload)
+    compatibility = await resolve_tool_schema_compatibility(model_info, get_model=Models.get_model_by_id)
+    payload = normalize_gemini_tool_schemas(payload, compatibility=compatibility)
     payload = await apply_context_compaction(request, user, payload, metadata, form_data['model'])
 
     if api_config.get('azure') or api_config.get('provider') == 'azure':
@@ -1842,7 +1843,8 @@ async def responses(
     model_id = form_data.model
 
     # Enforce per-model access control
-    await check_model_access(user, await Models.get_model_by_id(model_id), BYPASS_MODEL_ACCESS_CONTROL)
+    model_info = await Models.get_model_by_id(model_id)
+    await check_model_access(user, model_info, BYPASS_MODEL_ACCESS_CONTROL)
 
     if model_id:
         models = request.app.state.OPENAI_MODELS
@@ -1855,6 +1857,10 @@ async def responses(
     url, key, api_config = await get_openai_connection(idx)
 
     payload['model'] = strip_provider_model_prefix(payload['model'], api_config.get('prefix_id'))
+    from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
+
+    compatibility = await resolve_tool_schema_compatibility(model_info, get_model=Models.get_model_by_id)
+    payload = normalize_gemini_tool_schemas(payload, compatibility=compatibility)
     body = JSONCodec.dumps(payload)
 
     r = None

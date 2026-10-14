@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ModelSettingsLabel from './ModelSettingsLabel.svelte';
+	import ToolSchemaCompatibility from './ToolSchemaCompatibility.svelte';
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 	import { beforeNavigate, goto } from '$app/navigation';
@@ -171,6 +172,7 @@
 			profile_image_url: `${WEBUI_BASE_URL}/static/favicon.png`,
 			background_image_url: null as string | null,
 			context_window: null as number | null,
+			tool_schema_compatibility: null,
 			voice: undefined as { voice?: string } | undefined,
 			voice_avatar: null as VoiceAvatarConfig | null,
 			description: '',
@@ -1274,6 +1276,15 @@
 										</p>
 									</div>
 								</div>
+
+								<ToolSchemaCompatibility
+									baseModelId={info.base_model_id ?? null}
+									models={$models}
+									bind:value={
+										() => info.meta.tool_schema_compatibility ?? null,
+										(value) => (info.meta.tool_schema_compatibility = value)
+									}
+								/>
 
 								<div class="flex min-w-0 flex-col gap-2">
 									{#if preset}

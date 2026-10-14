@@ -57,12 +57,11 @@ async def generate_direct_chat_completion(
 
     metadata = form_data.pop('metadata', {})
     from open_webui.utils.context_compaction_dispatch import apply_context_compaction
-    from open_webui.utils.gemini import normalize_gemini_tool_schemas
+    from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
 
-    # Direct descriptors retain the unprefixed ID; the browser strips its
-    # connection prefix later, after this request's budget has been checked.
-    provider_model_id = (models.get(form_data['model'], {}).get('openai') or {}).get('id')
-    form_data = normalize_gemini_tool_schemas(form_data, model_id=provider_model_id)
+    # Browser-direct requests use only their descriptor's explicit metadata.
+    compatibility = await resolve_tool_schema_compatibility(models.get(form_data['model']))
+    form_data = normalize_gemini_tool_schemas(form_data, compatibility=compatibility)
     form_data = await apply_context_compaction(request, user, form_data, metadata, form_data['model'])
 
     user_id = metadata.get('user_id')

@@ -19,6 +19,11 @@
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Textarea from './common/Textarea.svelte';
 	import { normalizeTags } from '$lib/utils/tags';
+	import {
+		normalizeDirectToolSchemaConfig,
+		type ToolSchemaCompatibility
+	} from '$lib/utils/model-tool-schema';
+	import DirectToolSchemaCompatibility from './DirectToolSchemaCompatibility.svelte';
 
 	export let onSubmit: Function = () => {};
 	export let onDelete: Function = () => {};
@@ -51,6 +56,7 @@
 	let modelId = '';
 	let modelIds: string[] = [];
 	let availableModelIds: string[] = [];
+	let modelToolSchemaCompatibility: Record<string, ToolSchemaCompatibility> = {};
 
 	let loading = false;
 	let showDeleteConfirmDialog = false;
@@ -240,6 +246,7 @@
 				tags: tags,
 				prefix_id: prefixId,
 				model_ids: modelIds,
+				...(direct ? { model_tool_schema_compatibility: modelToolSchemaCompatibility } : {}),
 				connection_type: connectionType,
 				auth_type,
 				...(!direct && !ollama ? { forward_cookies: forwardCookies } : {}),
@@ -266,6 +273,7 @@
 		showAdvanced = false;
 		tags = [];
 		modelIds = [];
+		modelToolSchemaCompatibility = {};
 		headers = '';
 		enable = true;
 		connectionType = 'external';
@@ -276,6 +284,9 @@
 
 	const init = () => {
 		availableModelIds = [];
+		modelToolSchemaCompatibility = normalizeDirectToolSchemaConfig(
+			connection?.config?.model_tool_schema_compatibility
+		);
 		forwardCookies = connection?.config?.forward_cookies ?? false;
 		if (connection) {
 			url = connection.url;
@@ -623,6 +634,13 @@
 										</div>
 									</div>
 								</div>
+							{/if}
+
+							{#if direct && !ollama}
+								<DirectToolSchemaCompatibility
+									bind:value={modelToolSchemaCompatibility}
+									modelIds={[...modelIds, ...availableModelIds]}
+								/>
 							{/if}
 
 							<div class="flex gap-2 mt-2">

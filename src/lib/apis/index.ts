@@ -3,6 +3,7 @@ import { config } from '$lib/stores';
 import { WEBUI_BASE_URL } from '$lib/constants';
 import { convertOpenApiToToolPayload, resolveSchema } from '$lib/utils';
 import { normalizeTags } from '$lib/utils/tags';
+import { normalizeDirectToolSchemaConfig } from '$lib/utils/model-tool-schema';
 import { getOpenAIModelsDirect } from './openai';
 
 const TOOL_SERVER_FETCH_TIMEOUT = 10000;
@@ -70,10 +71,12 @@ export const getModels = async (
 			const OPENAI_API_CONFIGS = connections.OPENAI_API_CONFIGS;
 
 			const requests = [];
+			const requestIndexes: string[] = [];
 			for (const idx in OPENAI_API_BASE_URLS) {
 				const url = OPENAI_API_BASE_URLS[idx];
 
 				if (idx.toString() in OPENAI_API_CONFIGS) {
+					requestIndexes.push(idx);
 					const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
 
 					const enable = apiConfig?.enable ?? true;
@@ -130,8 +133,8 @@ export const getModels = async (
 
 			const responses = await Promise.all(requests);
 
-			for (const idx in responses) {
-				const response = responses[idx];
+			for (const [responseIndex, response] of responses.entries()) {
+				const idx = requestIndexes[responseIndex];
 				const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
 
 				let models = Array.isArray(response) ? response : (response?.data ?? []);
@@ -176,7 +179,24 @@ export const getModels = async (
 				: model;
 		}
 
-		models = Object.values(modelsMap);
+		models = Object.values(modelsMap).map((model: any) => {
+			if (!model.direct) return model;
+			const modes = normalizeDirectToolSchemaConfig(
+				(connections as any).OPENAI_API_CONFIGS?.[model.urlIdx]?.model_tool_schema_compatibility
+			);
+			// Apply the personal choice after merging matching server IDs. Neither
+			// provider metadata nor a saved server model can enable direct conversion.
+			return {
+				...model,
+				info: {
+					...model.info,
+					meta: {
+						...model.info?.meta,
+						tool_schema_compatibility: modes[model.openai.id] === 'gemini' ? 'gemini' : 'default'
+					}
+				}
+			};
+		});
 	}
 
 	return models;
@@ -1808,6 +1828,7 @@ export interface ModelMeta {
 	profile_image_url?: string;
 	available_reasoning_effort?: string[];
 	context_window?: number | null;
+	tool_schema_compatibility?: 'default' | 'gemini' | null;
 	default_reasoning_effort?: string;
 	background_image_url?: string | null;
 	tags?: { name: string }[];

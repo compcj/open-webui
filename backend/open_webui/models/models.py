@@ -213,6 +213,10 @@ class ModelMeta(BaseModel):
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
     available_reasoning_effort: list[str] | None = None
+    tool_schema_compatibility: Literal['default', 'gemini'] | None = Field(
+        default=None,
+        description='Explicit tool schema compatibility; absent inherits the base model, then defaults to no conversion.',
+    )
     context_window: int | None = Field(
         default=None,
         gt=0,

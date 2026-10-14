@@ -1,7 +1,6 @@
 """Compatibility for Gemini tools sent through OpenAI-compatible connections."""
 
 import json
-import re
 from copy import deepcopy
 
 
@@ -79,6 +78,10 @@ def _normalize_schema(schema):
     # Native Gemini Schema has no plural examples field. Visit schema nodes
     # only, so properties with this name and literal default/example data survive.
     schema.pop('examples', None)
+    # JSON Schema ignores string patterns on other types; native Gemini
+    # restricts pattern to strings. Keep the constraint on string alternatives.
+    if schema.get('type') in ('integer', 'number', 'boolean', 'array', 'object', 'null'):
+        schema.pop('pattern', None)
 
     for child in _schema_children(schema):
         _normalize_schema(child)
@@ -191,10 +194,34 @@ def _normalize_string_constants(schema):
         _normalize_string_constants(child)
 
 
-def normalize_gemini_tool_schemas(payload: dict, *, model_id: str | None = None) -> dict:
+def _model_field(value, name, default=None):
+    return value.get(name, default) if isinstance(value, dict) else getattr(value, name, default)
+
+
+async def resolve_tool_schema_compatibility(model, *, get_model=None) -> str:
+    """Use saved metadata or a direct descriptor; never infer from provider IDs."""
+    seen = set()
+    while model is not None:
+        info = _model_field(model, 'info')
+        info = model if info is None else info
+        mode = _model_field(_model_field(info, 'meta'), 'tool_schema_compatibility')
+        if mode is not None:
+            return 'gemini' if mode == 'gemini' else 'default'
+        # A browser descriptor's IDs/base pointers cannot authorize a server
+        # model lookup. Its explicit metadata is the entire configuration.
+        if _model_field(model, 'direct', False) or get_model is None:
+            break
+        base_id = _model_field(info, 'base_model_id')
+        if not isinstance(base_id, str) or not base_id or base_id in seen:
+            break
+        seen.add(base_id)
+        model = await get_model(base_id)
+    return 'default'
+
+
+def normalize_gemini_tool_schemas(payload: dict, *, compatibility: str | None = None) -> dict:
     """Copy Gemini function parameters, keeping cached/shared tool specs intact."""
-    model = model_id if model_id is not None else payload.get('model')
-    if not isinstance(model, str) or not re.search(r'(^|[./:])gemini(?:[-./:]|$)', model, re.IGNORECASE):
+    if compatibility != 'gemini':
         return payload
     if not isinstance(payload.get('tools'), list):
         return payload
