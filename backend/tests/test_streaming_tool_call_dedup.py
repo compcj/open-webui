@@ -206,7 +206,7 @@ async def test_concatenated_arguments_have_stable_distinct_ids_and_never_repeat_
     assert len(executed) == 2 and len({item['id'] for item in executed}) == 2
     assert [item['function']['arguments'] for item in executed] == ['{"record":1}', '{"record":2}']
     for item in ns['output']:
-        if item['type'] == 'function_call':
+        if item['type'] == 'function_call' and item.get('call_id') in {call['id'] for call in executed}:
             item['status'] = 'completed'
     ns['output'].extend(completed(item['id'])[1] for item in executed)
     load_functions(
@@ -345,6 +345,62 @@ async def test_live_fragmented_new_provider_call_keeps_two_intended_split_effect
     executed = [entry.args[-1] for entry in ns['execute_tool_call'].call_args_list]
     assert [entry['function']['arguments'] for entry in executed] == ['{"record":1}', '{"record":2}']
     assert len({entry['id'] for entry in executed}) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+@pytest.mark.parametrize('approval', [False, True])
+async def test_split_fetch_url_retires_streamed_placeholder_before_execution(runtime, api, approval):
+    ns = runtime.ns
+    arguments = '{"url":"https://example.test/one"}{"url":"https://example.test/two"}'
+    provider_call = {'id': 'fetch-parent', 'function': {'name': 'fetch_url', 'arguments': arguments}}
+    if api == 'chat':
+        await ns['ingest_delta']([{'index': 0, **copy.deepcopy(provider_call)}])
+    else:
+        ns['output'] = [
+            {
+                'type': 'function_call',
+                'id': 'fetch-item',
+                'call_id': 'fetch-parent',
+                'name': 'fetch_url',
+                'arguments': arguments,
+                'status': 'completed',
+            }
+        ]
+
+    if approval:
+        load_functions(ns, 'utils/middleware.py', {'pause_for_tool_approval'})
+        load_functions(ns, 'utils/tool_approval.py', {'pending_tool_calls'})
+        ns['Chats'] = SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock())
+        ns['is_saved_chat_id'] = lambda chat_id: chat_id == 'saved-chat'
+        ns['event_emitter'] = AsyncMock()
+        ns['metadata'] = {
+            'chat_id': 'saved-chat',
+            'message_id': 'reply',
+            'params': {'tool_approval_mode': 'ask'},
+        }
+
+    await ns['queue_stream_calls']()
+    children = copy.deepcopy(ns['tool_calls'][0])
+    await ns['execute_queued_calls']()
+    parent = next(item for item in ns['output'] if item.get('call_id') == 'fetch-parent')
+    assert parent['status'] == 'superseded'
+    assert parent['arguments'] == arguments
+    child_ids = {item['id'] for item in children}
+    assert len(child_ids) == 2 and 'fetch-parent' not in child_ids
+    if approval:
+        assert {item['call_id'] for item in ns['pending_tool_calls'](ns['output'])} == child_ids
+        ns['execute_tool_call'].assert_not_awaited()
+    else:
+        assert {entry.args[-1]['id'] for entry in ns['execute_tool_call'].call_args_list} == child_ids
+    if api == 'chat':
+        finished_parent = [
+            entry.args[0]['item']
+            for entry in ns['emit_response_completion_event'].call_args_list
+            if entry.args[0]['type'] == 'response.output_item.done'
+            and entry.args[0]['item'].get('call_id') == 'fetch-parent'
+        ]
+        assert finished_parent[-1]['status'] == 'superseded'
 
 
 @pytest.mark.asyncio

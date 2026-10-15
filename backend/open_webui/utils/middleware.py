@@ -434,6 +434,7 @@ def _deduplicate_tool_calls(tool_calls: list[dict], handled_output: list[dict]) 
 
 def _split_tool_calls(
     tool_calls: list[dict],
+    output: list[dict] | None = None,
 ) -> list[dict]:
     """Expand tool calls whose arguments contain multiple back-to-back JSON objects.
 
@@ -442,7 +443,9 @@ def _split_tool_calls(
         '{"query":"A","count":5}{"query":"B","count":5}'
 
     Each such tool call is split into separate entries so each gets executed
-    independently. Single-object arguments pass through unchanged.
+    independently. Single-object arguments pass through unchanged. When output
+    is provided, retire the streamed parent without discarding its original
+    identity/arguments, which are still needed to deduplicate replays.
     """
 
     def split_json_objects(raw: str) -> list[str]:
@@ -480,6 +483,10 @@ def _split_tool_calls(
             expanded.append(tool_call)
         else:
             provider_call_id = tool_call.get('id') or f'call_{uuid4().hex[:24]}'
+            for item in output or []:
+                if item.get('type') == 'function_call' and (item.get('call_id') or item.get('id')) == provider_call_id:
+                    # Only the split children execute and receive results.
+                    item['status'] = 'superseded'
             for ordinal, argument in enumerate(split_arguments):
                 cloned = copy.deepcopy(tool_call)
                 # Preserve distinct intentional subcalls without making a replay look new.
@@ -4188,7 +4195,7 @@ async def pause_for_tool_approval(chat_id: str, message_id: str, output: list[di
             item.get('type') == 'function_call'
             and item.get('call_id')
             and item.get('call_id') not in result_call_ids
-            and item.get('status') != 'rejected'
+            and item.get('status') not in {'rejected', 'superseded'}
         ):
             if not has_pending_approval:
                 item['status'] = 'pending'
@@ -6359,13 +6366,15 @@ async def streaming_chat_response_handler(response, ctx):
                         from open_webui.utils.gemini import mark_gemini_tool_calls
 
                         mark_gemini_tool_calls(response_tool_calls, output, metadata, form_data.get('model', ''))
+                        split_response_tool_calls = _split_tool_calls(response_tool_calls, output)
                         for tc in response_tool_calls:
                             call_id = tc.get('id', '')
                             arguments = tc.get('function', {}).get('arguments', '{}')
                             for output_index, item in enumerate(output):
                                 if item.get('type') == 'function_call' and item.get('call_id') == call_id:
                                     item['arguments'] = arguments
-                                    item['status'] = 'completed'
+                                    if item.get('status') != 'superseded':
+                                        item['status'] = 'completed'
                                     await emit_response_completion_event(
                                         {
                                             'type': 'response.function_call_arguments.done',
@@ -6383,7 +6392,7 @@ async def streaming_chat_response_handler(response, ctx):
                                     )
                                     break
                         if response_tool_calls:
-                            tool_calls.append(_split_tool_calls(response_tool_calls))
+                            tool_calls.append(split_response_tool_calls)
 
                     # Responses API path: extract function_call items from output
                     if not response_tool_calls and output:
@@ -6421,7 +6430,7 @@ async def streaming_chat_response_handler(response, ctx):
                             mark_gemini_tool_calls(
                                 responses_api_tool_calls, output, metadata, form_data.get('model', '')
                             )
-                            tool_calls.append(_split_tool_calls(responses_api_tool_calls))
+                            tool_calls.append(_split_tool_calls(responses_api_tool_calls, output))
 
                 output_start = len(prior_output)
                 try:

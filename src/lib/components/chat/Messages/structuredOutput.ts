@@ -380,6 +380,12 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			return;
 		}
 
+		// A split provider call keeps its raw arguments for replay deduplication;
+		// only its executable children have results and belong in the tool list.
+		if (item.type === 'function_call' && item.status === 'superseded') {
+			return;
+		}
+
 		if (item.type === 'function_call_output') {
 			const inlineFile = getInlineFileFromToolOutput(toolCallByCallId[item.call_id ?? ''], item);
 			if (inlineFile) {
