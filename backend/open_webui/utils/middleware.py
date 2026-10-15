@@ -5360,6 +5360,7 @@ async def streaming_chat_response_handler(response, ctx):
             usage = None
             finish_reason = None
             last_response_id = None
+            stream_error_reported = bool(continuing and (message or {}).get('error'))
 
             def full_output():
                 if (
@@ -5405,6 +5406,18 @@ async def streaming_chat_response_handler(response, ctx):
                         'data': {'error': {'content': error_content}},
                     }
                 )
+
+            async def update_stream_error(error):
+                nonlocal stream_error_reported
+                stream_error_reported = error is not None
+                recovery = {'done': False} if error is None else {}
+                if save_to_chat:
+                    await Chats.upsert_message_to_chat_by_id_and_message_id(
+                        metadata['chat_id'],
+                        metadata['message_id'],
+                        {'error': {'content': error} if error is not None else None, **recovery},
+                    )
+                await event_emitter({'type': 'chat:completion', 'data': {'error': error, **recovery}})
 
             reasoning_tags_param = metadata.get('params', {}).get('reasoning_tags')
             DETECT_REASONING_TAGS = reasoning_tags_param is not False
@@ -5465,6 +5478,9 @@ async def streaming_chat_response_handler(response, ctx):
 
                     response_tool_calls = []
                     round_tool_call_ids = {}
+                    # Gateways can emit an error and still recover within this stream.
+                    # Only publish it if no later provider success supersedes it.
+                    pending_stream_error = None
 
                     delta_count = 0
                     delta_chunk_size = max(
@@ -5618,18 +5634,8 @@ async def streaming_chat_response_handler(response, ctx):
                                 raw_obj = JSONCodec.loads(data)
                                 raw_error = raw_obj.get('error') if isinstance(raw_obj, dict) else None
                                 if raw_error:
-                                    if save_to_chat:
-                                        try:
-                                            await Chats.upsert_message_to_chat_by_id_and_message_id(
-                                                metadata['chat_id'],
-                                                metadata['message_id'],
-                                                {
-                                                    'error': {'content': raw_error},
-                                                },
-                                            )
-                                        except Exception:
-                                            pass
-                                    await event_emitter({'type': 'chat:completion', 'data': {'error': raw_error}})
+                                    log.error('Provider returned error (streaming): %s', raw_error)
+                                    pending_stream_error = raw_error
                             except Exception:
                                 pass
                             continue
@@ -5734,23 +5740,18 @@ async def streaming_chat_response_handler(response, ctx):
                                             log.error(
                                                 'Provider returned error (streaming): %s', response_metadata['error']
                                             )
-                                            if save_to_chat:
-                                                try:
-                                                    await Chats.upsert_message_to_chat_by_id_and_message_id(
-                                                        metadata['chat_id'],
-                                                        metadata['message_id'],
-                                                        {
-                                                            'error': {'content': response_metadata['error']},
-                                                        },
-                                                    )
-                                                except Exception:
-                                                    pass
-                                            await event_emitter(
-                                                {
-                                                    'type': 'chat:completion',
-                                                    'data': {'error': response_metadata['error']},
-                                                }
-                                            )
+                                            pending_stream_error = response_metadata['error']
+                                            # Shared chats also project response events into message errors.
+                                            # Do not leak a provisional failure through that second path.
+                                            continue
+                                        elif (
+                                            response_data_type == 'response.completed'
+                                            and data.get('response', {}).get('status') in (None, 'completed')
+                                            and not data.get('response', {}).get('error')
+                                        ):
+                                            pending_stream_error = None
+                                            if stream_error_reported:
+                                                await update_stream_error(None)
 
                                     await emit_response_completion_event(data)
 
@@ -5783,29 +5784,15 @@ async def streaming_chat_response_handler(response, ctx):
                                         error = data.get('error', {})
                                         if error:
                                             log.error('Provider returned error (streaming): %s', error)
-                                            if save_to_chat:
-                                                try:
-                                                    await Chats.upsert_message_to_chat_by_id_and_message_id(
-                                                        metadata['chat_id'],
-                                                        metadata['message_id'],
-                                                        {
-                                                            'error': {'content': error},
-                                                        },
-                                                    )
-                                                except Exception:
-                                                    pass
-                                            await event_emitter(
-                                                {
-                                                    'type': 'chat:completion',
-                                                    'data': {
-                                                        'error': error,
-                                                    },
-                                                }
-                                            )
+                                            pending_stream_error = error
                                         continue
 
                                     if choices[0].get('finish_reason'):
                                         finish_reason = choices[0]['finish_reason']
+                                        if finish_reason in {'stop', 'length', 'tool_calls', 'function_call'}:
+                                            pending_stream_error = None
+                                            if stream_error_reported:
+                                                await update_stream_error(None)
 
                                     delta = choices[0].get('delta', {})
                                     delta_type = 'content'
@@ -6333,6 +6320,8 @@ async def streaming_chat_response_handler(response, ctx):
                                 log.debug('Error: %s', e)
                                 continue
                     await flush_pending_delta_data()
+                    if pending_stream_error is not None:
+                        await update_stream_error(pending_stream_error)
 
                     if output:
                         # Clean up the last message item

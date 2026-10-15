@@ -3814,6 +3814,10 @@
 		if (error) {
 			if (shared) message.error = error;
 			else handleOpenAIError(error, message);
+		} else if (error === null) {
+			// The backend explicitly confirmed recovery in a later provider round.
+			message.error = null;
+			if (done === false) message.done = false;
 		}
 
 		// Store raw OR-aligned output items from backend
