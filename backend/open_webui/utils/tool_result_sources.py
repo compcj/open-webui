@@ -65,7 +65,12 @@ def batch_id(call_ids: list[str]) -> str:
 
 def registered_tool_kind(name: str, tools: dict | None, *, default: str = 'native') -> str:
     """Only a trusted server registration can opt a builtin into exact reductions."""
-    exact_kinds = {'search_tools': 'tool_schema', 'view_skill': 'skill_page', 'read_skill_file': 'skill_page'}
+    exact_kinds = {
+        'search_tools': 'tool_schema',
+        'view_skill': 'skill_page',
+        'read_skill_file': 'skill_page',
+        'grep_skill_files': 'skill_search',
+    }
     registered = (tools or {}).get(name) or {}
     if registered.get('type') == 'builtin' and registered.get('tool_id') == f'builtin:{name}':
         return exact_kinds.get(name, default)

@@ -17,6 +17,7 @@ from open_webui.utils.skill_files import (
     bounded_skill_manifest,
     format_skill_content,
     skill_content_page,
+    skill_overview,
 )
 
 import pytest
@@ -153,10 +154,27 @@ def skill_block(monkeypatch):
         if isinstance(n, ast.If)
         and ast.unparse(n.test) == "skill_ids or (use_builtin_tools and model_builtin_tools.get('skills', True))"
     )
+    process = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'process_chat_payload')
+    start = next(
+        i
+        for i, n in enumerate(process.body)
+        if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == 'available_skills'
+    )
+    end = next(i for i in range(start, len(process.body)) if isinstance(process.body[i], ast.If))
+    metadata_update = next(
+        n
+        for n in process.body
+        if isinstance(n, ast.Expr)
+        and isinstance(n.value, ast.Call)
+        and ast.unparse(n.value.func) == 'metadata.update'
+        and any(isinstance(item, ast.Constant) and item.value == 'view_skill_ids' for item in ast.walk(n))
+    )
     wrapper = ast.parse('async def run():\n    pass')
     wrapper.body[0].body = [
-        ast.Global(names=['available_skills', 'terminal_skills', 'form_data']),
+        ast.Global(names=['available_skills', 'terminal_skills', 'form_data', 'view_skill_ids']),
+        *process.body[start:end],
         block,
+        metadata_update,
         ast.Return(value=ast.Name(id='available_skills', ctx=ast.Load())),
     ]
     ns = dict(
@@ -168,14 +186,14 @@ def skill_block(monkeypatch):
         model_builtin_tools={},
         skill_versions={},
         HTTPException=HTTPException,
-        request=object(),
+        request=SimpleNamespace(state=SimpleNamespace()),
         metadata={},
         extra_params={},
         terminal_id='terminal',
         mentioned_skill_ids=set(),
-        available_skills=[],
-        terminal_skills=[],
-        view_skill_ids=[],
+        tool_ids=[],
+        files=[],
+        features={},
         form_data={'messages': []},
         event_emitter=None,
         log=logging.getLogger(__name__),
@@ -209,6 +227,30 @@ def skill_block(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('use_builtin_tools', [False, True])
+async def test_production_skill_initialization_builds_metadata_without_skills(skill_block, use_builtin_tools):
+    ns, runtime, terminal = skill_block
+    ns['skill_ids'] = []
+    ns['use_builtin_tools'] = use_builtin_tools
+    ns['Config'].get.return_value = []
+    assert 'view_skill_ids' not in ns
+    assert await ns['run']() == []
+    assert ns['metadata']['view_skill_ids'] == []
+    assert ns['metadata']['skill_ids'] == []
+    runtime.prepare_skills_for_terminal.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_production_skill_initialization_builds_terminal_discovery_metadata(skill_block):
+    ns, runtime, terminal = skill_block
+    terminal.terminal_skills_auto_discovery.return_value = True
+    terminal.get_terminal_skills.return_value = [{'id': 'terminal:demo', 'name': 'demo', 'content': 'body'}]
+    assert 'view_skill_ids' not in ns
+    await ns['run']()
+    assert set(ns['metadata']['view_skill_ids']) == {'allowed', 'selected', 'terminal:demo'}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('role', ['user', 'admin'])
 async def test_auto_discovery_intersects_allowlist_and_acl_keeps_explicit_selection(skill_block, role):
     ns, runtime, terminal = skill_block
@@ -228,6 +270,9 @@ async def test_empty_auto_allowlist_still_prepares_only_mentioned_skill(skill_bl
     assert [s.id for s in ns['available_skills']] == ['selected']
     assert [s['id'] for s in runtime.prepare_skills_for_terminal.await_args.args[-1]] == ['selected']
     assert ns['view_skill_ids'] == []
+    assert ns['request'].state.skill_runtime_content == {
+        ('user', 'terminal', None, None, 'selected', 'version'): 'instructions'
+    }
 
 
 @pytest.mark.asyncio
@@ -310,6 +355,7 @@ def terminal_runtime(monkeypatch):
         SKILL_CONTENT_MAX_CHARS=SKILL_CONTENT_MAX_CHARS,
         skill_content_page=skill_content_page,
         bounded_skill_manifest=bounded_skill_manifest,
+        skill_overview=skill_overview,
         MAX_AGENTS_MD_BYTES=32 * 1024,
         terminal_context_id=lambda *args: None,
         terminal_context_config=lambda *args: {},
@@ -325,6 +371,7 @@ def terminal_runtime(monkeypatch):
             'get_terminal_json',
             'get_terminal_skills',
             'get_terminal_skill',
+            'load_terminal_skill',
             'terminal_skills_auto_discovery',
         },
         ns,
@@ -422,6 +469,7 @@ def view_runtime(monkeypatch):
         unquote=unquote,
         skill_content_page=skill_content_page,
         bounded_skill_manifest=bounded_skill_manifest,
+        skill_overview=skill_overview,
         HTTPException=HTTPException,
         BYPASS_ADMIN_ACCESS_CONTROL=False,
         Skills=sys.modules['open_webui.models.skills'].Skills,
@@ -568,10 +616,10 @@ async def test_read_skill_file_requires_authorized_turn_context(view_runtime, sk
     [
         {'view_skill_ids': ['allowed']},
         {'loaded_skill_ids': ['allowed']},
-        {'chat_context': {'skill_versions': {'allowed': 'version'}}},
+        {'skill_ids': ['allowed'], 'chat_context': {'skill_versions': {'allowed': 'version'}}},
     ],
 )
-async def test_read_skill_file_accepts_selected_loaded_or_pinned_skill(view_runtime, context):
+async def test_read_skill_file_accepts_selected_loaded_or_discovered_skill(view_runtime, context):
     view, prepare, acl, terminal = view_runtime
     result = json.loads(
         await view.read_file(

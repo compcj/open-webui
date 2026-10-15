@@ -54,6 +54,17 @@ a path-only event. These cards offer preview, source viewing where applicable, a
 Open-in-file-browser action is omitted because an ordinary file browser uses the current chat's
 context, which can differ from the signed file's original automation or chat context.
 
+## Per-chat operations and comparisons
+
+With a terminal configured for per-chat workspaces, file reads and source/comparison reads, edits,
+new files, notebook execution, batch deletion and ZIP downloads carry the current chat ID. Comparison
+reads use the same terminal and chat as the selected files. Switching chats must not reuse content
+from a previous workspace. File saves retain their version/concurrency checks where supported.
+
+These operations still require current terminal and chat access. Signed delivery links continue to
+resolve their original context, independently of the currently open chat. HTML is source/download
+content and SVG previews remain isolated; the new file actions do not enable same-origin port previews.
+
 ## Verification
 
 Run with the development dependencies and Python 3.11/3.12, Node 22:

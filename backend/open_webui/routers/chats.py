@@ -1651,15 +1651,21 @@ async def insert_chat_voice_message(
 ):
     if len(JSONCodec.dumps(form_data.voice)) > 100000:
         raise HTTPException(400, 'Voice metadata is too large')
-    config = await Config.get_many('audio.realtime.enabled', 'audio.realtime.model', 'user.permissions')
-    voice_model = config.get('audio.realtime.model')
-    if not config.get('audio.realtime.enabled') or not isinstance(voice_model, str) or not voice_model.strip():
-        raise HTTPException(403, 'Realtime calls are disabled or not configured.')
-    if user.role != 'admin' and not await has_permission(user.id, 'chat.call', config.get('user.permissions') or {}):
-        raise HTTPException(403, 'Call permission denied.')
-    data = form_data.model_dump()
-    data['voice'] = {**data['voice'], 'model': voice_model}
-    chat, message_ids = await Chats.insert_voice_message(id, user, data)
+
+    async def authorize():
+        config = await Config.get_many('audio.realtime.enabled', 'audio.realtime.model', 'user.permissions')
+        voice_model = config.get('audio.realtime.model')
+        if not config.get('audio.realtime.enabled') or not isinstance(voice_model, str) or not voice_model.strip():
+            raise HTTPException(403, 'Realtime calls are disabled or not configured.')
+        if user.role != 'admin' and not await has_permission(
+            user.id, 'chat.call', config.get('user.permissions') or {}
+        ):
+            raise HTTPException(403, 'Call permission denied.')
+        return voice_model
+
+    await authorize()
+    # Recheck policy and resolve the model after the persistence boundary locks ownership.
+    chat, message_ids = await Chats.insert_voice_message(id, user, form_data.model_dump(), authorize)
     event_emitter = await get_event_emitter({'user_id': user.id, 'chat_id': id, 'message_id': form_data.id}, False)
     if event_emitter:
         # Shared delivery retains the existing live ACL guard and carries no private metadata.

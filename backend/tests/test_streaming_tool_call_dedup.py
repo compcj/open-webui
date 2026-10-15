@@ -57,6 +57,7 @@ def runtime():
         'stage_ask_user_tool_calls': Mock(return_value=(False, None)),
         'emit_output': AsyncMock(),
     }
+    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call'})
     tree = load_functions(
         ns, 'utils/middleware.py', {'_split_tool_calls', '_deduplicate_tool_calls', 'append_to_text_field'}
     )

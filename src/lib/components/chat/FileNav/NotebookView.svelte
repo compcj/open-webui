@@ -18,6 +18,10 @@
 	export let filePath: string = '';
 	export let baseUrl: string = '';
 	export let apiKey: string = '';
+	export let chatId: string | null = null;
+	// FilePreview keys this component by terminal, chat and file.
+	const connection = { baseUrl, apiKey, chatId: chatId ?? undefined, filePath };
+	let disposed = false;
 	export let readOnly = false;
 
 	interface NotebookCell {
@@ -131,11 +135,26 @@
 	const canExecute = !readOnly && baseUrl && apiKey && filePath;
 
 	const startSession = async (): Promise<boolean> => {
-		if (!baseUrl || !apiKey || !filePath) return false;
+		if (disposed || readOnly || !baseUrl || !apiKey || !filePath) return false;
 		kernelStarting = true;
 		kernelError = null;
 
-		const result = await createNotebookSession(baseUrl, apiKey, filePath);
+		const result = await createNotebookSession(
+			connection.baseUrl,
+			connection.apiKey,
+			connection.filePath,
+			connection.chatId
+		);
+		if (disposed) {
+			if (!('error' in result))
+				void stopNotebookSession(
+					connection.baseUrl,
+					connection.apiKey,
+					result.id,
+					connection.chatId
+				);
+			return false;
+		}
 
 		if ('error' in result) {
 			kernelStarting = false;
@@ -151,15 +170,21 @@
 
 	const stopSession = async () => {
 		if (sessionId && baseUrl && apiKey) {
-			await stopNotebookSession(baseUrl, apiKey, sessionId);
+			await stopNotebookSession(
+				connection.baseUrl,
+				connection.apiKey,
+				sessionId,
+				connection.chatId
+			);
 		}
 		sessionId = null;
 		kernelReady = false;
 	};
 
 	const runCell = async (index: number) => {
-		if (runningCell !== null) return;
+		if (disposed || readOnly || kernelStarting || runningCell !== null) return;
 		if (!kernelReady && !(await startSession())) return;
+		if (disposed) return;
 
 		runningCell = index;
 		const source = editedSources[index] ?? toStr(cells[index].source);
@@ -172,7 +197,15 @@
 			editingCell = editingCell;
 		}
 
-		const result = await executeNotebookCell(baseUrl, apiKey, sessionId!, index, source);
+		const result = await executeNotebookCell(
+			connection.baseUrl,
+			connection.apiKey,
+			sessionId!,
+			index,
+			source,
+			connection.chatId
+		);
+		if (disposed) return;
 
 		if ('error' in result) {
 			cells[index].outputs = [
@@ -198,7 +231,7 @@
 	const runAll = async () => {
 		if (runAllActive) return;
 		runAllActive = true;
-		for (let i = 0; i < cells.length; i++) {
+		for (let i = 0; !disposed && i < cells.length; i++) {
 			if (cells[i].cell_type === 'code') {
 				await runCell(i);
 			}
@@ -213,6 +246,7 @@
 	};
 
 	onDestroy(() => {
+		disposed = true;
 		if (sessionId) stopSession();
 	});
 </script>

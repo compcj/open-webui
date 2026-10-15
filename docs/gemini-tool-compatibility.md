@@ -60,6 +60,11 @@ Google 的 [FunctionDeclaration](https://ai.google.dev/api/generate-content#Func
 Default 模式和 legacy 提示词工具调用保留现有行为。
 仅使用 WebUI 作为 API 代理、在其他程序执行工具的调用方，需要自行按照原始 Schema 校验参数。
 
+Tool Search 分发的 `call_tool(tool_name, params)` 先解析服务器注册的实际目标，再按目标原始
+Schema 校验 `params`，之后才能进入审批或执行。调用携带产生时的兼容模式，审批恢复和模型切换
+不会跳过这一校验。原始 `provider_function` 保留封装名称与参数供供应商回放；内部执行、权限和
+结果分类仍使用目标身份。同名外部 `call_tool` 不能获得内置分发器身份。
+
 ## 明确的边界
 
 每个工具的 `parameters` 必须是自包含的参数文档。本地引用只在该文档中解析，不访问外部 URL。

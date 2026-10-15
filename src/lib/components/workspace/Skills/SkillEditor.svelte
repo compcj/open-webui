@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { v4 as uuidv4 } from 'uuid';
 	import { onMount, tick, getContext } from 'svelte';
 
 	import { toast } from 'svelte-sonner';
@@ -200,7 +201,7 @@
 			loading = false;
 		}
 	};
-	const exportVersion = async (format: 'json' | 'zip') => {
+	const exportVersion = async (format: 'json' | 'zip' | 'skill') => {
 		try {
 			saveAs(
 				await exportSkillBundle(localStorage.token, format, [id], versionId!),
@@ -212,7 +213,7 @@
 	};
 	const saveCopy = async () => {
 		try {
-			const suffix = crypto.randomUUID().slice(0, 7);
+			const suffix = uuidv4().slice(0, 7);
 			const result = await createNewSkill(localStorage.token, {
 				id: `${id}-${suffix}`,
 				name: `${name} (${suffix})`,
@@ -638,7 +639,7 @@
 				>
 			</div>{/if}
 		<div
-			class="min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-100/80 bg-gray-50/60 dark:border-white/[0.04] dark:bg-white/[0.03]"
+			class="min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-100/50 bg-gray-50/60 dark:border-white/[0.025] dark:bg-white/[0.03]"
 		>
 			{#if historyDiff}
 				<VersionDiff
@@ -677,6 +678,7 @@
 							<div class="min-w-0">
 								<Dropdown
 									bind:show={showHistory}
+									align="start"
 									onOpenChange={(open) => {
 										if (open) {
 											historyPage = 1;
@@ -701,7 +703,7 @@
 									</button>
 									<div slot="content">
 										<DropdownMenu
-											className="w-56 max-w-[calc(100vw-2rem)] max-h-80 overflow-y-auto"
+											className="w-72 max-w-[calc(100vw-2rem)] max-h-80 overflow-y-auto"
 										>
 											<VersionMenuItem
 												entry={currentHistoryEntry?.id === currentVersionId
@@ -772,6 +774,9 @@
 						{/if}
 					{/snippet}
 					{#snippet exports()}
+						<button type="button" on:click={() => exportVersion('skill')}
+							><Download className="size-3.5" />{$i18n.t('Export .skill')}</button
+						>
 						<button type="button" on:click={() => exportVersion('json')}
 							><Download className="size-3.5" />{$i18n.t('Export JSON')}</button
 						>

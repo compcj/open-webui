@@ -37,7 +37,7 @@
 	let top = false;
 
 	let channel: any = null;
-	let messages = null;
+	let messages: Awaited<ReturnType<typeof getChannelMessages>> = null;
 
 	let replyToMessage = null;
 	let threadId: any = null;
@@ -374,7 +374,7 @@
 							<Messages
 								{channel}
 								{top}
-								{messages}
+								bind:messages
 								{replyToMessage}
 								onReply={async (message) => {
 									replyToMessage = message;
@@ -407,6 +407,7 @@
 				<div class=" pb-3 px-3">
 					<MessageInput
 						id="root"
+						{messages}
 						bind:chatInputElement
 						bind:replyToMessage
 						{typingUsers}

@@ -234,7 +234,10 @@ def test_main_endpoints_deny_before_loading_models(access, path):
         'check_chat_access': module.check_chat_access,
         'get_all_models': load_models,
     }
-    exec(compile(ast.Module(body=[handler], type_ignores=[]), '<main>', 'exec'), namespace)
+    voice_guard = next(
+        node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == '_check_voice_chat_access'
+    )
+    exec(compile(ast.Module(body=[voice_guard, handler], type_ignores=[]), '<main>', 'exec'), namespace)
     client = TestClient(app)
     assert client.post(path, json={'model': 'test-model', 'messages': []}).status_code == 403
     assert client.post(path, json=conversation()).status_code == 418

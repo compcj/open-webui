@@ -64,7 +64,18 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
   same-origin port proxies. Do not restore a setting that grants terminal HTML the WebUI origin.
 
-See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and future merge checks.
+See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and future merge checks.
+
+## v0.12.2 UI boundaries
+
+- Start Standard/Realtime calls only for the chat owner and end active calls on switches to another
+  owner's chat. Preserve author-filtered historical transcripts and dedicated persistence APIs.
+- Before applying a revision comparison, verify both the current draft and selected version are
+  unchanged. Preserve optimistic skill versions, incremental settings saves and model-control precedence.
+- Terminal reads, comparison reads, saves, notebook execution, batch deletes and ZIP downloads carry
+  the active chat context. Signed delivery URLs retain their original identity; HTML/SVG stay isolated.
+- Skills support `.skill` as ZIP-compatible packages. Do not turn overview truncation or search omissions
+  into editable content; file edits still operate on canonical `data.files` with `expected_version_id`.
 
 ## Context compaction
 

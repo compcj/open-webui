@@ -182,6 +182,7 @@
 	export let contextCompactionEnabled = false;
 	export let embedded = false;
 	export let callActive = false;
+	export let callEnabled = true;
 
 	export let autoScroll = false;
 	export let generating = false;
@@ -770,7 +771,7 @@
 	}
 
 	let chatInputContainerElement;
-	let chatInputElement;
+	let chatInputElement: RichTextInput;
 	let modelSelector;
 
 	let filesInputElement;
@@ -779,6 +780,45 @@
 	let inputFiles;
 
 	let showInputModal = false;
+	let showComparison = false;
+	let comparisonLoading = false;
+	let ComparisonModal: typeof import('../common/DiffEditorModal.svelte').default | null = null;
+	// Preserve the previous comparison description in the translation catalogs.
+	// $i18n.t('Uses the left working copy as your prompt.');
+	let comparisonTarget: {
+		chatId: string;
+		input: RichTextInput;
+		content: string;
+	} | null = null;
+
+	const openComparison = async () => {
+		if (comparisonLoading) return;
+		comparisonLoading = true;
+		const target = { chatId, input: chatInputElement };
+		try {
+			ComparisonModal = (await import('../common/DiffEditorModal.svelte')).default;
+			if (!target.input || target.chatId !== chatId || target.input !== chatInputElement) return;
+			comparisonTarget = { chatId, input: target.input, content: prompt };
+			showComparison = true;
+		} catch {
+			toast.error($i18n.t('Could not open comparison. Please try again.'));
+		} finally {
+			comparisonLoading = false;
+		}
+	};
+
+	const applyComparisonToPrompt = (text: string) => {
+		if (
+			!chatInputElement ||
+			comparisonTarget?.chatId !== chatId ||
+			comparisonTarget?.input !== chatInputElement ||
+			comparisonTarget?.content !== prompt
+		)
+			throw new Error($i18n.t('The prompt has changed. Reopen the comparison before applying.'));
+		// The editor's literal setter preserves mentions without expanding prompt variables.
+		if (text !== comparisonTarget.content) chatInputElement.setText(text);
+		void tick().then(() => focus());
+	};
 
 	export let dragged = false;
 	export let dropzoneId = 'chat-pane';
@@ -1492,6 +1532,7 @@
 							'fork',
 							'status',
 							'model',
+							'compare',
 							'settings',
 							'temporary',
 							'skills:create'
@@ -1520,6 +1561,7 @@
 					onStatus: statusHandler,
 					onFork: forkHandler,
 					onModel: () => modelSelector?.open(),
+					onCompare: openComparison,
 					onSettings: () => showSettings.set(true),
 					onTemporary: temporaryHandler,
 					onCreateSkill: createSkillHandler,
@@ -1677,6 +1719,21 @@
 		};
 	});
 </script>
+
+{#if showComparison && ComparisonModal}
+	<svelte:component
+		this={ComparisonModal}
+		bind:show={showComparison}
+		title={$i18n.t('Compare text')}
+		initialContent={comparisonTarget?.content ?? ''}
+		applyLabel={$i18n.t('Use in prompt')}
+		applyDescription={$i18n.t('Uses the proposed revision as your prompt.')}
+		discardMessage={$i18n.t(
+			'Your comparison changes will be discarded. Your prompt will stay unchanged.'
+		)}
+		onApply={applyComparisonToPrompt}
+	/>
+{/if}
 
 <ToolServersModal
 	bind:show={showTools}
@@ -2151,7 +2208,8 @@
 															text,
 															history?.currentId
 																? createMessagesList(history, history.currentId)
-																: null
+																: null,
+															'general'
 														).catch((error) => {
 															console.log(error);
 
@@ -2290,6 +2348,7 @@
 							<div class="composer-options mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
 								<div class="composer-extensions ml-1 self-end flex items-center min-w-0">
 									<InputMenu
+										onCompare={openComparison}
 										bind:files
 										selectedModels={selectedModelIds}
 										fileUploadCapableModels={getFilesystemUploadTerminal(
@@ -2785,7 +2844,7 @@
 											{/if}
 										{/if}
 
-										{#if !embedded && prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
+										{#if callEnabled && !embedded && prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
 											<div class=" flex items-center">
 												<!-- {$i18n.t('Call')} -->
 												<Tooltip

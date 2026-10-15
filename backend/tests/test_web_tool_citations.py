@@ -18,10 +18,27 @@ BACKEND = Path(__file__).parents[1] / 'open_webui'
 
 
 def load_functions(namespace, path, names):
+    names = set(names)
+    if path == 'utils/misc.py' and 'convert_output_to_messages' in names:
+        names.add('get_provider_function')
+    if path == 'routers/openai.py' and '_normalize_stored_item' in names:
+        load_functions(namespace, 'utils/misc.py', {'get_provider_function'})
+    if path == 'utils/middleware.py' and 'execute_tool_call' in names:
+        load_functions(namespace, 'utils/tool_search.py', {'resolve_tool_call'})
     tree = ast.parse((BACKEND / path).read_text(encoding='utf-8'))
     nodes = [
         node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
     ]
+    if path == 'utils/tool_search.py':
+        nodes = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id in {'CALL_TOOL_NAME', 'SEARCH_TOOL_NAME'}
+                for target in node.targets
+            )
+        ] + nodes
     module = ast.Module(
         body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), *nodes],
         type_ignores=[],

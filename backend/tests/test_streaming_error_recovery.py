@@ -107,6 +107,8 @@ def runtime():
             upsert_message_to_chat_by_id_and_message_id=save,
         ),
     }
+    load_functions(ns, 'utils/response.py', {'normalize_usage'})
+    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call'})
     load_functions(
         ns,
         'utils/misc.py',
@@ -142,7 +144,7 @@ def runtime():
 
         return StreamingResponse(body())
 
-    async def run(chunks, *, temporary=False, follow_up=None, previous=None):
+    async def run(chunks, *, temporary=False, follow_up=None, previous=None, setup=None):
         ns['generate_chat_completion'] = (
             AsyncMock(side_effect=follow_up)
             if isinstance(follow_up, Exception)
@@ -169,6 +171,8 @@ def runtime():
             ctx['metadata']['assistant_message_id'] = 'reply'
             ctx['metadata']['tool_approval_resume'] = 'model'
             ctx['assistant_message'] = copy.deepcopy(previous)
+        if setup is not None:
+            setup(ctx, ns, response_for)
         await ns['streaming_chat_response_handler'](response_for(chunks), ctx)
         return ctx
 
@@ -291,3 +295,53 @@ async def test_successful_approval_resume_clears_error_saved_by_previous_stream(
     assert error_updates == [{'error': None, 'done': False}]
     assert 'Earlier partial answer' in runtime.ns['get_output_text'](runtime.events[-1]['data']['output'])
     runtime.ns['execute_tool_call'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_round_usage_counts_only_latest_response_and_new_tool_text(runtime):
+    from test_context_compaction_legacy import load
+    from open_webui.utils.response import merge_usage
+
+    snapshots = []
+    threshold = load(
+        {'_exceeds_token_threshold', '_usage_token_count'},
+        _estimate_messages_tokens=lambda rows: sum(len(row.get('content') or '') for row in rows),
+        _estimate_tokens=len,
+    )['_exceeds_token_threshold']
+
+    async def capture(request, user, messages, *args):
+        snapshots.append(copy.deepcopy(messages))
+        return messages, None, False
+
+    def setup(ctx, ns, response_for):
+        ctx['request'].state.context_compaction = {'mode': 'legacy'}
+        ctx['request'].app.state.MODELS = {}
+        ns['CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS'] = 2
+        ns['merge_usage'] = merge_usage
+        ns['compact_messages_for_request'] = capture
+        load_functions(ns, 'utils/middleware.py', {'process_messages_with_output'})
+        ns['process_tool_result'] = AsyncMock(side_effect=[('A' * 80, [], []), ('B' * 90, [], [])])
+        second = tool_call_chunk()
+        second['choices'][0]['delta']['tool_calls'][0]['id'] = 'call-2'
+        ns['generate_chat_completion'] = AsyncMock(
+            side_effect=[
+                response_for([second, {'usage': {'prompt_tokens': 200, 'completion_tokens': 20}, 'choices': []}]),
+                response_for([chat_chunk('done', 'stop')]),
+            ]
+        )
+
+    await runtime.run(
+        [tool_call_chunk(), {'usage': {'prompt_tokens': 100, 'completion_tokens': 10}, 'choices': []}],
+        setup=setup,
+    )
+    assert len(snapshots) == 2
+    assert [row['content'] for row in snapshots[1] if row.get('role') == 'tool'] == ['A' * 80, 'B' * 90]
+    first_usage = next(row['usage'] for row in reversed(snapshots[0]) if row.get('usage'))
+    second_index = next(i for i in range(len(snapshots[1]) - 1, -1, -1) if snapshots[1][i].get('usage'))
+    assert first_usage['total_tokens'] == 110
+    assert snapshots[1][second_index]['usage']['total_tokens'] == 220
+    assert [row['content'] for row in snapshots[1][second_index + 1 :] if row.get('role') == 'tool'] == ['B' * 90]
+    assert runtime.saved['usage']['total_tokens'] == 330
+    # Latest 220 plus only the new 90-character result: neither billing 330 nor old tool text.
+    assert threshold(snapshots[1], '', None, 309)
+    assert not threshold(snapshots[1], '', None, 310)

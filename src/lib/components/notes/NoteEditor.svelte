@@ -484,7 +484,7 @@
 
 				fileItem.url = `${uploadedFile.id}`;
 
-				files = files;
+				files = files.map((item) => (item?.itemId === tempItemId ? fileItem : item));
 			} else {
 				files = files.filter((item) => item?.itemId !== tempItemId);
 			}

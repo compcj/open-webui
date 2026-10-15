@@ -76,7 +76,7 @@ Terminal AGENTS.md is a synthetic user message. Enrich each user message from it
 attachments by ordinal positions after output expansion or repeat the old async enrichment path.
 Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pipeline stage.
 
-See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and upgrade boundaries.
+See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and upgrade boundaries.
 
 ## v0.12 data and collaboration boundaries
 
@@ -86,7 +86,7 @@ See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and
   Immutable old versions stay unchanged; restores create compatible new versions. Every new file
   edit requires `expected_version_id`; reject missing-version legacy attachment writes explicitly.
 - `/skills/load/url` has optional `response_format`: default descriptor, `packages` parsed skills.
-  Both paths share safe download and parse limits. Native `view_skill`/`read_skill_file` recheck ACLs
+  Both paths share safe download and parse limits. Native `view_skill`/`read_skill_file`/`grep_skill_files` recheck ACLs
   and current turn selected/loaded/discovered IDs; pinned snapshots govern runtime file preparation.
 - Merge revision `a120d13e0001` connects `f9a4b2d6c805` and `b8f2c6d91a04`; `a120d13e0002`
   migrates skills; `a120d13e0003` adds nullable shared-context provenance without guessing old safety.
@@ -106,12 +106,31 @@ See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and
   outgoing actor, connection and context identity, not just the shared chat ID.
 - Voice transcripts retain public browser-source/author attribution across shared reads, events and
   copies, independently of private speech metadata. Insertions require Realtime/call permission and
-  use the server-configured model. Generic message updates reject `voice`; the dedicated author-only
+  use the server-configured model and require chat ownership, including for admins. Standard/Realtime
+  call entry points enforce the same ownership rule. Existing author-only metadata edits keep their
+  author/privacy rules; ordinary dictation is unchanged. Generic message updates reject `voice`; the dedicated author-only
   endpoint cannot change a stored transcript's model identity.
 - Exact builtin tool outputs are classified by registered type/identity, never by an external tool's
   name. `search_tools` retains complete schema entries; skill pages shrink at exact character offsets.
   Do not semantically summarize these results. If minimum valid content cannot fit, fail with an
   actionable budget error; count manifests, definitions and results in the final request.
+
+## v0.12.2 additions
+
+- Migration `c92da83b017f` adds Apps; `0bd252b206fb` fills only missing auth rows without changing
+  existing credentials. `a122d15e0001` joins it with `a120d13e0003` and performs no business-data writes.
+  Exercise both SQLite and actual PostgreSQL upgrades from fork and official databases.
+- Persist `provider_function` before resolving builtin `call_tool`. Real target identity governs
+  authorization, approval, original Gemini validation, execution and exact-result classification.
+  Restore the wrapper for Chat/Responses replay and strip local metadata before transport.
+- Tool-enabled skill bodies over 20000 characters expose 5000 initially; disabled injection caps at 100000. Overview, grep and pages share the pinned prepared body and absolute character offsets.
+  Prepared text is request-local, never saved in chat metadata. Pins select snapshots after current
+  context and ACL authorization; they are not grants. Preserve terminal fingerprints and soft failure.
+- Trusted builtin `grep_skill_files` uses exact kind `skill_search`: retain whole entries/locations,
+  absolute offsets and explicit omission counts. Never semantically summarize it. An unfit minimum
+  returns an actionable error; count the complete result and citations before sending.
+- App interactions apply current channel feature permission and group membership. Private interactions
+  may use read access; any stored message update or public reply rechecks write access after the App call.
 
 ## Tool citation prefix contract
 
@@ -144,7 +163,8 @@ See [version decisions](../docs/upstream/v0.12.0-decisions.md) for rationale and
 ## Context compaction
 
 - Preserve off/legacy/V2 dispatch. `utils/context_compaction.py` uses upstream v0.12 round compaction;
-  it must return unchanged for off/V2. V2 keeps final-send and retry dispatch independently.
+  it must return unchanged for off/V2. v0.12.2 persists valid round checkpoint markers and uses
+  single-round usage; malformed markers must not truncate raw history. V2 keeps final-send and retry dispatch independently.
   New settings are administrator-only; an explicit mode wins over the old enable flag. Resolve
   `meta.context_window` through base-model inheritance/global default and cap smaller Ollama num_ctx.
 - V2 budget checks belong after model parameters and all prompt/tool/knowledge/skill/file injections,

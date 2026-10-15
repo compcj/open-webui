@@ -14,7 +14,7 @@ and is never sent as a provider inference parameter.
 | 模式 / Mode         | 行为 / Behavior                                                                                                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 关闭 / `off`        | 下次请求重新使用完整原始分支历史，不应用任何压缩检查点。Full raw branch history is used on the next request.                                                                                            |
-| 原版压缩 / `legacy` | 采用上游 v0.12 历史及工具轮间压缩；保留提示词、保留比例与个人／会话阈值覆盖。Uses upstream v0.12 history and tool-round compaction, retaining prompt, retention and threshold overrides.                |
+| 原版压缩 / `legacy` | 采用上游 v0.12.2 历史及工具轮间压缩；保留提示词、保留比例与个人／会话阈值覆盖。Uses upstream v0.12.2 history and tool-round compaction, retaining prompt, retention and threshold overrides.            |
 | V2压缩 / `v2`       | 在发送请求前按 Token 预算检查，合并延续摘要、近期完整原文与预算提醒。Checks the final request budget and combines a continuation summary with complete recent conversation groups and budget reminders. |
 
 升级时，未设置新模式的安装继续使用旧开关：关闭映射 `off`，开启映射 `legacy`；
@@ -26,6 +26,13 @@ On upgrade, an unset mode maps the old enable flag to `off` or `legacy`; V2 is o
 mode takes precedence over `ENABLE_CONTEXT_COMPACTION`. Each algorithm keeps its own settings and
 checkpoints. Switching preserves messages and summaries and takes effect on the next request.
 V2 parameters have no personal or per-chat overrides.
+
+Legacy 保存轮间检查点标记，重新加载时只应用有效标记，按单轮 usage 判断占用；
+原始用户消息与工具结果保留。off 和 V2 不执行这条截断路径，V2 仍核算完整最终请求。
+
+Legacy persists between-round checkpoint markers and uses per-round usage. Reload applies only valid
+markers, retaining raw user messages and tool outputs. Off and V2 bypass this truncation path; V2
+continues to count the complete final request.
 
 ## 参数 / Settings
 
@@ -418,6 +425,18 @@ Tool Search defaults off. Its manifest, definitions and results all count. Regis
 valid `next_offset`. They never use semantic summaries. An allocation too small for one valid entry
 fails with actionable guidance. Off replays raw history, legacy uses upstream round compaction,
 and V2 uses final preparation/retry hooks; each request follows exactly one algorithm.
+
+`grep_skill_files` 与技能概览、分页共用固定版本和准备后的正文。V2 只保留能完整放入预算的
+搜索条目与位置列表，使用绝对字符偏移并明确记录遗漏；不做语义摘要。同名外部工具没有可信内置身份。
+Tool Search 的 `call_tool(tool_name, params)` 按实际目标进行权限、审批、参数校验及结果分类，
+保存的 `provider_function` 用于恢复供应商封装调用。封装、定义、结果及引用均计入最终请求，重试不重新执行工具。
+
+`grep_skill_files` shares the pinned prepared text with overviews and pages. V2 keeps complete search
+entries and locations with absolute character offsets and explicit omissions, without semantic summaries.
+External homonyms do not inherit builtin trust. `call_tool(tool_name, params)` resolves the real target
+for authorization, approval, argument validation and result classification; saved `provider_function`
+restores the provider wrapper. Final accounting includes wrappers, definitions, results and citations;
+retries never execute tools again.
 
 ## 范围与设计参考 / Scope and references
 

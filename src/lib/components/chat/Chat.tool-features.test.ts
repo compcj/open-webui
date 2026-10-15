@@ -63,6 +63,7 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		const window = { setTimeout, clearTimeout };
 		const tick = async () => {};
 		const callMode = 'current';
+		const bridge = { connected: false };
 		const $i18n = { t: text => text };
 		const console = { error: () => {} };
 		let $config = { features: {

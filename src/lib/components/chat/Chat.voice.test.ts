@@ -16,15 +16,17 @@ const declarations = parse(source)
 	.join('\n');
 
 const createChat = (initial: any, { id = 'shared', temporary = false, active = false } = {}) => {
-	const initChatHandler = vi.fn(async () => {});
+	const initChatHandler = vi.fn(async () => 'created-chat');
+	const generateVoiceChatMetadata = vi.fn(async () => {});
 	const body = `
 		const { createMessagesList, updateChatById, addChatVoiceMessage, updateChatVoiceMessage,
-			initChatHandler, WEBUI_API_BASE_URL, isTemporaryChatId } = dependencies;
+			initChatHandler, generateVoiceChatMetadata, WEBUI_API_BASE_URL, isTemporaryChatId } = dependencies;
 		const uuidv4 = () => 'voice-1';
 		const localStorage = { token: 'synthetic-token' };
 		const $user = { id: 'writer', name: 'Writer' };
 		let $chatId = chatId;
 		const $temporaryChatEnabled = temporary;
+		const selectedModelIds = ['chat-model'];
 		const chat = { user_id: 'owner' };
 		const generating = active, taskIds = [];
 		const autoScrollToBottom = () => {};
@@ -34,6 +36,7 @@ const createChat = (initial: any, { id = 'shared', temporary = false, active = f
 	`;
 	return {
 		initChatHandler,
+		generateVoiceChatMetadata,
 		...new Function(
 			'dependencies',
 			'initial',
@@ -42,7 +45,14 @@ const createChat = (initial: any, { id = 'shared', temporary = false, active = f
 			'active',
 			transpileModule(body, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText
 		)(
-			{ ...chatApi, createMessagesList, initChatHandler, WEBUI_API_BASE_URL, isTemporaryChatId },
+			{
+				...chatApi,
+				createMessagesList,
+				initChatHandler,
+				generateVoiceChatMetadata,
+				WEBUI_API_BASE_URL,
+				isTemporaryChatId
+			},
 			structuredClone(initial),
 			id,
 			temporary,
@@ -222,6 +232,14 @@ describe('saved shared voice callbacks', () => {
 		expect(chat.history().messages['voice-1'].meta.voice.speech).toEqual([{ item_id: 'local' }]);
 		expect(fetcher).not.toHaveBeenCalled();
 		expect(chat.initChatHandler).toHaveBeenCalledTimes(options.id ? 0 : 1);
+		expect(chat.generateVoiceChatMetadata).toHaveBeenCalledTimes(options.id ? 0 : 1);
+		if (!options.id)
+			expect(chat.generateVoiceChatMetadata).toHaveBeenCalledWith(
+				'created-chat',
+				'chat-model',
+				'spoken words',
+				undefined
+			);
 	});
 });
 
@@ -418,4 +436,89 @@ describe('voice socket events before the HTTP response', () => {
 		expect(chat.history().messages['voice-1'].meta.voice).toEqual(newerVoice);
 		expect(chat.history().messages['voice-1'].user_id).toBe('writer');
 	});
+});
+
+it('ends both call transports when switching into another owner chat', () => {
+	const statement: any = parse(source).instance!.content.body.find(
+		(node: any) =>
+			node.type === 'LabeledStatement' &&
+			source.slice(node.start, node.end).includes('if (isShared)') &&
+			source.slice(node.start, node.end).includes('showCallOverlay.set(false)')
+	);
+	expect(statement).toBeTruthy();
+	const showCallOverlay = { set: vi.fn() };
+	const bridge = { connected: true, connecting: false, end: vi.fn() };
+	const run = new Function(
+		'isShared',
+		'$showCallOverlay',
+		'showCallOverlay',
+		'bridge',
+		transpileModule(source.slice(statement.start, statement.end), {
+			compilerOptions: { target: ScriptTarget.ES2022 }
+		}).outputText
+	);
+	run(true, true, showCallOverlay, bridge);
+	expect(showCallOverlay.set).toHaveBeenCalledWith(false);
+	expect(bridge.end).toHaveBeenCalledOnce();
+	bridge.end.mockClear();
+	run(true, false, showCallOverlay, bridge);
+	expect(bridge.end).toHaveBeenCalledOnce();
+	bridge.end.mockClear();
+	bridge.connected = false;
+	bridge.connecting = true;
+	run(true, false, showCallOverlay, bridge);
+	expect(bridge.end).toHaveBeenCalledOnce();
+	bridge.end.mockClear();
+	bridge.connecting = false;
+	run(true, false, showCallOverlay, bridge);
+	expect(bridge.end).not.toHaveBeenCalled();
+});
+
+const loadChatFunction = (name: string, bindings: Record<string, any>) => {
+	const node: any = parse(source)
+		.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
+		.find((node: any) => node.id?.name === name);
+	const code = `const ${source.slice(node.start, node.end)}; return ${name};`;
+	return new Function(
+		...Object.keys(bindings),
+		transpileModule(code, {
+			compilerOptions: { target: ScriptTarget.ES2022 }
+		}).outputText
+	)(...Object.values(bindings));
+};
+
+it.each(['user', 'admin'])('prevents the nonowner %s from opening either call mode', (role) => {
+	const showCallOverlay = { set: vi.fn() };
+	const open = loadChatFunction('openCallOverlay', {
+		isShared: true,
+		$user: { role },
+		showCallOverlay
+	});
+	open();
+	expect(showCallOverlay.set).not.toHaveBeenCalled();
+});
+
+it.each([
+	[true, 'current', false, true],
+	[true, 'bridge', false, false],
+	[false, 'current', true, true],
+	[false, 'current', false, false]
+])('marks overlay/bridge requests as voice (%s, %s, %s)', (overlay, mode, connected, expected) => {
+	const features = loadChatFunction('getFeatures', {
+		$config: { features: {} },
+		$user: { role: 'admin' },
+		$settings: {},
+		getToolFeatureContext: () => ({ available: { image_generation: false } }),
+		$showCallOverlay: overlay,
+		callMode: mode,
+		bridge: { connected },
+		imageGenerationEnabled: true,
+		codeInterpreterEnabled: false,
+		webSearchActive: false,
+		knowledgeEnabled: false,
+		memoryEnabled: false,
+		notesEnabled: false
+	})();
+	expect(features.voice).toBe(expected);
+	expect(features.image_generation).toBe(false);
 });

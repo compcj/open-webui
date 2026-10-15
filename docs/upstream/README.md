@@ -7,10 +7,11 @@ AGENTS.md instructions, and the current user request govern implementation.
 
 | Upstream release | Design and upgrade record                                                      |
 | ---------------- | ------------------------------------------------------------------------------ |
-| v0.12.0          | [Current decisions, compatibility and validation](v0.12.0-decisions.md)        |
+| v0.12.2          | [Current decisions, compatibility and validation](v0.12.2-decisions.md)        |
+| v0.12.0          | [Historical decisions, compatibility and validation](v0.12.0-decisions.md)     |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
-The current record is v0.12.0. v0.11.4 and its citation follow-up remain historical references.
+The current record is v0.12.2. Earlier release records and the citation follow-up remain historical references.
 
 The v0.11.4 [tool citation cache follow-up](v0.11.4-tool-citation-cache-followup.md) changes source
 placement while retaining D05's evidence and numbering policy. Check it alongside the original

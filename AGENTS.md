@@ -39,7 +39,7 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 ## Upstream integration decisions
 
 Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
-[active v0.12.0 decisions](docs/upstream/v0.12.0-decisions.md). Verify official commit IDs and actual
+[active v0.12.2 decisions](docs/upstream/v0.12.2-decisions.md). Verify official commit IDs and actual
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
@@ -50,6 +50,22 @@ model presets keep their semantics. Terminal AGENTS.md loading is independent an
 Preserve terminal file isolation/no same-origin port previews and fail closed with retryable errors
 when configured Redis revocation checks are unavailable. Keep user-facing descriptions in README,
 current rules in scoped guides, rationale in the decision record, and commands in DEVELOPMENT.md.
+
+## v0.12.2 integration boundaries
+
+- Standard and Realtime calls require chat ownership, even for non-owner admins. Recheck ownership
+  at backend call/transcript entry points and close calls when switching to another owner's chat.
+  Historical voice metadata remains author-private; ordinary dictation retains its existing permissions.
+- Tool dispatch saves the original `provider_function` for provider replay. Resolve the registered
+  target before permission, original Gemini schema validation, approval, execution and result classification.
+  Retry never repeats execution; failed dispatch results must reach stateful Responses continuations too.
+- Tool-enabled skills longer than 20000 characters initially expose 5000 characters; tool-disabled
+  injection remains bounded at 100000. Overview/search/pages use the same pinned prepared text and
+  absolute character offsets. Search reduction keeps complete entries with explicit omissions.
+  Only a server-registered builtin identity receives exact-result processing; snapshot pins do not grant access.
+- Apps default off. Private interactions allow read-only channel members; public replies and message
+  updates require live write permission after the App responds. Apply channel feature and group-member checks.
+- The migration head is `a122d15e0001`, joining `a120d13e0003` and `0bd252b206fb`; do not rewrite old revisions.
 
 ## Tool citation prefix contract
 
@@ -64,7 +80,7 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to
-  off/legacy. Never auto-enable V2 on upgrade. Legacy uses upstream v0.12 tool-round compaction and retains its threshold override rules. Never run legacy and V2 on the same request.
+  off/legacy. Never auto-enable V2 on upgrade. Legacy uses upstream v0.12.2 tool-round checkpoints and per-round usage, retaining threshold overrides. Never run legacy and V2 on the same request.
 - Shared chats reuse V2 state by chat/model/validated branch, never by participant. Only saved shared branch history enters shared summaries; personal instructions, variables and terminal context remain request-local and counted. Require server `source_scope=saved_history_v1` before reusing compressed records in shared history; unproven older records replay raw without rewriting the stored selection. Manual `/compact` is owner-only; approval and stop operations belong to the reply author. Live updates and raw/status reads recheck current chat access.
 - Keep original chat messages intact. Legacy `contextSummary` and V2 `chat_context_checkpoint`
   storage are independent; off replays full raw history and mode changes apply next request.

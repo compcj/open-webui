@@ -14,6 +14,8 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { getContext, onMount, onDestroy, tick } from 'svelte';
+	import type { Readable } from 'svelte/store';
+	import type { i18n as I18n } from 'i18next';
 	import {
 		terminalServers,
 		settings,
@@ -55,7 +57,7 @@
 
 	import FileNavToolbar from './FileNav/FileNavToolbar.svelte';
 	import FilePreview from './FileNav/FilePreview.svelte';
-	import FileCompare from './FileNav/FileCompare.svelte';
+	import FileComparisonModal from './FileNav/FileComparisonModal.svelte';
 	import FileEntryRow from './FileNav/FileEntryRow.svelte';
 	import Icon from './FileNav/Icon.svelte';
 	import FileTypeIcon from './FileNav/FileTypeIcon.svelte';
@@ -64,7 +66,7 @@
 	import PortPreview from './FileNav/PortPreview.svelte';
 	import TerminalDock from './TerminalDock.svelte';
 
-	const i18n = getContext<import('svelte/store').Writable<import('i18next').i18n>>('i18n');
+	const i18n = getContext<Readable<I18n>>('i18n');
 
 	export let overlay = false;
 	export let chatId: string | null = null;
@@ -75,7 +77,35 @@
 	let isDraggingHandle = false;
 	let containerEl: HTMLElement;
 	let terminalEnabled = true;
-	let comparePaths: [string, string] | null = null;
+	type ComparisonFile = { name: string; path: string; size?: number };
+	let pinnedComparison: ComparisonFile | null = null;
+	let comparison: {
+		files: [ComparisonFile, ComparisonFile];
+		terminal: { url: string; key: string };
+		chatId: string | null;
+		opener: HTMLElement | null;
+	} | null = null;
+	const comparisonFile = (entry: FileEntry & { fullPath: string }): ComparisonFile => ({
+		name: entry.name,
+		path: entry.fullPath,
+		size: entry.size
+	});
+	const openComparison = (files: [ComparisonFile, ComparisonFile]) => {
+		if (!selectedTerminal || files[0].path === files[1].path) return;
+		comparison = {
+			files: files.map((file) => ({ ...file })) as [ComparisonFile, ComparisonFile],
+			terminal: { ...selectedTerminal },
+			chatId,
+			opener: document.activeElement instanceof HTMLElement ? document.activeElement : null
+		};
+	};
+	const closeComparison = async () => {
+		const opener = comparison?.opener;
+		comparison = null;
+		await tick();
+		// Let the modal's focus trap finish releasing before restoring the browser control.
+		setTimeout(() => (opener?.isConnected ? opener : containerEl)?.focus(), 0);
+	};
 
 	const onHandleMouseDown = (e: MouseEvent) => {
 		e.preventDefault();
@@ -105,6 +135,8 @@
 	let entries: FileEntry[] = [];
 	let currentWritable = true;
 	let loading = false;
+	let directoryController: AbortController | null = null;
+	let terminalContextRevision = 0;
 	let error: string | null = null;
 
 	// ── Browser view state ──────────────────────────────────────────────
@@ -306,6 +338,7 @@
 	let fileSqliteData: ArrayBuffer | null = null;
 	let fileDocxData: ArrayBuffer | null = null;
 	let fileLoading = false;
+	let filePreviewController: AbortController | null = null;
 	let filePreviewRef: FilePreview;
 	let fileSearchTarget: FileSearchTarget | null = null;
 	let documentTargetPage: number | null = null;
@@ -361,7 +394,7 @@
 	let terminalChatContextPending = false;
 	let terminalChatContextHidden = false;
 	let isPerChatTerminal = false;
-	$: portPreviewBaseUrl =
+	$: previewBaseUrl =
 		selectedTerminal && isPerChatTerminal && chatId
 			? `${selectedTerminal.url}/chats/${encodeURIComponent(chatId)}`
 			: (selectedTerminal?.url ?? '');
@@ -397,19 +430,23 @@
 		baseUrl: string,
 		apiKey: string,
 		path: string,
-		sessionId?: string
+		sessionId?: string,
+		signal?: AbortSignal
 	) => {
 		const system = selectedTerminal?.system === true && selectedTerminal.url === baseUrl;
-		if (!system) return downloadLegacyFileBlob(baseUrl, apiKey, path, sessionId);
-		const delivery = await getFileDelivery(baseUrl, apiKey, path, sessionId);
+		if (!system) return downloadLegacyFileBlob(baseUrl, apiKey, path, sessionId, signal);
+		const delivery = await getFileDelivery(baseUrl, apiKey, path, sessionId, signal);
 		if (!delivery) return null;
-		return downloadDeliveryFile(delivery.download_url, baseUrl, apiKey, sessionId);
+		return downloadDeliveryFile(delivery.download_url, baseUrl, apiKey, sessionId, signal);
 	};
 
 	// Detect terminal or chat changes — the explicit store references ensure
 	// Svelte re-runs this block when any of them update.
 	// The `mounted` flag prevents the initial run from racing with onMount.
 	let prevTerminalUrl = '';
+	let prevTerminalKey = '';
+	let prevTerminalSystem = false;
+	let prevTerminalId = $selectedTerminalId;
 	let prevChatId = chatId;
 	let mounted = false;
 	$: {
@@ -421,10 +458,27 @@
 		const oldChatId = prevChatId;
 		if (chatChanged) prevChatId = chatId;
 
-		const terminalChanged = terminal && terminal.url !== prevTerminalUrl;
-		if (terminalChanged) prevTerminalUrl = terminal.url;
+		const terminalChanged =
+			terminal &&
+			(terminal.url !== prevTerminalUrl ||
+				terminal.key !== prevTerminalKey ||
+				terminal.system !== prevTerminalSystem ||
+				$selectedTerminalId !== prevTerminalId);
+		if (terminalChanged) {
+			prevTerminalUrl = terminal.url;
+			prevTerminalKey = terminal.key;
+			prevTerminalSystem = terminal.system;
+			prevTerminalId = $selectedTerminalId;
+		}
 
-		if (chatChanged || terminalChanged || !terminal) comparePaths = null;
+		if (chatChanged || terminalChanged || !terminal) {
+			terminalContextRevision++;
+			directoryController?.abort();
+			selectedFile = null;
+			clearFilePreview();
+			comparison = null;
+			pinnedComparison = null;
+		}
 		if (chatChanged || terminalChanged || !terminal) previewPort = null;
 
 		if (mounted && terminal) {
@@ -439,13 +493,18 @@
 				error = null;
 				entries = [];
 				resetTreeState();
+				const sessionId = chatId ?? undefined;
+				const revision = terminalContextRevision;
 				(async () => {
 					if (terminalChanged) {
 						const config = await getTerminalConfig(terminal.url, terminal.key);
+						if (revision !== terminalContextRevision) return;
 						terminalEnabled = config?.features?.terminal !== false;
 					}
 
-					savedPath = applyCwd(await getCwd(terminal.url, terminal.key, chatId ?? undefined));
+					const cwd = await getCwd(terminal.url, terminal.key, sessionId);
+					if (revision !== terminalContextRevision) return;
+					savedPath = applyCwd(cwd);
 					loadDir(savedPath);
 				})();
 			}
@@ -559,6 +618,7 @@
 		matchLoadMoreError = false;
 		nextMatchOffset = null;
 		matchResults = null;
+		const sessionId = chatId ?? undefined;
 		const controller = new AbortController();
 		matchController = controller;
 		matchTimer = setTimeout(async () => {
@@ -569,7 +629,7 @@
 				path,
 				hiddenVisible,
 				0,
-				chatId ?? undefined,
+				sessionId,
 				controller.signal
 			);
 			if (requestId !== matchRequestId) return;
@@ -707,6 +767,8 @@
 
 	// ── File preview management ──────────────────────────────────────────
 	const clearFilePreview = () => {
+		filePreviewController?.abort();
+		filePreviewController = null;
 		fileSearchTarget = null;
 		documentTargetPage = null;
 		fileContent = null;
@@ -740,7 +802,10 @@
 	) => {
 		const terminal = selectedTerminal;
 		if (!terminal) return;
-		comparePaths = null;
+		const sessionId = chatId ?? undefined;
+		directoryController?.abort();
+		const request = new AbortController();
+		directoryController = request;
 		const directory = clampToFileRoot(path);
 		if (options.restoreTree) {
 			restoreTreeState(directory);
@@ -759,11 +824,24 @@
 		savedPath = directory;
 		pushNavHistory(directory);
 
-		const result = await listFiles(terminal.url, terminal.key, directory, chatId ?? undefined);
+		const result = await listFiles(
+			terminal.url,
+			terminal.key,
+			directory,
+			sessionId,
+			request.signal
+		);
+		if (
+			request.signal.aborted ||
+			selectedTerminal?.url !== terminal.url ||
+			selectedTerminal?.key !== terminal.key ||
+			(chatId ?? undefined) !== sessionId
+		)
+			return;
 		loading = false;
 
 		// Set working directory on the terminal server (fire-and-forget)
-		setCwd(terminal.url, terminal.key, directory, chatId ?? undefined);
+		setCwd(terminal.url, terminal.key, directory, sessionId);
 
 		if (result === null) {
 			error =
@@ -780,9 +858,13 @@
 	const fetchExpandedDir = async (path: string) => {
 		const terminal = selectedTerminal;
 		if (!terminal) return null;
+		const sessionId = chatId ?? undefined;
+		const revision = terminalContextRevision;
+		const signal = directoryController?.signal;
 		const directory = asDirectoryPath(path);
 		loadingDirs = new Set(loadingDirs).add(directory);
-		const result = await listFiles(terminal.url, terminal.key, directory, chatId ?? undefined);
+		const result = await listFiles(terminal.url, terminal.key, directory, sessionId, signal);
+		if (signal?.aborted || revision !== terminalContextRevision) return null;
 		const nextLoading = new Set(loadingDirs);
 		nextLoading.delete(directory);
 		loadingDirs = nextLoading;
@@ -817,7 +899,9 @@
 		expandedDirs = new Set(expandedDirs).add(directory);
 		saveTreeState();
 
+		const revision = terminalContextRevision;
 		const result = await fetchExpandedDir(directory);
+		if (revision !== terminalContextRevision) return;
 		if (result === null) {
 			const next = new Set(expandedDirs);
 			next.delete(directory);
@@ -830,6 +914,10 @@
 	};
 
 	const openEntry = async (entry: FileEntry, options: { page?: unknown } = {}) => {
+		const terminal = selectedTerminal;
+		if (!terminal) return;
+		const sessionId = chatId ?? undefined;
+		const revision = terminalContextRevision;
 		const fullPath =
 			'fullPath' in entry ? (entry as BrowserRow).fullPath : entryPath(currentPath, entry);
 		const parentPath = 'parentPath' in entry ? (entry as BrowserRow).parentPath : currentPath;
@@ -842,67 +930,87 @@
 		if (parentPath !== currentPath) {
 			await loadDir(parentPath);
 		}
+		if (revision !== terminalContextRevision) return;
 		selectedFileWritable = entry.writable !== false;
 		pushNavHistory(parentPath, filePath);
-
-		const terminal = selectedTerminal;
-		if (!terminal) return;
 
 		selectedFile = filePath;
 		fileLoading = true;
 		clearFilePreview();
+		const request = new AbortController();
+		filePreviewController = request;
 		documentTargetPage = normalizeDocumentTargetPage(options.page);
 
+		let nextFileContent = null as typeof fileContent;
+		let nextFileImageUrl = null as typeof fileImageUrl;
+		let nextFileVideoUrl = null as typeof fileVideoUrl;
+		let nextFileAudioUrl = null as typeof fileAudioUrl;
+		let nextFilePdfData = null as typeof filePdfData;
+		let nextFileSqliteData = null as typeof fileSqliteData;
+		let nextFileDocxData = null as typeof fileDocxData;
+		let nextFileOfficeHtml = null as typeof fileOfficeHtml;
+		let nextFileOfficeSlides = null as typeof fileOfficeSlides;
+		let nextCurrentSlide = 0 as typeof currentSlide;
+		let nextExcelSheetNames = [] as typeof excelSheetNames;
+		let nextSelectedExcelSheet = '' as typeof selectedExcelSheet;
+		let nextExcelWorkbook = null as typeof excelWorkbook;
 		if (isImage(filePath)) {
 			if (terminal.system) {
 				const delivery = await getFileDelivery(
 					terminal.url,
 					terminal.key,
 					filePath,
-					chatId ?? undefined
+					sessionId,
+					request.signal
 				);
-				if (selectedFile === filePath && delivery?.image_url) fileImageUrl = delivery.image_url;
+				if (selectedFile === filePath && delivery?.image_url) nextFileImageUrl = delivery.image_url;
 			} else {
 				const result = await downloadFileBlob(
 					terminal.url,
 					terminal.key,
 					filePath,
-					chatId ?? undefined
+					sessionId,
+					request.signal
 				);
-				if (selectedFile === filePath && result) fileImageUrl = URL.createObjectURL(result.blob);
+				if (selectedFile === filePath && result)
+					nextFileImageUrl = URL.createObjectURL(result.blob);
 			}
 		} else if (isVideo(filePath)) {
 			const result = await downloadFileBlob(
 				terminal.url,
 				terminal.key,
 				filePath,
-				chatId ?? undefined
+				sessionId,
+				request.signal
 			);
-			if (result) fileVideoUrl = URL.createObjectURL(result.blob);
+			if (result) nextFileVideoUrl = URL.createObjectURL(result.blob);
 		} else if (isAudio(filePath)) {
 			const result = await downloadFileBlob(
 				terminal.url,
 				terminal.key,
 				filePath,
-				chatId ?? undefined
+				sessionId,
+				request.signal
 			);
-			if (result) fileAudioUrl = URL.createObjectURL(result.blob);
+			if (result) nextFileAudioUrl = URL.createObjectURL(result.blob);
 		} else if (isPdf(filePath)) {
 			const result = await downloadFileBlob(
 				terminal.url,
 				terminal.key,
 				filePath,
-				chatId ?? undefined
+				sessionId,
+				request.signal
 			);
-			if (result) filePdfData = await result.blob.arrayBuffer();
+			if (result) nextFilePdfData = await result.blob.arrayBuffer();
 		} else if (isSqlite(filePath)) {
 			const result = await downloadFileBlob(
 				terminal.url,
 				terminal.key,
 				filePath,
-				chatId ?? undefined
+				sessionId,
+				request.signal
 			);
-			if (result) fileSqliteData = await result.blob.arrayBuffer();
+			if (result) nextFileSqliteData = await result.blob.arrayBuffer();
 		} else if (isOffice(filePath)) {
 			const ext = getFileExt(filePath);
 			try {
@@ -911,40 +1019,43 @@
 						terminal.url,
 						terminal.key,
 						filePath,
-						chatId ?? undefined
+						sessionId,
+						request.signal
 					);
 					if (preview) {
-						filePdfData = await preview.blob.arrayBuffer();
+						nextFilePdfData = await preview.blob.arrayBuffer();
 					} else {
 						const result = await downloadFileBlob(
 							terminal.url,
 							terminal.key,
 							filePath,
-							chatId ?? undefined
+							sessionId,
+							request.signal
 						);
 						if (!result) throw new Error('Preview failed');
 						const arrayBuffer = await result.blob.arrayBuffer();
-						fileDocxData = arrayBuffer;
+						nextFileDocxData = arrayBuffer;
 					}
 				} else if (ext === 'xlsx') {
 					const result = await downloadFileBlob(
 						terminal.url,
 						terminal.key,
 						filePath,
-						chatId ?? undefined
+						sessionId,
+						request.signal
 					);
 					if (result) {
 						const arrayBuffer = await result.blob.arrayBuffer();
 						const XLSX = await import('xlsx');
 						const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
-						excelWorkbook = wb;
-						excelSheetNames = wb.SheetNames;
-						if (excelSheetNames.length > 0) {
-							selectedExcelSheet = excelSheetNames[0];
+						nextExcelWorkbook = wb;
+						nextExcelSheetNames = wb.SheetNames;
+						if (nextExcelSheetNames.length > 0) {
+							nextSelectedExcelSheet = nextExcelSheetNames[0];
 							const { excelToTable } = await import('$lib/utils/excelToTable');
-							const result = await excelToTable(wb.Sheets[selectedExcelSheet]);
+							const result = await excelToTable(wb.Sheets[nextSelectedExcelSheet]);
 							const DOMPurify = (await import('dompurify')).default;
-							fileOfficeHtml = DOMPurify.sanitize(result.html);
+							nextFileOfficeHtml = DOMPurify.sanitize(result.html);
 						}
 					}
 				} else if (ext === 'pptx') {
@@ -952,45 +1063,71 @@
 						terminal.url,
 						terminal.key,
 						filePath,
-						chatId ?? undefined
+						sessionId,
+						request.signal
 					);
 					if (preview) {
-						filePdfData = await preview.blob.arrayBuffer();
+						nextFilePdfData = await preview.blob.arrayBuffer();
 					} else {
 						const result = await downloadFileBlob(
 							terminal.url,
 							terminal.key,
 							filePath,
-							chatId ?? undefined
+							sessionId,
+							request.signal
 						);
 						if (!result) throw new Error('Preview failed');
 						const arrayBuffer = await result.blob.arrayBuffer();
 						const { pptxToImages } = await import('$lib/utils/pptxToHtml');
 						const fallback = await pptxToImages(arrayBuffer);
-						fileOfficeSlides = fallback.images;
-						currentSlide = 0;
+						nextFileOfficeSlides = fallback.images;
+						nextCurrentSlide = 0;
 					}
 				}
 			} catch (e) {
 				console.error('Failed to render Office file:', e);
-				fileContent = $i18n.t('Error previewing file: {{error}}', {
+				nextFileContent = $i18n.t('Error previewing file: {{error}}', {
 					error: e instanceof Error ? e.message : $i18n.t('Unknown error')
 				});
 			}
 		} else if (getFileExt(filePath) === 'svg') {
 			const [content, delivery] = await Promise.all([
-				readFile(terminal.url, terminal.key, filePath, chatId ?? undefined),
+				readFile(terminal.url, terminal.key, filePath, sessionId, request.signal),
 				terminal.system
-					? getFileDelivery(terminal.url, terminal.key, filePath, chatId ?? undefined)
+					? getFileDelivery(terminal.url, terminal.key, filePath, sessionId, request.signal)
 					: Promise.resolve(null)
 			]);
 			if (selectedFile === filePath) {
-				fileContent = content;
-				fileImageUrl = delivery?.image_url ?? null;
+				nextFileContent = content;
+				nextFileImageUrl = delivery?.image_url ?? null;
 			}
 		} else {
-			fileContent = await readFile(terminal.url, terminal.key, filePath, chatId ?? undefined);
+			nextFileContent = await readFile(
+				terminal.url,
+				terminal.key,
+				filePath,
+				sessionId,
+				request.signal
+			);
 		}
+		if (request.signal.aborted || revision !== terminalContextRevision) {
+			for (const url of [nextFileImageUrl, nextFileVideoUrl, nextFileAudioUrl])
+				if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+			return;
+		}
+		fileContent = nextFileContent;
+		fileImageUrl = nextFileImageUrl;
+		fileVideoUrl = nextFileVideoUrl;
+		fileAudioUrl = nextFileAudioUrl;
+		filePdfData = nextFilePdfData;
+		fileSqliteData = nextFileSqliteData;
+		fileDocxData = nextFileDocxData;
+		fileOfficeHtml = nextFileOfficeHtml;
+		fileOfficeSlides = nextFileOfficeSlides;
+		currentSlide = nextCurrentSlide;
+		excelSheetNames = nextExcelSheetNames;
+		selectedExcelSheet = nextSelectedExcelSheet;
+		excelWorkbook = nextExcelWorkbook;
 		fileLoading = false;
 	};
 
@@ -1230,7 +1367,9 @@
 			emptyFile,
 			chatId ?? undefined
 		);
-		toast[result ? 'success' : 'error']($i18n.t(result ? 'File created' : 'Failed to create file'));
+		toast[result ? 'success' : 'error'](
+			result ? $i18n.t('File created') : $i18n.t('Failed to create file')
+		);
 		invalidateTreeCache(currentPath);
 		await loadDir(currentPath, { preserveTree: true });
 	};
@@ -1341,7 +1480,9 @@
 	let selectionMode = false;
 
 	$: selectedCount = selectedEntries.size;
-	$: comparisonEntries = visibleEntries.filter((entry) => selectedEntries.has(entry.fullPath));
+	$: comparisonEntries = [...selectedEntries]
+		.map((path) => visibleEntries.find((entry) => entry.fullPath === path))
+		.filter((entry) => entry !== undefined);
 	$: canCompare =
 		selectedCount === 2 &&
 		comparisonEntries.length === 2 &&
@@ -1392,22 +1533,20 @@
 		if (!terminal || !selectedEntriesWritable) return;
 
 		const paths = [...selectedEntries];
+		const sessionId = chatId ?? undefined;
+		const directory = currentPath;
 		let ok = 0;
 		for (const p of paths) {
-			const result = await deleteEntry(
-				terminal.url,
-				terminal.key,
-				p.replace(/\/$/, ''),
-				chatId ?? undefined
-			);
+			const result = await deleteEntry(terminal.url, terminal.key, p.replace(/\/$/, ''), sessionId);
 			if (result) ok++;
 		}
+		if (selectedTerminal?.url !== terminal.url || (chatId ?? undefined) !== sessionId) return;
 		toast[ok > 0 ? 'success' : 'error'](
 			$i18n.t('Deleted {{ok}} of {{total}} items', { ok, total: paths.length })
 		);
-		invalidateTreeCache(currentPath, ...paths);
+		invalidateTreeCache(directory, ...paths);
 		clearSelection();
-		await loadDir(currentPath, { preserveTree: true });
+		if (currentPath === directory) await loadDir(directory, { preserveTree: true });
 	};
 
 	const bulkDownload = async () => {
@@ -1451,7 +1590,7 @@
 
 	// Escape to clear selection
 	const handleKeydown = (e: KeyboardEvent) => {
-		if (comparePaths) return;
+		if (comparison) return;
 		if (e.key === 'Escape' && selectedCount > 0) {
 			e.preventDefault();
 			clearSelection();
@@ -1460,12 +1599,17 @@
 
 	// Click outside panel to clear selection
 	const handleWindowClick = (e: MouseEvent) => {
+		// A close click may reach the window after its modal has already been destroyed.
+		if (
+			e.composedPath().some((node) => node instanceof Element && node.classList.contains('modal'))
+		)
+			return;
 		if (directoryMenu) directoryMenu = null;
 		if (
-			!comparePaths &&
+			!comparison &&
 			selectedCount > 0 &&
 			containerEl &&
-			!containerEl.contains(e.target as Node)
+			!e.composedPath().includes(containerEl)
 		) {
 			clearSelection();
 		}
@@ -1479,9 +1623,10 @@
 		let handledDisplayFile = false;
 
 		const unsubFileNav = showFileNavPath.subscribe(async (request) => {
-			if (!request || !selectedTerminal) return;
+			if (!request || !selectedTerminal || comparison) return;
 			handledDisplayFile = true;
 			showFileNavPath.set(null);
+			const revision = terminalContextRevision;
 			let filePath = typeof request === 'string' ? request : request.path;
 			const targetPage = typeof request === 'string' ? null : request.page;
 			filePath = normalizePath(filePath);
@@ -1497,6 +1642,7 @@
 			// Always reload directory to ensure entries are fresh
 			await loadDir(dir);
 			await tick();
+			if (revision !== terminalContextRevision) return;
 
 			const entry = entries.find((e) => e.name === fileName);
 			if (entry) {
@@ -1518,6 +1664,7 @@
 			const lastSlash = filePath.lastIndexOf('/');
 			const dir = lastSlash > 0 ? filePath.substring(0, lastSlash + 1) : '/';
 			invalidateTreeCache(dir);
+			if (comparison) return;
 
 			if (selectedFile) {
 				if (selectedFile === filePath || currentPath.startsWith(dir)) {
@@ -1532,14 +1679,18 @@
 		});
 
 		if (!handledDisplayFile && terminal) {
+			const sessionId = chatId ?? undefined;
+			const revision = terminalContextRevision;
 			loading = true;
 
 			void (async () => {
 				// Discover server features on initial mount
 				const config = await getTerminalConfig(terminal.url, terminal.key);
+				if (revision !== terminalContextRevision) return;
 				terminalEnabled = config?.features?.terminal !== false;
 
-				const serverCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
+				const serverCwd = await getCwd(terminal.url, terminal.key, sessionId);
+				if (revision !== terminalContextRevision) return;
 				const useServerPath = !!chatId || savedPath === '/';
 				const serverPath = applyCwd(serverCwd);
 				if (useServerPath) {
@@ -1564,7 +1715,7 @@
 		const onVisibilityChange = () => {
 			if (
 				document.visibilityState === 'visible' &&
-				!comparePaths &&
+				!comparison &&
 				!selectedFile &&
 				selectedTerminal &&
 				!terminalChatContextPending &&
@@ -1590,6 +1741,9 @@
 	});
 
 	onDestroy(() => {
+		terminalContextRevision++;
+		directoryController?.abort();
+		filePreviewController?.abort();
 		clearMatchRequest();
 		if (fileImageUrl) URL.revokeObjectURL(fileImageUrl);
 		if (fileVideoUrl) URL.revokeObjectURL(fileVideoUrl);
@@ -1612,6 +1766,18 @@
 />
 
 <svelte:window on:keydown={handleKeydown} on:click={handleWindowClick} />
+
+{#if comparison}
+	{#key comparison}
+		<FileComparisonModal
+			files={comparison.files}
+			baseUrl={comparison.terminal.url}
+			apiKey={comparison.terminal.key}
+			chatId={comparison.chatId}
+			onClose={closeComparison}
+		/>
+	{/key}
+{/if}
 
 {#if terminalChatContextHidden}
 	<div class="hidden"></div>
@@ -1651,6 +1817,7 @@
 		on:drop={(e) => !isSearching && handleDrop(e)}
 		role="region"
 		aria-label={$i18n.t('File browser')}
+		tabindex="-1"
 	>
 		{#if isDragOver && !isSearching}
 			<div
@@ -1663,7 +1830,7 @@
 			</div>
 		{/if}
 
-		{#if previewPort === null && !comparePaths}
+		{#if previewPort === null}
 			<FileNavToolbar
 				breadcrumbs={buildBreadcrumbs(currentPath)}
 				{selectedFile}
@@ -1849,6 +2016,22 @@
 				</div>
 			{/if}
 
+			{#if pinnedComparison}
+				<div class="flex shrink-0 items-center gap-2 px-3 py-1.5 text-xs text-gray-500">
+					<Tooltip content={pinnedComparison.path}>
+						<span class="block max-w-[16rem] truncate"
+							>{$i18n.t('Comparing with {{name}}', { name: pinnedComparison.name })}</span
+						>
+					</Tooltip>
+					<button
+						type="button"
+						class="shrink-0 hover:text-gray-900 dark:hover:text-white"
+						aria-label={$i18n.t('Clear comparison selection')}
+						on:click={() => (pinnedComparison = null)}><Icon name="xmark" size={12} /></button
+					>
+				</div>
+			{/if}
+
 			<!-- Bulk action bar -->
 			{#if selectedCount > 0 && !isSearching}
 				<BulkActionBar
@@ -1856,7 +2039,10 @@
 					{canCompare}
 					onCompare={() => {
 						if (canCompare)
-							comparePaths = [comparisonEntries[0].fullPath, comparisonEntries[1].fullPath];
+							openComparison([
+								comparisonFile(comparisonEntries[0]),
+								comparisonFile(comparisonEntries[1])
+							]);
 					}}
 					canDelete={selectedEntriesWritable}
 					onDelete={() => {
@@ -1875,26 +2061,18 @@
 			class="flex-1 overflow-y-auto min-h-0 min-w-0"
 			on:click={(e) => {
 				closeDirectoryMenu();
-				if (!comparePaths && e.target === e.currentTarget && selectedCount > 0) clearSelection();
+				if (!comparison && e.target === e.currentTarget && selectedCount > 0) clearSelection();
 			}}
 			on:contextmenu={(e) => {
-				if (comparePaths || selectedFile || previewPort !== null || isSearching) return;
+				if (comparison || selectedFile || previewPort !== null || isSearching) return;
 				if ((e.target as HTMLElement)?.closest('[data-file-row]')) return;
 				e.preventDefault();
 				directoryMenu = { x: e.clientX, y: e.clientY };
 			}}
 		>
-			{#if comparePaths && selectedTerminal}
-				<FileCompare
-					paths={comparePaths}
-					baseUrl={selectedTerminal.url}
-					apiKey={selectedTerminal.key}
-					{chatId}
-					onBack={() => (comparePaths = null)}
-				/>
-			{:else if previewPort !== null}
+			{#if previewPort !== null}
 				<PortPreview
-					baseUrl={portPreviewBaseUrl}
+					baseUrl={previewBaseUrl}
 					port={previewPort}
 					overlay={overlay || isDraggingHandle}
 					onClose={() => {
@@ -1932,8 +2110,9 @@
 						const DOMPurify = (await import('dompurify')).default;
 						fileOfficeHtml = DOMPurify.sanitize(result.html);
 					}}
-					baseUrl={selectedTerminal?.url ?? ''}
+					baseUrl={previewBaseUrl}
 					apiKey={selectedTerminal?.key ?? ''}
+					{chatId}
 					overlay={overlay || isDraggingHandle}
 					onSave={async (content) => {
 						const terminal = selectedTerminal;
@@ -2154,6 +2333,14 @@
 											depth: entry.depth,
 											rowIndex: entry.rowIndex
 										})}
+									onSelectForComparison={() => (pinnedComparison = comparisonFile(entry))}
+									comparisonPath={pinnedComparison?.path ?? null}
+									onCompareWithSelected={pinnedComparison
+										? () => {
+												if (pinnedComparison)
+													openComparison([pinnedComparison, comparisonFile(entry)]);
+											}
+										: undefined}
 									onDownload={downloadFile}
 									onDelete={requestDelete}
 									onMove={handleMovePaths}
@@ -2177,7 +2364,7 @@
 				{#key JSON.stringify([chatId, selectedTerminal.url])}
 					<PortList
 						baseUrl={selectedTerminal.url}
-						previewBaseUrl={portPreviewBaseUrl}
+						{previewBaseUrl}
 						apiKey={selectedTerminal.key}
 						{chatId}
 						on:previewPort={(e) => {

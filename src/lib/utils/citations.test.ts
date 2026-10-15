@@ -82,3 +82,19 @@ describe('citation numbering', () => {
 		expect(getCitationSourceTitles(undefined)).toEqual([]);
 	});
 });
+
+describe('external knowledge citation titles', () => {
+	it('retains external titles while linking to the stable URL identity', () => {
+		const sources = [
+			{
+				source: { id: 'knowledge', name: 'Knowledge title' },
+				document: ['Evidence'],
+				metadata: [{ source: 'https://example.test/knowledge', external: true }]
+			}
+		];
+		const citation = getCitations(sources)[0];
+		expect(citation.source.name).toBe('Knowledge title');
+		expect(citation.source.url).toBe('https://example.test/knowledge');
+		expect(getCitationSourceTitles(sources)).toEqual(['Knowledge title']);
+	});
+});

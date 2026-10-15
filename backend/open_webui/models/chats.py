@@ -1341,6 +1341,8 @@ class ChatTable:
                         user_id=user.id,
                         user={'id': user.id, 'name': user.name},
                     )
+                elif 'models' in user_message:
+                    message = {**existing, 'models': user_message['models']}
                 turn[user_message_id] = self.upsert_message_to_history(
                     history, user_message_id, self._clean_null_bytes(message)
                 )
@@ -1372,16 +1374,16 @@ class ChatTable:
                 turn[parent_id] = history['messages'][parent_id]
             return {'messages': turn, 'currentId': history['currentId']}
 
-    async def insert_voice_message(self, chat_id: str, user, data: dict):
+    async def insert_voice_message(self, chat_id: str, user, data: dict, authorize):
         """Insert one actor-authored transcript without accepting a browser history snapshot."""
         from fastapi import HTTPException
 
         async with self._chat_transaction(chat_id) as (db, chat):
-            if not chat or not await self.get_accessible_chat_by_id(
-                chat_id, user, db=db, permission='write', chat=chat
-            ):
-                raise HTTPException(403, 'Chat continuation is not allowed.')
+            if not chat or chat.user_id != user.id:
+                raise HTTPException(403, 'Only the chat owner can start voice calls.')
+            voice_model = await authorize()
             data = self._clean_null_bytes(data)
+            data['voice'] = {**data.get('voice', {}), 'model': voice_model}
             history = deepcopy((chat.chat or {}).get('history') or {'messages': {}, 'currentId': None})
             messages = history.setdefault('messages', {})
             message_id = data['id']
@@ -1502,13 +1504,12 @@ class ChatTable:
             previous = previous if isinstance(previous, dict) else {}
             merged = {**previous, **voice}
             provenance = meta.get('voice_provenance')
-            if (
-                isinstance(provenance, dict)
-                and provenance.get('source') == 'browser'
-                and message.get('role') == 'assistant'
-            ):
-                # Metadata edits cannot change the configured model of a stored transcript.
-                merged['model'] = message['model']
+            if isinstance(provenance, dict) and provenance.get('source') == 'browser':
+                # Speech edits retain the server-selected model for either transcript role.
+                if message.get('role') == 'assistant':
+                    merged['model'] = message['model']
+                elif 'model' in previous:
+                    merged['model'] = previous['model']
             if 'speech' in voice:
                 if not isinstance(voice['speech'], list) or not all(isinstance(item, dict) for item in voice['speech']):
                     raise HTTPException(400, 'Invalid voice speech metadata')
@@ -1584,6 +1585,7 @@ class ChatTable:
                 self._repair_chat_current_id(chat)
 
                 history = chat.get('history', {})
+                parent_id = ((history.get('messages') or {}).get(message_id) or {}).get('parentId')
                 deleted_ids = self.delete_message_from_history(history, message_id)
                 await ChatMessages.delete_message_ids_by_chat_id(id, deleted_ids, db=session)
                 if not deleted_ids:
@@ -1593,6 +1595,12 @@ class ChatTable:
                     flag_modified(chat_item, 'chat')
 
                     return ChatModel.model_validate(chat_item)
+
+                for mid, message in (history.get('messages') or {}).items():
+                    if message.get('parentId') == parent_id:
+                        await ChatMessages.upsert_message(
+                            mid, id, message.get('user_id') or chat_item.user_id, message, db=session
+                        )
 
                 chat['history'] = history
                 chat_item.chat = chat
@@ -2495,7 +2503,8 @@ class ChatTable:
         search_text_words = [word for word in search_text_words if not word.startswith(CHAT_SEARCH_FILTER_PREFIXES)]
 
         phrase_query = ' '.join(search_text_words).strip()
-        search_terms = chat_search_terms(phrase_query)
+        # A single-word query is already fully covered by the phrase match
+        search_terms = [term for term in chat_search_terms(phrase_query) if term != phrase_query]
 
         async with get_async_db_context(db) as session:
             stmt = select(Chat).filter(Chat.user_id == user_id)
@@ -2712,6 +2721,78 @@ class ChatTable:
                 }
                 for chat in all_chats
             ]
+
+    async def get_participant_ids_by_chat_ids(
+        self, chat_ids: list[str], db: AsyncSession | None = None
+    ) -> dict[str, list[str]]:
+        participants: dict[str, list[str]] = {chat_id: [] for chat_id in chat_ids}
+        if not chat_ids:
+            return participants
+
+        async with get_async_db_context(db) as session:
+            dialect = session.bind.dialect.name
+            # An empty history object is authoritative, including after message deletion.
+            if dialect == 'sqlite':
+                messages = """
+                    SELECT c.id AS chat_id, c.user_id AS owner_id,
+                           CASE WHEN m.type = 'object' THEN m.value ELSE '{}' END AS message
+                    FROM chat AS c, json_each(
+                        CASE
+                            WHEN json_type(c.chat, '$.history.messages') = 'object'
+                                THEN json_extract(c.chat, '$.history.messages')
+                            WHEN json_type(c.chat, '$.messages') = 'array'
+                                THEN json_extract(c.chat, '$.messages')
+                            ELSE '[]'
+                        END
+                    ) AS m
+                    WHERE c.id IN :chat_ids
+                """
+                role = "json_extract(message, '$.role')"
+
+                def author(path):
+                    return f"""CASE WHEN json_type(message, '{path}') = 'text'
+                        AND trim(json_extract(message, '{path}')) <> ''
+                        THEN json_extract(message, '{path}') END"""
+
+                author_id = f"COALESCE({author('$.user_id')}, {author('$.user.id')}, NULLIF(trim(owner_id), ''))"
+            elif dialect == 'postgresql':
+                messages = """
+                    SELECT c.id AS chat_id, c.user_id AS owner_id, m.message
+                    FROM chat AS c CROSS JOIN LATERAL (
+                        SELECT value AS message FROM json_each(
+                            CASE WHEN json_typeof(c.chat#>'{history,messages}') = 'object'
+                                THEN c.chat#>'{history,messages}' ELSE '{}'::json END
+                        )
+                        UNION ALL
+                        SELECT value AS message FROM json_array_elements(
+                            CASE WHEN json_typeof(c.chat#>'{history,messages}') IS DISTINCT FROM 'object'
+                                AND json_typeof(c.chat->'messages') = 'array'
+                                THEN c.chat->'messages' ELSE '[]'::json END
+                        )
+                    ) AS m
+                    WHERE c.id IN :chat_ids
+                """
+                role = "message->>'role'"
+
+                def author(path):
+                    return f"""CASE WHEN json_typeof(message#>'{path}') = 'string'
+                        AND trim(message#>>'{path}') <> '' THEN message#>>'{path}' END"""
+
+                author_id = f"COALESCE({author('{user_id}')}, {author('{user,id}')}, NULLIF(trim(owner_id), ''))"
+            else:
+                raise NotImplementedError(f'Unsupported dialect: {dialect}')
+
+            query = text(f"""
+                WITH messages AS ({messages}), authors AS (
+                    SELECT chat_id, {author_id} AS author_id
+                    FROM messages WHERE {role} = 'user'
+                )
+                SELECT DISTINCT chat_id, author_id FROM authors
+                WHERE author_id IS NOT NULL ORDER BY chat_id, author_id
+            """).bindparams(bindparam('chat_ids', expanding=True))
+            for chat_id, author_id in (await session.execute(query, {'chat_ids': chat_ids})).all():
+                participants[chat_id].append(author_id)
+        return participants
 
     async def count_all_chats_by_folder_id(
         self,

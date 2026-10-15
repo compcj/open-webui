@@ -9,7 +9,7 @@ import pytest
 import sqlalchemy as sa
 
 ROOT = Path(__file__).resolve().parents[2]
-HEAD = 'a120d13e0003'
+HEAD = 'a122d15e0001'
 FORK = 'f9a4b2d6c805'
 OFFICIAL = 'b8f2c6d91a04'
 

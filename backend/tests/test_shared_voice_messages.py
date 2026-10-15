@@ -286,6 +286,56 @@ async def runtime(tmp_path, monkeypatch):
         await engine.dispose()
 
 
+@pytest_asyncio.fixture
+async def owner_chat(runtime):
+    """Keep the historical shared authors while allowing the current owner to insert."""
+    async with runtime.sessions() as session:
+        (await session.get(runtime.namespace['Chat'], 'chat')).user_id = 'writer'
+        await session.commit()
+    return runtime
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('actor,role', [('writer', 'user'), ('admin', 'admin')])
+async def test_continuation_member_and_nonowner_admin_cannot_insert_voice(runtime, actor, role):
+    runtime.actor = SimpleNamespace(id=actor, name=actor, role=role)
+    runtime.namespace['ENABLE_ADMIN_CHAT_ACCESS'] = True
+    runtime.members.add(actor)
+    before = (await runtime.chat()).model_dump()
+    response = await runtime.client.post('/chat/voice/messages', json=transcript())
+    assert response.status_code == 403, response.text
+    assert (await runtime.chat()).model_dump() == before
+    runtime.emitted.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['owner', 'permission', 'enabled', 'model'])
+async def test_voice_insert_revalidates_policy_at_persistence_boundary(runtime, owner_chat, change):
+    original = runtime.table._chat_transaction
+
+    @asynccontextmanager
+    async def change_then_lock(chat_id):
+        if change == 'permission':
+            runtime.call_allowed = False
+        elif change == 'enabled':
+            runtime.config['audio.realtime.enabled'] = False
+        elif change == 'model':
+            runtime.config['audio.realtime.model'] = 'new-server-voice-model'
+        async with original(chat_id) as (db, chat):
+            if change == 'owner':
+                chat.user_id = 'other'
+            yield db, chat
+
+    runtime.table._chat_transaction = change_then_lock
+    response = await runtime.client.post('/chat/voice/messages', json=transcript(role='assistant'))
+    if change == 'model':
+        assert response.status_code == 200, response.text
+        assert response.json()['messages']['voice-u']['model'] == 'new-server-voice-model'
+    else:
+        assert response.status_code == 403, response.text
+        assert 'voice-u' not in (await runtime.chat()).chat['history']['messages']
+
+
 def transcript(mid='voice-u', **changes):
     return {
         'id': mid,
@@ -300,7 +350,7 @@ def transcript(mid='voice-u', **changes):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('folder', [False, True])
-async def test_member_saves_their_voice_turn_with_server_author(runtime, folder):
+async def test_owner_saves_their_voice_turn_with_server_author(runtime, owner_chat, folder):
     runtime.folder = folder
     if folder:
         async with runtime.sessions() as session:
@@ -442,7 +492,7 @@ async def test_owner_and_admin_cannot_use_dedicated_voice_route_for_another_auth
 
 
 @pytest.mark.asyncio
-async def test_browser_assistant_transcript_has_server_model_and_public_actor_provenance(runtime):
+async def test_browser_assistant_transcript_has_server_model_and_public_actor_provenance(runtime, owner_chat):
     provenance = {'source': 'browser', 'user': {'id': 'writer', 'name': 'Writer'}}
     response = await runtime.client.post(
         '/chat/voice/messages',
@@ -495,7 +545,7 @@ async def test_browser_assistant_transcript_has_server_model_and_public_actor_pr
         ('call_allowed', False),
     ],
 )
-async def test_voice_insert_requires_current_call_policy_and_configured_model(runtime, setting, value):
+async def test_voice_insert_requires_current_call_policy_and_configured_model(runtime, owner_chat, setting, value):
     if setting == 'call_allowed':
         runtime.call_allowed = value
     else:
@@ -509,7 +559,9 @@ async def test_voice_insert_requires_current_call_policy_and_configured_model(ru
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('source', ['public-copy', 'local-voice'])
-async def test_voice_attribution_survives_copy_and_normalized_reload_without_private_metadata(runtime, source):
+async def test_voice_attribution_survives_copy_and_normalized_reload_without_private_metadata(
+    runtime, owner_chat, source
+):
     provenance = {'source': 'browser', 'user': {'id': 'writer', 'name': 'Writer'}}
     if source == 'public-copy':
         response = await runtime.client.post(
@@ -556,7 +608,7 @@ async def test_voice_attribution_survives_copy_and_normalized_reload_without_pri
     'replacement',
     [None, {'request_context': {'private': 'new private settings'}, 'voice_provenance': {'source': 'server'}}],
 )
-async def test_metadata_replacement_preserves_saved_voice_attribution_in_both_stores(runtime, replacement):
+async def test_metadata_replacement_preserves_saved_voice_attribution_in_both_stores(runtime, owner_chat, replacement):
     response = await runtime.client.post('/chat/voice/messages', json=transcript('voice-a', role='assistant'))
     assert response.status_code == 200, response.text
     provenance = response.json()['messages']['voice-a']['voice_provenance']
@@ -590,7 +642,7 @@ async def test_metadata_replacement_preserves_saved_voice_attribution_in_both_st
         ({'id': 'voice' + chr(0)}, 422),
     ],
 )
-async def test_invalid_or_existing_message_cannot_rewrite_history(runtime, changes, status_code):
+async def test_invalid_or_existing_message_cannot_rewrite_history(runtime, owner_chat, changes, status_code):
     before = (await runtime.chat()).model_dump()
     response = await runtime.client.post('/chat/voice/messages', json=transcript(**changes))
     assert response.status_code == status_code, response.text
@@ -606,7 +658,7 @@ async def test_missing_voice_metadata_target_does_not_create_message(runtime):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('next_author', ['writer', 'other'])
-async def test_delayed_reply_reparents_only_the_same_actors_next_turn(runtime, next_author):
+async def test_delayed_reply_reparents_only_the_same_actors_next_turn(runtime, owner_chat, next_author):
     async with runtime.sessions() as session:
         row = await session.get(runtime.namespace['Chat'], 'chat')
         history = copy.deepcopy(row.chat['history'])
@@ -702,7 +754,7 @@ async def test_normalized_author_is_authoritative_for_metadata(runtime):
 
 
 @pytest.mark.asyncio
-async def test_cross_chat_parent_is_denied_even_if_the_foreign_message_exists(runtime):
+async def test_cross_chat_parent_is_denied_even_if_the_foreign_message_exists(runtime, owner_chat):
     async with runtime.sessions() as session:
         session.add(
             runtime.namespace['Chat'](
@@ -740,7 +792,7 @@ async def test_metadata_backfill_preserves_legacy_tool_output_and_citations(runt
 
 
 @pytest.mark.asyncio
-async def test_delayed_voice_reparent_preserves_legacy_next_turn(runtime):
+async def test_delayed_voice_reparent_preserves_legacy_next_turn(runtime, owner_chat):
     next_message = {
         'id': 'legacy-next',
         'role': 'user',
@@ -794,3 +846,19 @@ async def test_voice_metadata_update_tolerates_malformed_historical_fields(runti
         row = await session.get(runtime.namespace['ChatMessage'], 'chat-writer-a')
         assert row.output == saved['output']
         assert row.meta == saved['meta']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('role', ['user', 'assistant'])
+async def test_speech_update_cannot_change_a_transcripts_server_voice_model(runtime, owner_chat, role):
+    response = await runtime.client.post('/chat/voice/messages', json=transcript(role=role))
+    assert response.status_code == 200, response.text
+    response = await runtime.client.post(
+        '/chat/messages/voice-u/voice',
+        json={
+            'voice': {'model': 'forged-model', 'speech': [{'item_id': 'speech', 'transcript': 'spoken'}]},
+        },
+    )
+    assert response.status_code == 200, response.text
+    message = response.json()['chat']['history']['messages']['voice-u']
+    assert message['meta']['voice']['model'] == 'voice-model'

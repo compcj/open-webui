@@ -176,7 +176,7 @@ repository-wide cleanup solely to make an unrelated check green.
 ## Fork regression map
 
 Read [the upstream merge index](upstream/README.md) and the
-[v0.12.0 decisions](upstream/v0.12.0-decisions.md) before comparing or merging upstream.
+[v0.12.2 decisions](upstream/v0.12.2-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
 
@@ -520,20 +520,24 @@ Tool-result budget acceptance extends the walkthrough above:
    Manual history compaction must not prepare pending tools. Status GET must never
    create selections or summaries; source history and timestamps must remain unchanged.
 
-## v0.12.0 merge acceptance
+## v0.12.2 merge acceptance
 
 Use Node 22 and Python 3.11/3.12. Run full frontend/backend suites and confirm their collected counts,
 then `npm run check` and `npm run build`. Type diagnostics must be compared by file and diagnostic
 against the pre-merge baseline; a lower total is not a pass. Install/update locks with npm and uv,
 check `uv lock --check`, and inspect generated `static/pyodide/pyodide-lock.json` changes and downloaded
 wheel hashes. The build writes that generated lock atomically to support Windows mapped-file readers. If Node
-exhausts its default heap, set `NODE_OPTIONS=--max-old-space-size=8192` for the build (PowerShell:
-`$env:NODE_OPTIONS="--max-old-space-size=8192"`).
-Do not manually edit its dependency resolutions.
+exhausts its default heap, set `NODE_OPTIONS=--max-old-space-size=6144` for the build (PowerShell:
+`$env:NODE_OPTIONS="--max-old-space-size=6144"`). The Docker frontend build stage defaults to the same
+6 GiB heap limit; override it with `docker build --build-arg NODE_OPTIONS="--max-old-space-size=8192" .`
+when appropriate for the builder. This argument does not enter the Python runtime image.
+Do not manually edit the lockfile dependency resolutions.
 
 The migration graph joins fork `f9a4b2d6c805` and official `b8f2c6d91a04` at `a120d13e0001`,
 then converts current skill packages at `a120d13e0002` and adds shared provenance at `a120d13e0003`.
-Run `python -m pytest backend/tests/test_v012_migrations.py -q` with isolated data/static directories.
+The v0.12.2 merge adds `a122d15e0001`, joining that branch with upstream `0bd252b206fb`.
+Run `python -m pytest backend/tests/test_v012_migrations.py backend/tests/test_v0122_migrations.py -q`
+with isolated data/static directories and a new `--basetemp` when the system temporary directory is unavailable.
 The test runs real Alembic upgrades for empty, fork and official SQLite databases, rejects conflicting
 legacy attachments without advancing the head, and checks immutable snapshots and idempotence.
 Model control regressions exercise actual parameter conversion for OpenAI/Ollama, including null and
@@ -544,7 +548,11 @@ Clone-only readers retain snapshot access. Test continuation permissions separat
 whole-chat edits and author-only voice updates, approvals and stops.
 
 PostgreSQL DDL compilation is not PostgreSQL execution: also run the upgrade cases against a disposable
-PostgreSQL instance before claiming that database's runtime migration acceptance.
+PostgreSQL instance before claiming that database's runtime migration acceptance. Set `TEST_POSTGRES_URL`
+to a task-only `postgresql+psycopg://.../postgres` connection with database-creation permission. The new
+suite creates and drops a unique database per case; without this setting six PostgreSQL cases skip.
+Compare stored checkpoint fields, NULL/saved provenance, auth, raw chats, skill versions and adopted
+tool results; schema-only checks cannot establish data preservation. See the [actual acceptance report](upstream/v0.12.2-validation.md).
 
 | Contract                                                              | Regression entry points                                                                                                                            |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -569,4 +577,41 @@ Start the complete application using disposable SQLite/data/static directories a
 check health/version/config and a synthetic account workflow. Standard container startup remains a
 separate acceptance step, including native dependencies and mounted storage. Slim adds upstream S3
 storage but does not imply standard-image processing dependencies or tested external services. Record
-actual runtime/container checks and omissions in the [version record](upstream/v0.12.0-decisions.md).
+actual runtime/container checks and omissions in the [version record](upstream/v0.12.2-decisions.md).
+
+### v0.12.2 integration checks
+
+The new head `a122d15e0001` joins fork `a120d13e0003` and upstream `0bd252b206fb` without data writes.
+Upstream `c92da83b017f` adds Apps and channel-member constraints; `0bd252b206fb` fills missing auth rows.
+Validate empty, fork v0.12.0, official v0.12.0 and official v0.12.2 databases, preserving existing
+credentials, raw chats, historical skill snapshots and adopted tool results. Repeat the upgrade and
+check a single Alembic head on SQLite and a disposable PostgreSQL server; compiling DDL is insufficient.
+
+Run the new regressions alongside the existing map above:
+
+```sh
+python -m pytest backend/tests/test_tool_dispatch_v0122.py backend/tests/test_v0122_tool_chain.py backend/tests/test_apps_channel_permissions.py -q
+python -m pytest backend/tests/test_standard_voice_access.py backend/tests/test_realtime_authorization.py backend/tests/test_shared_voice_messages.py -q
+python -m pytest backend/tests/test_skill_v0122_integration.py backend/tests/test_skill_runtime_paging.py backend/tests/test_exact_tool_results.py -q
+node --test scripts/*.test.js
+uv lock --check
+```
+
+Call ownership tests must distinguish owner, non-owner administrator and ordinary participant,
+new transcript insertion and historical author metadata, live revocation and Redis outages.
+Dispatch tests cover strict schemas, approval/resume, stateful errors, frozen citation replay,
+cross-round IDs and no repeated execution. Skill tests cover Chinese character offsets, omissions,
+prepared OpenClaw roots, pinned versions, disabled discovery and `.skill` round trips. Exercise revision
+comparison with a changed draft/version, model controls, tool drafts, ratings, narrow screens and IME.
+
+`package.json` and the root package entries in `package-lock.json` must report `0.12.2`; Python's Hatch
+metadata reads that same file. Use npm for `@codemirror/merge`, Mermaid and lock resolution, and uv for
+Python lock verification. Check shared standard/slim pins and preserve intentional exclusions.
+`valkey-glide-sync>=2.5.2` is required only when using the optional Valkey vector backend; it is not
+installed as a new mandatory dependency.
+
+Record source `/api/version`, frontend build and Python wheel metadata checks independently. Run
+the standard container separately from a source startup. The release workflow still detects version
+changes on pushed `main`, queues releases, limits release notes and uses fixed commit links. Local
+integration does not authorize pushing, publishing or deploying. See the current decision record
+for actual results and unexecuted service checks.

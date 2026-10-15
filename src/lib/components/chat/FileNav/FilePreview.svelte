@@ -34,6 +34,7 @@
 	// Terminal connection for notebook execution
 	export let baseUrl: string = '';
 	export let apiKey: string = '';
+	export let chatId: string | null = null;
 
 	// Office preview props
 	export let fileOfficeHtml: string | null = null;
@@ -452,13 +453,16 @@
 			</div>
 		{:else if isNotebook && !showRaw && parsedNotebook}
 			<div class="overflow-auto h-full">
-				<NotebookView
-					notebook={parsedNotebook}
-					filePath={selectedFile ?? ''}
-					{baseUrl}
-					{apiKey}
-					{readOnly}
-				/>
+				{#key JSON.stringify([baseUrl, apiKey, chatId, selectedFile])}
+					<NotebookView
+						notebook={parsedNotebook}
+						filePath={selectedFile ?? ''}
+						{baseUrl}
+						{apiKey}
+						{chatId}
+						{readOnly}
+					/>
+				{/key}
 			</div>
 		{:else if isJson && !showRaw && parsedJson !== undefined}
 			<div class="overflow-auto h-full">

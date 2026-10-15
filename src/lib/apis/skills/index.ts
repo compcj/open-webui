@@ -459,7 +459,7 @@ export const cloneSkill = async (
 	).json();
 export const exportSkillBundle = async (
 	token: string,
-	format: 'json' | 'zip',
+	format: 'json' | 'zip' | 'skill',
 	ids: string[] = [],
 	versionId?: string
 ) => {

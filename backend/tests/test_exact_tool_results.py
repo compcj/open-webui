@@ -202,3 +202,95 @@ class ExactToolEngineTests(IsolatedCase):
         generate.assert_awaited_once()
         assert 'external evidence' in result['messages'][-1]['content']
         assert service.save_context.call_args.kwargs['method'] == 'summary'
+
+    def test_search_exact_entries_are_silent_and_keep_citation_framing_counted(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=10000)
+        entries = [
+            {
+                'path': 'SKILL.md',
+                'offset': i * 1000,
+                'match_length': 3,
+                'excerpt': '中😀 hit ' * 150,
+                'locations': [{'offset': i * 1000, 'match_length': 3}],
+            }
+            for i in range(20)
+        ]
+        original = self.install_exact(
+            payload,
+            history,
+            'skill_search',
+            'grep_skill_files',
+            {'id': 'demo', 'version_id': 'v1', 'matches': entries, 'total_matches': 20, 'truncated': False},
+        )
+        citation = '\n<citation id="1" type="search_result" url="https://example.test/skill" />'
+        payload['messages'][-1]['content'] += citation
+        payload['messages'][-1]['_tool_result_refs'][0].update(start=0, end=len(original))
+        with patch.object(v2, 'generate_summary', AsyncMock()) as generate:
+            result = asyncio.run(v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        generate.assert_not_awaited()
+        assert result['messages'][-1]['content'].endswith(citation)
+        page = json.loads(result['messages'][-1]['content'][: -len(citation)])
+        assert page['matches'] == entries[: len(page['matches'])]
+        assert 0 < len(page['matches']) < 20
+        assert page['total_matches'] == 20 and page['omitted_match_count'] == 20 - len(page['matches'])
+        assert v2.estimate_payload_tokens(result) <= 9500
+        assert service.selections.rows[('a2', 'out')]['method'] == 'read'
+        assert not any(kind == 'tool_result_compaction' for kind, _ in events)
+
+    def test_search_minimum_failure_never_invokes_a_semantic_summary(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=10000)
+        self.install_exact(
+            payload,
+            history,
+            'skill_search',
+            'grep_skill_files',
+            {
+                'id': 'demo',
+                'matches': [{'path': 'SKILL.md', 'offset': 0, 'match_length': 1, 'excerpt': 'huge ' * 5000}],
+                'total_matches': 1,
+                'truncated': False,
+            },
+        )
+        with patch.object(v2, 'generate_summary', AsyncMock()) as generate:
+            with pytest.raises(v2.CompactionFailure, match='skill search'):
+                asyncio.run(v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        generate.assert_not_awaited()
+
+    def test_oversized_heading_search_fails_before_exact_budgeting_without_summary(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=10000)
+        files = importlib.import_module('open_webui.utils.skill_files')
+        sources = importlib.import_module('open_webui.utils.tool_result_sources')
+        name = 'grep_skill_files'
+        kind = sources.registered_tool_kind(name, {name: {'type': 'builtin', 'tool_id': 'builtin:' + name}})
+        assert kind == 'skill_search'
+        with patch.object(v2, 'generate_summary', AsyncMock()) as generate:
+            with pytest.raises(ValueError, match='skill search.*narrow the pattern'):
+                raw = files.grep_skill_content([{'path': 'SKILL.md', 'content': '# ' + 'H' * 7000 + '\nhit\n'}], 'hit')
+                self.install_exact(payload, history, kind, name, json.loads(raw))
+                asyncio.run(v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        generate.assert_not_awaited()
+
+    def test_empty_positive_search_fails_through_exact_classification_and_budget_path(self):
+        v2, tool, request, payload, history, service, events = self.make_batch(context=10000)
+        sources = importlib.import_module('open_webui.utils.tool_result_sources')
+        name = 'grep_skill_files'
+        kind = sources.registered_tool_kind(name, {name: {'type': 'builtin', 'tool_id': 'builtin:' + name}})
+        self.install_exact(
+            payload,
+            history,
+            kind,
+            name,
+            {
+                'id': 'demo',
+                'matches': [],
+                'total_matches': 1,
+                'truncated': True,
+                'omitted_matches': [],
+                'notice': 'x' * 30000,
+            },
+        )
+        with patch.object(v2, 'generate_summary', AsyncMock()) as generate:
+            with pytest.raises(v2.CompactionFailure, match='skill search.*narrow the pattern'):
+                asyncio.run(v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}))
+        generate.assert_not_awaited()
+        assert not any(kind == 'tool_result_compaction' for kind, _ in events)

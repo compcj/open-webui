@@ -377,7 +377,7 @@ def test_clawhub_resolution_keeps_owner_version_and_archive(monkeypatch, mode):
 
 
 def test_local_import_without_extension_still_requires_supported_file_type():
-    with pytest.raises(ValueError, match='Use JSON, ZIP, or Markdown'):
+    with pytest.raises(ValueError, match='Use JSON, ZIP, .skill, or Markdown'):
         sf.parse_import(MARKDOWN, 'download')
 
 

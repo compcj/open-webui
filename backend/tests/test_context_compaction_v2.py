@@ -906,7 +906,16 @@ class ManualNativeRoundtripTests(IsolatedCase):
         middleware = ModuleType('open_webui.utils.middleware')
         payload_module = ModuleType('open_webui.utils.payload')
         for relative, names, module in [
-            ('utils/misc.py', {'convert_output_to_messages', 'reconcile_tool_pairs', 'get_paired_tool_call_ids'}, misc),
+            (
+                'utils/misc.py',
+                {
+                    'convert_output_to_messages',
+                    'get_provider_function',
+                    'reconcile_tool_pairs',
+                    'get_paired_tool_call_ids',
+                },
+                misc,
+            ),
             (
                 'utils/middleware.py',
                 {'get_reasoning_format', 'process_messages_with_output', 'add_file_context'},

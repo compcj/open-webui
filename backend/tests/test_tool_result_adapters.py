@@ -672,6 +672,7 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     ns.update(
         output=output,
         full_output=lambda: output,
+        response_usage={},
         new_tool_output_ids=[item['id'] for item in output if item.get('type') == 'function_call_output'],
         form_data={
             'previous_response_id': 'stale-previous',
@@ -771,6 +772,7 @@ async def test_auxiliary_reader_path_works_when_builtin_capability_is_disabled(r
             'extra_params': {'__user__': context.user, '__metadata__': metadata},
             'event_emitter': None,
             'view_skill_ids': [],
+            'resolved_skill_ids': set(),
             'tools_dict': {'read_tool_result': {'type': 'external', 'spec': {}}},
         }
         exec(compile(ast.fix_missing_locations(wrapper), 'auxiliary_resolution', 'exec'), ns)

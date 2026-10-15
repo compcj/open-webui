@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { config } from '$lib/stores';
+import { checkSourceSize, readSourceResponse } from './sourceText';
 export type FileEntry = {
 	name: string;
 	type: 'file' | 'directory';
@@ -184,12 +185,13 @@ export const getFileDelivery = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<TerminalFileDelivery | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/display?path=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
+	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
 	if (!res?.ok) return null;
 	const result = await res.json().catch(() => null);
 	if (
@@ -226,13 +228,14 @@ export const downloadDeliveryFile = async (
 	url: string,
 	baseUrl: string,
 	apiKey: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
 	const validated = validateDeliveryUrl(url, baseUrl, 'download');
 	if (!validated) return null;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(validated, { headers }).catch(() => null);
+	const res = await fetch(validated, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
 	if (!res?.ok) return null;
 	const blob = await res.blob().catch(() => null);
 	return blob ? { blob, filename: deliveryFilename(res) } : null;
@@ -310,19 +313,20 @@ export const listFiles = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string = '/',
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<TerminalFileList | null> => {
 	// The endpoint uses `directory` as the query param name
 	const url = `${baseUrl.replace(/\/$/, '')}/files/list?directory=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers })
+	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) })
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
 		.catch((err) => {
-			console.error('open-terminal listFiles error:', err);
+			if (err?.name !== 'AbortError') console.error('open-terminal listFiles error:', err);
 			return null;
 		});
 	return res?.entries ? { entries: res.entries, writable: res.writable } : null;
@@ -418,17 +422,39 @@ export const getFileMatches = async (
 	return Array.isArray(json?.results) ? json : null;
 };
 
+export const readComparisonSource = async (
+	baseUrl: string,
+	apiKey: string,
+	path: string,
+	signal: AbortSignal,
+	sessionId?: string,
+	size?: number
+): Promise<string> => {
+	checkSourceSize(size);
+	const headers = bearerHeaders(apiKey);
+	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const response = await fetch(
+		`${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`,
+		{ headers, signal }
+	).catch(() => {
+		signal.throwIfAborted();
+		throw new Error('Could not read file. Check your terminal connection.');
+	});
+	return readSourceResponse(response, signal);
+};
+
 export const readFile = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<string | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/read?path=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch((err) => {
-		console.error('open-terminal readFile error:', err);
+	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch((err) => {
+		if (err?.name !== 'AbortError') console.error('open-terminal readFile error:', err);
 		return null;
 	});
 
@@ -473,12 +499,13 @@ export const downloadFileBlob = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
+	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
 
 	if (!res || !res.ok) return null;
 
@@ -492,12 +519,13 @@ export const downloadFilePreview = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}&preview=true`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
+	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
 
 	if (!res) return null;
 	if (!res.ok) return null;
@@ -740,14 +768,16 @@ export const getPortProxyUrl = (baseUrl: string, port: number, path: string = ''
 export const createNotebookSession = async (
 	baseUrl: string,
 	apiKey: string,
-	path: string
+	path: string,
+	chatId?: string
 ): Promise<{ id: string; kernel: string; status: string } | { error: string }> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/notebooks`;
 	const res = await fetch(url, {
 		method: 'POST',
 		headers: {
 			...bearerHeaders(apiKey),
-			'Content-Type': 'application/json'
+			'Content-Type': 'application/json',
+			...(chatId ? { 'X-Session-Id': chatId } : {})
 		},
 		body: JSON.stringify({ path })
 	})
@@ -770,7 +800,8 @@ export const executeNotebookCell = async (
 	apiKey: string,
 	sessionId: string,
 	cellIndex: number,
-	source?: string
+	source?: string,
+	chatId?: string
 ): Promise<{ status: string; execution_count?: number; outputs: any[] } | { error: string }> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}/execute`;
 	const body: Record<string, any> = { cell_index: cellIndex };
@@ -780,7 +811,8 @@ export const executeNotebookCell = async (
 		method: 'POST',
 		headers: {
 			...bearerHeaders(apiKey),
-			'Content-Type': 'application/json'
+			'Content-Type': 'application/json',
+			...(chatId ? { 'X-Session-Id': chatId } : {})
 		},
 		body: JSON.stringify(body)
 	})
@@ -801,12 +833,13 @@ export const executeNotebookCell = async (
 export const stopNotebookSession = async (
 	baseUrl: string,
 	apiKey: string,
-	sessionId: string
+	sessionId: string,
+	chatId?: string
 ): Promise<boolean> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}`;
 	const res = await fetch(url, {
 		method: 'DELETE',
-		headers: bearerHeaders(apiKey)
+		headers: { ...bearerHeaders(apiKey), ...(chatId ? { 'X-Session-Id': chatId } : {}) }
 	}).catch(() => null);
 	return res?.ok ?? false;
 };

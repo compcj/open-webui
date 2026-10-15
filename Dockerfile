@@ -32,9 +32,6 @@ ARG USE_SLIM
 ARG UID
 ARG GID
 
-# Set Node.js options (heap limit Allocation failed - JavaScript heap out of memory)
-# ENV NODE_OPTIONS="--max-old-space-size=4096"
-
 WORKDIR /app
 
 # to store git revision in build
@@ -45,6 +42,8 @@ COPY scripts/npm-ci.sh scripts/npm-ci.sh
 RUN sh scripts/npm-ci.sh
 
 COPY . .
+# Keep the compiler heap configurable without adding Node settings to the runtime image.
+ARG NODE_OPTIONS="--max-old-space-size=6144"
 ENV APP_BUILD_HASH=${BUILD_HASH}
 ENV APP_BUILD_CHANNEL=${BUILD_CHANNEL}
 RUN npm run build && \

@@ -244,13 +244,17 @@ async def test_native_responses_send_uses_saved_manual_configuration(provider_id
         'JSONCodec': json,
     }
     load_functions(namespace, 'routers/openai.py', {'responses'})
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(OPENAI_MODELS={selected_id: {'urlIdx': 0}})))
+    request = SimpleNamespace(
+        state=SimpleNamespace(),
+        app=SimpleNamespace(state=SimpleNamespace(OPENAI_MODELS={selected_id: {'urlIdx': 0}})),
+    )
     form = SimpleNamespace(model=selected_id, model_dump=lambda **kwargs: copy.deepcopy(body))
     with pytest.raises(CapturedRequest):
         await namespace['responses'](request, form, SimpleNamespace(role='admin'))
 
     expected = normalize_gemini_tool_schemas({**body, 'model': provider_id}, compatibility=compatibility)
     assert sent == expected
+    assert request.state.model_id == selected_id
     assert body == original
     namespace['check_model_access'].assert_awaited_once()
 

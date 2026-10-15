@@ -32,7 +32,7 @@ export const getCitations = (sources: CitationSource[] | null | undefined): Cita
 			let sourceInfo: Citation['source'] = { ...source.source, name: source.source?.name || id };
 			if (metadata.name) sourceInfo = { ...sourceInfo, name: metadata.name };
 			if (id.startsWith('http://') || id.startsWith('https://')) {
-				sourceInfo = { ...sourceInfo, name: id, url: id };
+				sourceInfo = { ...sourceInfo, name: metadata.external ? sourceInfo.name : id, url: id };
 			}
 			citations.set(id, {
 				id,

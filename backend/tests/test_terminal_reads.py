@@ -13,6 +13,7 @@ from urllib.parse import quote, unquote
 import pytest
 
 from test_skill_discovery_policy import compile_nodes
+from open_webui.utils.skill_files import SKILL_CONTENT_MAX_CHARS, skill_overview
 
 
 @pytest.fixture
@@ -45,7 +46,8 @@ def runtime(monkeypatch):
         'quote': quote,
         'ENABLE_TOOL_SERVERS': True,
         'MAX_AGENTS_MD_BYTES': 32768,
-        'SKILL_CONTENT_MAX_CHARS': 100000,
+        'SKILL_CONTENT_MAX_CHARS': SKILL_CONTENT_MAX_CHARS,
+        'skill_overview': skill_overview,
         'terminal_context_config': lambda *args: {},
         'terminal_context_id': lambda *args: None,
         'terminal_context_available': lambda *args: True,
@@ -62,6 +64,7 @@ def runtime(monkeypatch):
             '_get_terminal_request_info',
             'get_terminal_skills',
             'get_terminal_skill',
+            'load_terminal_skill',
             'get_terminal_agents_md',
             'terminal_skills_auto_discovery',
         },
@@ -174,3 +177,21 @@ async def test_legacy_request_wrapper_matches_current_header_builder_signature(r
         object(), SimpleNamespace(id='owner'), {'terminal_id': 'admin-terminal'}, {}
     )
     assert info == ('https://admin.test', {'Accept': 'application/json', 'X-User-Id': 'owner'}, {})
+
+
+@pytest.mark.asyncio
+async def test_terminal_pages_expose_the_source_fingerprint(runtime):
+    runtime.ns['get_terminal_json'] = AsyncMock(return_value={'content': '中😀 instructions'})
+    page = await runtime.ns['get_terminal_skill'](None, None, {'terminal_id': 't'}, 'skill')
+    assert page['fingerprint'] == hashlib.sha256('中😀 instructions'.encode('utf-8')).hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tools_enabled,limit', [(True, 5000), (False, 100000)])
+async def test_terminal_overview_and_disabled_tool_injection_limits(runtime, tools_enabled, limit):
+    content = '中😀' * 60000
+    runtime.ns['get_terminal_json'] = AsyncMock(return_value={'content': content})
+    page = await runtime.ns['get_terminal_skill'](
+        None, None, {'terminal_id': 't'}, 'skill', overview=True, tools_enabled=tools_enabled
+    )
+    assert page['content'] == content[:limit] and page['next_offset'] == limit

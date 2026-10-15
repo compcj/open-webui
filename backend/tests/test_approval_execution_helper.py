@@ -26,6 +26,15 @@ def runtime():
         'uuid4': uuid4,
         'is_saved_chat_id': lambda value: value == 'saved',
     }
+    # Load the production dispatcher without importing application/database state.
+    dispatch_path = path.with_name('tool_search.py')
+    dispatch_tree = ast.parse(dispatch_path.read_text(encoding='utf-8'))
+    dispatch_nodes = [
+        node for node in dispatch_tree.body if isinstance(node, ast.FunctionDef) and node.name == 'resolve_tool_call'
+    ]
+    assert len(dispatch_nodes) == 1
+    ns.update(CALL_TOOL_NAME='call_tool', SEARCH_TOOL_NAME='search_tools')
+    exec(compile(ast.Module(body=dispatch_nodes, type_ignores=[]), str(dispatch_path), 'exec'), ns)
     effect = AsyncMock(return_value={'data': 'result'})
     ns['get_updated_tool_function'] = AsyncMock(return_value=effect)
     ns['build_terminal_file_tool_result'] = lambda *args: None
