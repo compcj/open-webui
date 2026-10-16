@@ -35,7 +35,7 @@ from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_access import get_direct_chat_user
-from open_webui.utils.headers import get_headers_and_cookies
+from open_webui.utils.headers import get_headers_and_cookies, validate_connection_headers_config
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import calculate_sha256
 from open_webui.utils.model_ids import strip_provider_model_prefix
@@ -45,7 +45,7 @@ from open_webui.utils.payload import (
     apply_system_prompt_to_body,
 )
 from open_webui.utils.session_pool import cleanup_response, get_client_timeout, get_session, stream_wrapper
-from pydantic import BaseModel, ConfigDict, validator
+from pydantic import BaseModel, ConfigDict, field_validator, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -238,6 +238,11 @@ class ConnectionVerificationForm(BaseModel):
 
     config: dict | None = None
 
+    @field_validator('config')
+    @classmethod
+    def validate_connection_headers(cls, config):
+        return validate_connection_headers_config(config)
+
 
 @router.post('/verify')
 async def verify_connection(
@@ -290,6 +295,13 @@ class OllamaConfigForm(BaseModel):
     ENABLE_OLLAMA_API: bool | None = None
     OLLAMA_BASE_URLS: list[str]
     OLLAMA_API_CONFIGS: dict
+
+    @field_validator('OLLAMA_API_CONFIGS')
+    @classmethod
+    def validate_connection_headers(cls, configs):
+        for config in configs.values():
+            validate_connection_headers_config(config)
+        return configs
 
 
 async def clear_models_cache(request: Request):

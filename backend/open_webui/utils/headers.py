@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from string import punctuation
 from typing import Any, Optional
@@ -167,6 +168,72 @@ def parse_custom_headers(
     return parsed_headers
 
 
+def validate_connection_headers_config(config: dict | None) -> dict | None:
+    """Validate only the opt-in connection controls; leave legacy headers untouched."""
+    if config is None:
+        return config
+    if not isinstance(config, dict):
+        raise ValueError('Connection configuration must be an object.')
+
+    user_agent = config.get('user_agent')
+    if user_agent is not None and (
+        not isinstance(user_agent, str) or len(user_agent) > 1024 or re.search(r'[^\x20-\x7e]', user_agent)
+    ):
+        raise ValueError('User-Agent must contain only printable ASCII characters (maximum 1024).')
+
+    enabled = config.get('enable_session_id')
+    if enabled is not None and not isinstance(enabled, bool):
+        raise ValueError('Send Session ID must be a boolean.')
+
+    if enabled:
+        name = config.get('session_id_header', 'x-session-id')
+        if not isinstance(name, str) or len(name) > 128 or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
+            raise ValueError('Session ID header must be a valid HTTP header name (maximum 128 characters).')
+        if name.lower() in {
+            'authorization',
+            'proxy-authorization',
+            'cookie',
+            'set-cookie',
+            'host',
+            'content-type',
+            'content-length',
+            'content-encoding',
+            'transfer-encoding',
+            'connection',
+            'keep-alive',
+            'upgrade',
+            'te',
+            'trailer',
+            'expect',
+            'user-agent',
+            'api-key',
+            'x-api-key',
+            'http-referer',
+            'x-title',
+        }:
+            raise ValueError('Session ID header cannot replace authentication or standard request headers.')
+    return config
+
+
+def get_connection_headers(config: dict, metadata: dict | None = None) -> dict:
+    validate_connection_headers_config(config)
+    headers = {}
+    user_agent = (config.get('user_agent') or '').strip()
+    if user_agent:
+        headers['User-Agent'] = user_agent
+
+    if config.get('enable_session_id', False):
+        metadata = metadata or {}
+        chat_id = metadata.get('chat_id')
+        if isinstance(chat_id, str) and chat_id.startswith(('temporary:', 'local:')):
+            # Temporary routing IDs contain a socket ID shared by successive chats.
+            # The browser supplies the root message ID for conversation affinity.
+            chat_id = metadata.get('connection_session_id')
+        if isinstance(chat_id, str) and chat_id:
+            headers[config.get('session_id_header', 'x-session-id')] = quote(chat_id, safe=punctuation)
+    return headers
+
+
 async def get_headers_and_cookies(
     request: Request,
     url,
@@ -176,6 +243,7 @@ async def get_headers_and_cookies(
     user=None,
 ):
     config = config or {}
+    connection_headers = get_connection_headers(config, metadata)
     cookies = getattr(request, 'cookies', {}) if config.get('forward_cookies', False) else {}
     headers = {
         'Content-Type': 'application/json',
@@ -230,6 +298,11 @@ async def get_headers_and_cookies(
     if config.get('headers') and isinstance(config.get('headers'), dict):
         custom_headers = await get_custom_headers(config.get('headers'), user, metadata, request=request)
         headers.update(custom_headers)
+
+    # Explicit controls take precedence without duplicate case variants on the wire.
+    overridden_names = {name.lower() for name in connection_headers}
+    headers = {name: value for name, value in headers.items() if name.lower() not in overridden_names}
+    headers.update(connection_headers)
 
     return headers, cookies
 

@@ -185,6 +185,16 @@ network, redirect, archive and size checks; admins and users with `skills_import
 
 深度值严格校验；更新请求省略此字段或传入 `null` 时保留已有设置。服务能力和费用以 [Tavily 官方说明](https://docs.tavily.com/documentation/api-reference/endpoint/search)为准。<br>Depth values are validated strictly; omitted or `null` updates preserve the saved value. See the [Tavily API documentation](https://docs.tavily.com/documentation/api-reference/endpoint/search) for service capabilities and pricing.
 
+### 连接请求标识 / Connection request identity
+
+管理员在 **设置 → 连接 → 编辑连接 → 高级** 中可选择 Claude Code、Codex、Gemini CLI、OpenCode、Pi、OpenClaw、Hermes 的 User-Agent 模板，也可完全自定义。模板是可编辑的示例，版本号不会自动更新；默认保持原有请求行为。这些选项适用于服务端代理的 OpenAI 兼容和 Ollama 连接，不适用于个人浏览器直连。
+
+**发送 Session ID** 默认关闭，开启后以聊天 ID 绑定会话，可选择或自定义 Header 名称（默认 `x-session-id`）。同一聊天的多轮、重试和工具续接复用同一个值；临时聊天使用首条根用户消息的 ID，避免浏览器连接复用导致串会话。连接验证和无聊天上下文的请求不自动附加 ID。指定的 UA 和 Session ID 优先于 Headers 中的同名项；缓存效果取决于服务商对该 Header 的支持。
+
+Under **Settings → Connections → Edit Connection → Advanced**, admins can select editable User-Agent examples for Claude Code, Codex, Gemini CLI, OpenCode, Pi, OpenClaw and Hermes, or enter any custom value. Template versions do not update automatically. Defaults preserve existing behavior. These controls apply to server-proxied OpenAI-compatible and Ollama connections, excluding personal browser-direct connections.
+
+**Send Session ID** is off by default. When enabled, it sends the chat ID under a selectable/custom header name (default `x-session-id`), stable across turns, retries and tool continuations. Temporary chats use their first root user-message ID instead of the shared browser socket ID. Verification and requests without chat context do not automatically add an ID. Explicit UA/session controls override matching entries in Headers; cache benefits depend on provider support.
+
 ### v0.12.2 配置默认值 / Configuration defaults
 
 Apps 默认关闭；Tool Search、强制 MFA 和 Realtime 通话采用上游默认，升级不主动开启，也不自动启用 V2。新增知识文件浏览、资源版本历史和独立插件开关来自上游。<br>Apps default off. Tool Search, mandatory MFA and Realtime calls retain upstream defaults; the upgrade does not enable them or V2. Knowledge file browsing, resource history and independent plugin switches are upstream capabilities.

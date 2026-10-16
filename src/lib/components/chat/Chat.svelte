@@ -83,6 +83,7 @@
 	import { acquireWakeLock } from '$lib/utils/wakeLock';
 	import { routeAvatarAnimation } from '$lib/utils/voice-avatar';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
+	import { getTemporaryConnectionSessionId } from '$lib/utils/connection-headers';
 	import {
 		fillReasoningEffortFromLastUsed,
 		getAvailableReasoningEffort,
@@ -761,6 +762,7 @@
 	}
 
 	let chatTasks = [];
+	let temporaryConnectionSessionId: string | undefined;
 
 	let history: { currentId: string | null; messages: Record<string, any> } = {
 		messages: {},
@@ -1394,6 +1396,7 @@
 		taskIds = null;
 		chatTasks = [];
 		serverContextUsage = null;
+		temporaryConnectionSessionId = undefined;
 		history = {
 			messages: {},
 			currentId: null
@@ -3205,6 +3208,7 @@
 		await chatId.set('');
 		await chatTitle.set('');
 
+		temporaryConnectionSessionId = undefined;
 		history = {
 			messages: {},
 			currentId: null
@@ -4608,6 +4612,15 @@
 	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
+		// Retain the first identity even when the original message is deleted.
+		// Capture it before awaiting so switching chats cannot change this send.
+		const connectionSessionId =
+			$temporaryChatEnabled || isTemporaryChatId(_chatId)
+				? (temporaryConnectionSessionId = getTemporaryConnectionSessionId(
+						_history.messages,
+						temporaryConnectionSessionId
+					))
+				: undefined;
 
 		const chatMessageFiles = _messages
 			.filter((message) => message.files)
@@ -4802,6 +4815,7 @@
 
 				session_id: $socket?.id,
 				chat_id: _chatId || undefined,
+				connection_session_id: connectionSessionId,
 				folder_id: $selectedFolder?.id ?? undefined,
 
 				id: responseMessageId,

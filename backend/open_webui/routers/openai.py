@@ -41,7 +41,11 @@ from open_webui.utils.access_control import check_model_access, has_connection_a
 from open_webui.utils.anthropic import ANTHROPIC_VERSION, get_anthropic_models, is_anthropic_url
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_access import get_direct_chat_user
-from open_webui.utils.headers import get_headers_and_cookies, include_user_info_headers
+from open_webui.utils.headers import (
+    get_headers_and_cookies,
+    include_user_info_headers,
+    validate_connection_headers_config,
+)
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import convert_logit_bias_input_to_json, get_provider_function
 from open_webui.utils.model_ids import strip_provider_model_prefix
@@ -56,7 +60,7 @@ from open_webui.utils.session_pool import (
     get_session,
     stream_wrapper,
 )
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -127,7 +131,7 @@ async def get_models_request(
     config=None,
 ):
     if is_anthropic_url(url):
-        return await get_anthropic_models(url, key, user=user)
+        return await get_anthropic_models(url, key, user=user, config=config)
     return await send_get_request(request, f'{url}/models', key, user=user, config=config)
 
 
@@ -470,6 +474,13 @@ class OpenAIConfigForm(BaseModel):
     OPENAI_API_BASE_URLS: list[str]
     OPENAI_API_KEYS: list[str]
     OPENAI_API_CONFIGS: dict
+
+    @field_validator('OPENAI_API_CONFIGS')
+    @classmethod
+    def validate_connection_headers(cls, configs):
+        for config in configs.values():
+            validate_connection_headers_config(config)
+        return configs
 
 
 @router.post('/config/update')
@@ -814,7 +825,7 @@ async def get_models(request: Request, url_idx: int | None = None, user=Depends(
                         'object': 'list',
                     }
                 elif is_anthropic_url(url):
-                    models = await get_anthropic_models(url, key, user=user)
+                    models = await get_anthropic_models(url, key, user=user, config=api_config)
                     if models is None:
                         raise Exception('Failed to connect to Anthropic API')
                 else:
@@ -983,6 +994,11 @@ class ConnectionVerificationForm(BaseModel):
 
     config: dict | None = None
 
+    @field_validator('config')
+    @classmethod
+    def validate_connection_headers(cls, config):
+        return validate_connection_headers_config(config)
+
 
 @router.post('/verify')
 async def verify_connection(
@@ -1037,7 +1053,7 @@ async def verify_connection(
 
                     return response_data
             elif is_anthropic_url(url):
-                result = await get_anthropic_models(url, key)
+                result = await get_anthropic_models(url, key, config=api_config)
                 if result is None:
                     raise HTTPException(status_code=500, detail=ERROR_MESSAGES.SERVER_CONNECTION_ERROR)
                 if 'error' in result:

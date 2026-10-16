@@ -7,7 +7,7 @@ from open_webui.env import (
     ENABLE_FORWARD_USER_INFO_HEADERS,
 )
 from open_webui.models.users import UserModel
-from open_webui.utils.headers import include_user_info_headers
+from open_webui.utils.headers import get_connection_headers, include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def is_anthropic_url(url: str) -> bool:
     return 'api.anthropic.com' in url
 
 
-async def get_anthropic_models(url: str, key: str, user: UserModel = None) -> dict:
+async def get_anthropic_models(url: str, key: str, user: UserModel = None, config: dict | None = None) -> dict:
     """
     Fetch models from Anthropic's /v1/models endpoint with pagination.
     Normalizes the response to OpenAI format.
@@ -55,6 +55,9 @@ async def get_anthropic_models(url: str, key: str, user: UserModel = None) -> di
 
             if ENABLE_FORWARD_USER_INFO_HEADERS and user:
                 headers = include_user_info_headers(headers, user)
+
+            # Model discovery has no chat context, so only the UA override applies.
+            headers.update(get_connection_headers(config or {}))
 
             while True:
                 params = {'limit': 1000}

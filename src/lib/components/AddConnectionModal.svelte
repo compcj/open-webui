@@ -24,6 +24,13 @@
 		type ToolSchemaCompatibility
 	} from '$lib/utils/model-tool-schema';
 	import DirectToolSchemaCompatibility from './DirectToolSchemaCompatibility.svelte';
+	import {
+		USER_AGENT_PRESETS,
+		SESSION_ID_HEADER_PRESETS,
+		getUserAgentPreset,
+		normalizeConnectionHeaderOptions,
+		validateConnectionHeaderOptions
+	} from '$lib/utils/connection-headers';
 
 	export let onSubmit: Function = () => {};
 	export let onDelete: Function = () => {};
@@ -49,6 +56,8 @@
 	let apiType = ''; // '' = chat completions (default), 'responses' = Responses API
 
 	let headers = '';
+	let headerOptions = normalizeConnectionHeaderOptions();
+	let userAgentPreset = 'default';
 	let passthroughParams = '';
 
 	let tags = [];
@@ -72,6 +81,16 @@
 			.split(',')
 			.map((param) => param.trim())
 			.filter(Boolean);
+
+	const validateHeaderOptions = () => {
+		const error = direct ? null : validateConnectionHeaderOptions(headerOptions);
+		if (error) {
+			showAdvanced = true;
+			toast.error($i18n.t(error));
+			return false;
+		}
+		return true;
+	};
 
 	const verifyOllamaHandler = async () => {
 		// remove trailing slash from url
@@ -98,6 +117,7 @@
 			key,
 			config: {
 				auth_type,
+				...headerOptions,
 				...(_headers ? { headers: _headers } : {})
 			}
 		}).catch((error) => {
@@ -137,6 +157,7 @@
 				key,
 				config: {
 					auth_type,
+					...(!direct ? headerOptions : {}),
 					...(!direct && !ollama ? { forward_cookies: forwardCookies } : {}),
 					...(provider ? { provider } : {}),
 					...(azure ? { azure: true } : {}),
@@ -165,6 +186,7 @@
 	};
 
 	const verifyHandler = () => {
+		if (!validateHeaderOptions()) return;
 		if (ollama) {
 			verifyOllamaHandler();
 		} else {
@@ -189,6 +211,7 @@
 	};
 
 	const submitHandler = async () => {
+		if (!validateHeaderOptions()) return;
 		loading = true;
 
 		if (!ollama && !url) {
@@ -251,6 +274,7 @@
 				auth_type,
 				...(!direct && !ollama ? { forward_cookies: forwardCookies } : {}),
 				headers: headers ? JSON.parse(headers) : undefined,
+				...(!direct ? headerOptions : {}),
 				passthrough_params: parsePassthroughParams(passthroughParams),
 				...(provider ? { provider } : {}),
 				...(!ollama && azure ? { azure: true } : {}),
@@ -275,6 +299,8 @@
 		modelIds = [];
 		modelToolSchemaCompatibility = {};
 		headers = '';
+		headerOptions = normalizeConnectionHeaderOptions();
+		userAgentPreset = 'default';
 		enable = true;
 		connectionType = 'external';
 		provider = '';
@@ -284,6 +310,8 @@
 
 	const init = () => {
 		availableModelIds = [];
+		headerOptions = normalizeConnectionHeaderOptions(connection?.config ?? {});
+		userAgentPreset = getUserAgentPreset(headerOptions.user_agent);
 		modelToolSchemaCompatibility = normalizeDirectToolSchemaConfig(
 			connection?.config?.model_tool_schema_compatibility
 		);
@@ -561,6 +589,92 @@
 						</div>
 
 						{#if showAdvanced}
+							{#if !direct}
+								<div class="mt-2 space-y-2">
+									<label for="user-agent-preset" class="block text-xs text-gray-500">
+										{$i18n.t('User-Agent')}
+									</label>
+									<select
+										id="user-agent-preset"
+										class={`w-full text-sm ${selectClass}`}
+										bind:value={userAgentPreset}
+										on:change={(event) => {
+											userAgentPreset = event.currentTarget.value;
+											if (userAgentPreset === 'default') headerOptions.user_agent = '';
+											else if (userAgentPreset !== 'custom') {
+												headerOptions.user_agent =
+													USER_AGENT_PRESETS.find((preset) => preset.id === userAgentPreset)
+														?.value ?? '';
+											}
+										}}
+									>
+										<option value="default">{$i18n.t('Default')}</option>
+										{#each USER_AGENT_PRESETS as preset}
+											<option value={preset.id}>{preset.label}</option>
+										{/each}
+										<option value="custom">{$i18n.t('Custom')}</option>
+									</select>
+									{#if userAgentPreset !== 'default'}
+										<label class="sr-only" for="user-agent-value"
+											>{$i18n.t('Custom User-Agent')}</label
+										>
+										<input
+											id="user-agent-value"
+											class={`w-full text-sm ${inputClass}`}
+											bind:value={headerOptions.user_agent}
+											on:input={() => {
+												userAgentPreset = 'custom';
+											}}
+											placeholder={$i18n.t('Custom User-Agent')}
+											maxlength={1024}
+											autocomplete="off"
+										/>
+									{/if}
+									<p class="text-xs text-gray-500">
+										{$i18n.t(
+											'Presets are editable examples. Adjust the version and value to match your provider requirements.'
+										)}
+									</p>
+									<div class="flex items-center justify-between gap-3">
+										<label for="send-session-id" class="text-xs text-gray-500"
+											>{$i18n.t('Send Session ID')}</label
+										>
+										<Switch
+											id="send-session-id"
+											ariaLabel={$i18n.t('Send Session ID')}
+											bind:state={headerOptions.enable_session_id}
+										/>
+									</div>
+									{#if headerOptions.enable_session_id}
+										<label for="session-id-header" class="block text-xs text-gray-500"
+											>{$i18n.t('Session ID Header')}</label
+										>
+										<input
+											id="session-id-header"
+											class={`w-full text-sm ${inputClass}`}
+											bind:value={headerOptions.session_id_header}
+											list="session-id-header-suggestions"
+											placeholder="x-session-id"
+											maxlength={128}
+											autocomplete="off"
+											required
+										/>
+										<datalist id="session-id-header-suggestions">
+											{#each SESSION_ID_HEADER_PRESETS as name}<option value={name}></option>{/each}
+										</datalist>
+									{/if}
+									<p class="text-xs text-gray-500">
+										{$i18n.t(
+											'Send a stable ID for each chat to help compatible providers reuse caches. Requests without a chat do not send an ID.'
+										)}
+									</p>
+									<p class="text-xs text-gray-500">
+										{$i18n.t(
+											'Explicit User-Agent and Session ID settings override matching entries in Headers.'
+										)}
+									</p>
+								</div>
+							{/if}
 							{#if !direct && !ollama}
 								<div class="flex items-center justify-between gap-3 mt-2">
 									<div>
