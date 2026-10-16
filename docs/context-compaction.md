@@ -473,3 +473,18 @@ branch-aware checkpoints for WebUI continuation and approval flows. The reminder
 window, timeout and retry count are project defaults, not universal Codex constants.
 
 开发验证命令及迁移步骤见 [DEVELOPMENT.md](DEVELOPMENT.md#context-compaction-verification)。
+
+## Native provider transports
+
+[Native Gemini and Anthropic connections](native-model-connections.md) retain off/legacy/V2 behavior.
+Budgeting includes exact native reasoning replay, images, tools and final protocol framing before
+prepared tool-result selections are adopted. Signed blocks/parts stay bound to the original content,
+protocol, connection and model; compaction must not fabricate or edit signatures. A required lost or
+edited signature fails explicitly without executing an already completed tool again. Anthropic's
+absent-only output default (`max_tokens=4096`) applies before budgeting; explicit limits take priority.
+Model windows remain admin configured. Mocked regression coverage and live-check boundaries are in
+[DEVELOPMENT](DEVELOPMENT.md#native-model-connection-verification).
+
+[原生 Gemini/Anthropic 连接](native-model-connections.md)保持 off/legacy/V2 语义。预算在采用工具结果
+选择前计入原始签名回放、图片、工具与最终协议封装；不能伪造或修改思考签名，也不能重跑已执行工具。
+Anthropic 缺省输出上限先于预算生效，显式上限优先；上下文窗口仍由管理员配置。

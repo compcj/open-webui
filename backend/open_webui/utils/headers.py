@@ -175,6 +175,11 @@ def validate_connection_headers_config(config: dict | None) -> dict | None:
     if not isinstance(config, dict):
         raise ValueError('Connection configuration must be an object.')
 
+    from open_webui.utils.native_providers import validate_connection
+
+    if config.get('api_type') in ('gemini', 'anthropic'):
+        validate_connection(config)
+
     user_agent = config.get('user_agent')
     if user_agent is not None and (
         not isinstance(user_agent, str) or len(user_agent) > 1024 or re.search(r'[^\x20-\x7e]', user_agent)
@@ -208,6 +213,8 @@ def validate_connection_headers_config(config: dict | None) -> dict | None:
             'user-agent',
             'api-key',
             'x-api-key',
+            'x-goog-api-key',
+            'anthropic-version',
             'http-referer',
             'x-title',
         }:
@@ -267,10 +274,18 @@ async def get_headers_and_cookies(
 
     token = None
     auth_type = config.get('auth_type')
+    native_type = config.get('api_type')
+    if native_type in ('gemini', 'anthropic') and auth_type is None:
+        auth_type = 'api_key'
+    if native_type == 'anthropic':
+        headers['anthropic-version'] = '2023-06-01'
 
     if auth_type == 'bearer' or auth_type is None:
         # Default to bearer if not specified
         token = key
+    elif auth_type == 'api_key':
+        if key:
+            headers['x-goog-api-key' if native_type == 'gemini' else 'x-api-key'] = key
     elif auth_type == 'none':
         token = None
     elif auth_type == 'session':
@@ -297,6 +312,9 @@ async def get_headers_and_cookies(
 
     if config.get('headers') and isinstance(config.get('headers'), dict):
         custom_headers = await get_custom_headers(config.get('headers'), user, metadata, request=request)
+        if native_type in ('gemini', 'anthropic'):
+            overridden = {name.lower() for name in custom_headers}
+            headers = {name: value for name, value in headers.items() if name.lower() not in overridden}
         headers.update(custom_headers)
 
     # Explicit controls take precedence without duplicate case variants on the wire.

@@ -20,6 +20,13 @@
 	import Textarea from './common/Textarea.svelte';
 	import { normalizeTags } from '$lib/utils/tags';
 	import {
+		CONNECTION_PROTOCOLS,
+		normalizeConnectionProtocol,
+		isNativeConnectionProtocol,
+		selectConnectionProtocol,
+		validateConnectionProtocol
+	} from '$lib/utils/connection-protocol';
+	import {
 		normalizeDirectToolSchemaConfig,
 		type ToolSchemaCompatibility
 	} from '$lib/utils/model-tool-schema';
@@ -53,7 +60,7 @@
 	let prefixId = '';
 	let enable = true;
 	let apiVersion = '';
-	let apiType = ''; // '' = chat completions (default), 'responses' = Responses API
+	let apiType = '';
 
 	let headers = '';
 	let headerOptions = normalizeConnectionHeaderOptions();
@@ -68,6 +75,7 @@
 	let modelToolSchemaCompatibility: Record<string, ToolSchemaCompatibility> = {};
 
 	let loading = false;
+	let verifying = false;
 	let showDeleteConfirmDialog = false;
 	let showAdvanced = false;
 
@@ -83,6 +91,11 @@
 			.filter(Boolean);
 
 	const validateHeaderOptions = () => {
+		const protocolError = !direct && !ollama ? validateConnectionProtocol(apiType, azure) : null;
+		if (protocolError) {
+			toast.error($i18n.t(protocolError));
+			return false;
+		}
 		const error = direct ? null : validateConnectionHeaderOptions(headerOptions);
 		if (error) {
 			showAdvanced = true;
@@ -162,6 +175,7 @@
 					...(provider ? { provider } : {}),
 					...(azure ? { azure: true } : {}),
 					api_version: apiVersion,
+					...(!direct && !ollama ? { api_type: apiType } : {}),
 					passthrough_params: parsePassthroughParams(passthroughParams),
 					...(_headers ? { headers: _headers } : {})
 				}
@@ -185,12 +199,18 @@
 		}
 	};
 
-	const verifyHandler = () => {
+	const verifyHandler = async () => {
+		if (verifying) return;
 		if (!validateHeaderOptions()) return;
-		if (ollama) {
-			verifyOllamaHandler();
-		} else {
-			verifyOpenAIHandler();
+		verifying = true;
+		try {
+			if (ollama) {
+				await verifyOllamaHandler();
+			} else {
+				await verifyOpenAIHandler();
+			}
+		} finally {
+			verifying = false;
 		}
 	};
 
@@ -279,7 +299,7 @@
 				...(provider ? { provider } : {}),
 				...(!ollama && azure ? { azure: true } : {}),
 				...(azure ? { api_version: apiVersion } : {}),
-				...(apiType ? { api_type: apiType } : {})
+				...((!direct && !ollama) || apiType ? { api_type: apiType } : {})
 			}
 		};
 
@@ -320,7 +340,11 @@
 			url = connection.url;
 			key = connection.key;
 
-			auth_type = connection.config.auth_type ?? 'bearer';
+			auth_type =
+				connection.config.auth_type ??
+				(!direct && !ollama && isNativeConnectionProtocol(connection.config?.api_type)
+					? 'api_key'
+					: 'bearer');
 			headers = connection.config?.headers
 				? JSON.stringify(connection.config.headers, null, 2)
 				: '';
@@ -339,9 +363,18 @@
 				connectionType = connection.config?.connection_type ?? 'external';
 				provider = connection.config?.provider ?? (connection.config?.azure ? 'azure' : '');
 				apiVersion = connection.config?.api_version ?? '';
-				apiType = connection.config?.api_type ?? '';
+				apiType = direct
+					? (connection.config?.api_type ?? '')
+					: normalizeConnectionProtocol(connection.config?.api_type);
 			}
 		}
+	};
+
+	const changeProtocol = (value: string) => {
+		apiType = value;
+		const defaults = selectConnectionProtocol(value, { url, auth_type }, edit || !!connection);
+		url = defaults.url;
+		auth_type = defaults.auth_type;
 	};
 
 	$: if (show) {
@@ -457,20 +490,26 @@
 									}}
 									type="button"
 									aria-label={$i18n.t('Verify Connection')}
+									disabled={verifying || loading}
+									aria-busy={verifying}
 								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										aria-hidden="true"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-											clip-rule="evenodd"
-										/>
-									</svg>
+									{#if verifying}
+										<Spinner className="size-4" />
+									{:else}
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											aria-hidden="true"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									{/if}
 								</button>
 							</Tooltip>
 
@@ -499,6 +538,9 @@
 										>
 											<option value="none">{$i18n.t('None')}</option>
 											<option value="bearer">{$i18n.t('Bearer')}</option>
+											{#if !direct && !ollama && (isNativeConnectionProtocol(apiType) || auth_type === 'api_key')}
+												<option value="api_key">{$i18n.t('API Key')}</option>
+											{/if}
 
 											{#if !ollama}
 												<option value="session">{$i18n.t('Session')}</option>
@@ -511,7 +553,7 @@
 									</div>
 
 									<div class="flex flex-1 items-center">
-										{#if auth_type === 'bearer'}
+										{#if auth_type === 'bearer' || auth_type === 'api_key'}
 											<SensitiveInput
 												bind:value={key}
 												placeholder={$i18n.t('API Key')}
@@ -540,30 +582,37 @@
 						</div>
 
 						{#if !ollama && !direct}
-							<div class="flex flex-row justify-between items-center w-full mt-1">
-								<label
-									for="api-type-toggle"
-									class={`mb-0.5 text-xs text-gray-500
-							`}>{$i18n.t('API Type')}</label
+							<div class="flex flex-wrap justify-between items-center gap-2 w-full mt-2">
+								<label for="api-type-select" class="text-xs text-gray-500"
+									>{$i18n.t('API Type')}</label
 								>
-
-								<div>
-									<button
-										on:click={() => {
-											apiType = apiType === 'responses' ? '' : 'responses';
-										}}
-										type="button"
-										id="api-type-toggle"
-										class=" text-xs text-gray-700 dark:text-gray-300"
-									>
-										{#if apiType === 'responses'}
-											{$i18n.t('Responses')}
-										{:else}
-											{$i18n.t('Chat Completions')}
-										{/if}
-									</button>
-								</div>
+								<select
+									id="api-type-select"
+									class={`max-w-full text-sm ${selectClass}`}
+									value={apiType}
+									on:change={(event) => changeProtocol(event.currentTarget.value)}
+								>
+									{#each CONNECTION_PROTOCOLS as protocol}
+										<option value={protocol.value}>{$i18n.t(protocol.label)}</option>
+									{/each}
+								</select>
 							</div>
+							{#if validateConnectionProtocol(apiType, azure)}
+								<p role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">
+									{$i18n.t('Native Gemini and Anthropic APIs cannot use Azure OpenAI.')}
+								</p>
+							{/if}
+							{#if auth_type === 'api_key' && isNativeConnectionProtocol(apiType)}
+								<p class="mt-1 text-xs text-gray-500">
+									{#if apiType === 'gemini'}
+										{$i18n.t('Uses x-goog-api-key to authenticate.')}
+									{:else}
+										{$i18n.t(
+											'Uses x-api-key and anthropic-version 2023-06-01 by default. Override the version in Headers.'
+										)}
+									{/if}
+								</p>
+							{/if}
 						{/if}
 
 						<div class="flex items-center justify-between">

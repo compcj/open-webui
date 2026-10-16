@@ -263,3 +263,23 @@ Pytest configures the `backend` import path in `pyproject.toml`; no editable ins
 The active backend CI checks formatting, selected logic errors and the full pytest suite on Python
 3.11/3.12 with locked dependencies. Unit/integration fixtures do not establish live provider or
 deployment acceptance.
+
+## Native provider transports
+
+Dispatch explicit server connection `api_type` only: empty/missing or legacy `chat_completions`,
+`responses`, `gemini`, `anthropic`. Reuse `OPENAI_API_*` storage; reject native+Azure. Preserve
+custom compatible bases, bearer/none/session/oauth, cookies, custom headers and explicit UA/session
+priority. Native `api_key` maps to `x-goog-api-key` or `x-api-key`; Anthropic supplies
+`anthropic-version: 2023-06-01` unless explicitly configured. Paginate native model discovery and
+retain manual IDs. Unsupported endpoints fail explicitly rather than switching protocols.
+
+Native text/image/tool streams and nonstreams share permissions, approval, citation and usage flows.
+Keep exact native blocks/parts and signatures in optional `reasoning_details`, bound to protocol,
+connection, model and original content. Validate replay; fail required missing/edited signatures and
+never re-execute completed tools. Existing model controls/custom parameters configure thinking;
+never infer a model generation. Apply Anthropic's absent-only `max_tokens=4096` before budgeting;
+explicit output limits win. Count native replay/framing before V2 selection admission, retaining
+off/legacy behavior and admin-configured context windows. Gemini defaults to `parametersJsonSchema`;
+manual restricted-schema projection remains separate and explicit. See the
+[guide](../docs/native-model-connections.md), [follow-up](../docs/upstream/v0.12.2-native-connections-followup.md)
+and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).

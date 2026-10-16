@@ -43,3 +43,9 @@ release record; it has its own implementation and validation status.
 Use repository-relative source and test links. Store real full commit IDs once available; never
 invent a future merge or validation commit. Do not include credentials, real chat data, private
 connection URLs, local machine paths, or scratch artifacts in these records.
+
+## Native connections follow-up
+
+The [v0.12.2 native connection follow-up](v0.12.2-native-connections-followup.md) records explicit
+Gemini/Anthropic message transports, signed reasoning replay and cross-transport budget/header
+contracts. Read it alongside v0.12.2 decisions before merging provider, connection or compaction changes.

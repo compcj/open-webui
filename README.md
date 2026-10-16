@@ -10,7 +10,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Open_WebUI-blue?logo=discord&logoColor=white)](https://discord.gg/5rJgQTnV4s)
 [![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/open-webui)
 
-Open WebUI is **a home for AI**, a self-hosted AI platform that's **[extensible](https://docs.openwebui.com/features/extensibility/plugin/)**, **[feature-rich](https://docs.openwebui.com/features/)**, user-friendly, and built to run **[entirely offline](https://openwebui.com/sovereign-ai)**. With support for **Ollama** and **OpenAI-compatible APIs**, it gives you a powerful, provider-agnostic interface for both local and cloud-based models.
+Open WebUI is **a home for AI**, a self-hosted AI platform that's **[extensible](https://docs.openwebui.com/features/extensibility/plugin/)**, **[feature-rich](https://docs.openwebui.com/features/)**, user-friendly, and built to run **[entirely offline](https://openwebui.com/sovereign-ai)**. With support for **Ollama**, **OpenAI-compatible APIs**, and administrator-configured **native Gemini and Anthropic APIs**, it gives you a powerful, provider-agnostic interface for both local and cloud-based models.
 
 Passionate about open-source AI? [Join our team →](https://careers.openwebui.com/)
 
@@ -77,13 +77,26 @@ Apps default off. Read-only channel members may use private App interactions; pu
 message updates require current write access. Channel feature permission and private-group membership
 also apply, and write access is checked again after the App responds.
 
+### 原生模型连接 / Native model connections
+
+管理员可在 **设置 → 连接** 明确选择 Chat Completions、Responses、Gemini 或 Anthropic 协议，
+连接官方接口或兼容网关。支持文本、图片、工具调用与审批、流式响应、思考签名和用量；
+保留原有连接配置与请求标识控制。协议不会按模型名称或 URL 自动判断，个人浏览器直连保持原有范围。
+配置、边界和排错见[原生模型连接指南](docs/native-model-connections.md)。
+
+Admins can select Chat Completions, Responses, Gemini or Anthropic explicitly under **Settings → Connections**,
+using official APIs or compatible gateways. Native connections support text, images, tool calls and approvals,
+streaming, signed thinking and usage, while retaining existing connection storage and request identity controls.
+Protocol is never inferred from a model name or URL. See the [native connection guide](docs/native-model-connections.md)
+for setup and scope; personal browser-direct connections retain their existing scope.
+
 ### Gemini 工具兼容 / Gemini tool compatibility
 
-模型编辑页可手动选择 **Gemini 工具 Schema 兼容性**，用于第三方 OpenAI 兼容网关。
+模型编辑页可手动选择 **Gemini 工具 Schema 兼容性**，用于原生 Gemini 连接或第三方 OpenAI 兼容网关。
 转换器处理引用、联合类型、常量和嵌套结构，并在 WebUI 执行工具前按原始定义校验参数。
 模型名称不会自动启用转换。支持范围、网关差异和配置说明见 [Gemini 工具兼容指南](docs/gemini-tool-compatibility.md)。
 
-Model settings offer an explicit **Gemini tool schema compatibility** mode for OpenAI-compatible
+Model settings offer an explicit **Gemini tool schema compatibility** mode for native Gemini connections and OpenAI-compatible
 gateways. It projects references, unions, constants and nested schemas, then validates arguments
 against the original definition before WebUI executes tools. Model names never enable it automatically.
 See the [compatibility guide](docs/gemini-tool-compatibility.md) for supported conversions and limits.
@@ -187,11 +200,11 @@ network, redirect, archive and size checks; admins and users with `skills_import
 
 ### 连接请求标识 / Connection request identity
 
-管理员在 **设置 → 连接 → 编辑连接 → 高级** 中可选择 Claude Code、Codex、Gemini CLI、OpenCode、Pi、OpenClaw、Hermes 的 User-Agent 模板，也可完全自定义。模板是可编辑的示例，版本号不会自动更新；默认保持原有请求行为。这些选项适用于服务端代理的 OpenAI 兼容和 Ollama 连接，不适用于个人浏览器直连。
+管理员在 **设置 → 连接 → 编辑连接 → 高级** 中可选择 Claude Code、Codex、Gemini CLI、OpenCode、Pi、OpenClaw、Hermes 的 User-Agent 模板，也可完全自定义。模板是可编辑的示例，版本号不会自动更新；默认保持原有请求行为。这些选项适用于服务端代理的 OpenAI 兼容、原生 Gemini/Anthropic 和 Ollama 连接，不适用于个人浏览器直连。
 
 **发送 Session ID** 默认关闭，开启后以聊天 ID 绑定会话，可选择或自定义 Header 名称（默认 `x-session-id`）。同一聊天的多轮、重试和工具续接复用同一个值；临时聊天使用首条根用户消息的 ID，避免浏览器连接复用导致串会话。连接验证和无聊天上下文的请求不自动附加 ID。指定的 UA 和 Session ID 优先于 Headers 中的同名项；缓存效果取决于服务商对该 Header 的支持。
 
-Under **Settings → Connections → Edit Connection → Advanced**, admins can select editable User-Agent examples for Claude Code, Codex, Gemini CLI, OpenCode, Pi, OpenClaw and Hermes, or enter any custom value. Template versions do not update automatically. Defaults preserve existing behavior. These controls apply to server-proxied OpenAI-compatible and Ollama connections, excluding personal browser-direct connections.
+Under **Settings → Connections → Edit Connection → Advanced**, admins can select editable User-Agent examples for Claude Code, Codex, Gemini CLI, OpenCode, Pi, OpenClaw and Hermes, or enter any custom value. Template versions do not update automatically. Defaults preserve existing behavior. These controls apply to server-proxied OpenAI-compatible, native Gemini/Anthropic and Ollama connections, excluding personal browser-direct connections.
 
 **Send Session ID** is off by default. When enabled, it sends the chat ID under a selectable/custom header name (default `x-session-id`), stable across turns, retries and tool continuations. Temporary chats use their first root user-message ID instead of the shared browser socket ID. Verification and requests without chat context do not automatically add an ID. Explicit UA/session controls override matching entries in Headers; cache benefits depend on provider support.
 
@@ -218,7 +231,7 @@ Equivalent upstream fixes, including Responses parameter mapping and terminal HT
 
 - 🚀 **Effortless Setup**: Install seamlessly via pip, uv, Docker, or Kubernetes (kubectl, kustomize, or helm), with `:ollama` and `:cuda` tagged images available for container deployments.
 
-- 🤝 **Broad Model & API Integration**: Connect any OpenAI-compatible API alongside local Ollama models. Point the API URL at **LMStudio, GroqCloud, Mistral, OpenRouter, vLLM, and more** to mix and match providers freely.
+- 🤝 **Broad Model & API Integration**: Connect OpenAI-compatible APIs, native **Gemini GenerateContent** and **Anthropic Messages**, alongside local Ollama models. Admin Connections supports official APIs and compatible gateways with explicit protocol selection. OpenAI-compatible examples include **LMStudio, GroqCloud, Mistral, OpenRouter and vLLM**. See the [native connection guide](docs/native-model-connections.md) for setup and boundaries.
 
 - 🔐 **Granular RBAC & User Groups**: Administrators define detailed roles, groups, and permissions, giving each user exactly the access they need. Secure by default, with tailored experiences per group.
 

@@ -240,7 +240,7 @@
 	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
 		{#if ENABLE_OPENAI_API !== null && ENABLE_OLLAMA_API !== null && connectionsConfig !== null}
 			<AdminSettingSection first>
-				<AdminSettingRow label={$i18n.t('settings.admin.connections.openaiApi.label')} let:labelId>
+				<AdminSettingRow label={$i18n.t('settings.admin.connections.modelApis.label')} let:labelId>
 					<Switch
 						bind:state={ENABLE_OPENAI_API}
 						on:change={async () => {
@@ -254,7 +254,7 @@
 					<div>
 						<div class="mb-2 flex items-center justify-between gap-4">
 							<div class="text-xs text-gray-600 dark:text-gray-400">
-								{$i18n.t('settings.admin.connections.manageOpenaiApiConnections.label')}
+								{$i18n.t('settings.admin.connections.manageModelApiConnections.label')}
 							</div>
 
 							<Tooltip content={$i18n.t('settings.admin.connections.addConnection.label')}>

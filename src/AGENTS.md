@@ -140,3 +140,15 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
   the model editor, stores, or `lib/utils/reasoning-effort.ts`.
 
 See [development commands and fork regression locations](../docs/DEVELOPMENT.md) for details.
+
+## Native server connection controls
+
+Keep protocol selection explicit in admin Connections: Chat Completions (empty/default), Responses,
+Gemini and Anthropic. Accept legacy `chat_completions`; never guess from model names or URLs.
+Fill protocol default URLs only when blank, retain manual model IDs and custom gateways, and reject
+native+Azure. Native `api_key` authentication is distinct from existing bearer/none/session/oauth.
+Preserve custom header and UA/session controls. Do not expose native protocols as new personal
+browser-direct options. Preserve optional native `reasoning_details` through streaming, saves,
+approvals and reload; display text must not replace exact signed blocks. See the
+[native guide](../docs/native-model-connections.md) and
+[verification](../docs/DEVELOPMENT.md#native-model-connection-verification).

@@ -615,3 +615,42 @@ the standard container separately from a source startup. The release workflow st
 changes on pushed `main`, queues releases, limits release notes and uses fixed commit links. Local
 integration does not authorize pushing, publishing or deploying. See the current decision record
 for actual results and unexecuted service checks.
+
+### Native model connection verification
+
+Use Node 22 and Python 3.12 with already installed dependencies from the setup section (Python 3.11 is also supported by CI).
+These commands do not install or download dependencies.
+Run from the repository root. Use isolated development data for any application/runtime checks.
+
+```sh
+python -m pytest backend/tests/test_native_provider_adapters.py backend/tests/test_native_connections_integration.py backend/tests/test_native_replay_budget.py backend/tests/test_connection_headers.py backend/tests/test_tool_citation_replay.py backend/tests/test_gemini_tool_schema.py backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_dispatch.py -q
+npm run test:frontend -- --run src/lib/utils/connection-protocol.test.ts src/lib/utils/connection-headers.test.ts src/lib/components/AddConnectionModal.test.ts
+npm run check
+```
+
+For existing type-check failures, run `npm run check -- --output machine-verbose --no-color`
+in both the working tree and an isolated snapshot of the pre-change revision. Use the same Node 22,
+installed dependencies, static assets and configuration; let SvelteKit generate declarations in each
+workspace and verify they agree. Compare every diagnostic's file, code, message and mapped source
+position, preserving duplicate counts and normalizing workspace paths/Windows drive-letter case.
+Comparing totals or only changed files does not establish that the full check has no regressions.
+
+| Boundary                                                                              | Coverage                                                                                           |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Native payloads, streams, discovery, thinking and signatures                          | `backend/tests/test_native_provider_adapters.py`                                                   |
+| Mocked transport/discovery, dispatch errors and approvals without duplicate execution | `backend/tests/test_native_connections_integration.py`                                             |
+| Native wire/signature/media budgeting and multi-round saved replay                    | `backend/tests/test_native_replay_budget.py`                                                       |
+| Explicit protocol, defaults and saved configuration                                   | `src/lib/utils/connection-protocol.test.ts`                                                        |
+| Actual modal initialization, protocol switching, verification and save handlers       | `src/lib/components/AddConnectionModal.test.ts`                                                    |
+| Frontend header validation and native reserved names                                  | `src/lib/utils/connection-headers.test.ts`                                                         |
+| Header priority and identity                                                          | `backend/tests/test_connection_headers.py`                                                         |
+| Citation prefix/replay and manual Gemini schema profile                               | `backend/tests/test_tool_citation_replay.py`, `backend/tests/test_gemini_tool_schema.py`           |
+| V2 accounting and final-send/retry guards                                             | `backend/tests/test_context_compaction_v2.py`, `backend/tests/test_context_compaction_dispatch.py` |
+
+These tests use synthetic fixtures/mocked transports; they do not verify live provider acceptance.
+Real-provider checks remain pending; record actual results separately without credentials.
+Separately exercise admin connection save/verify, paginated model discovery, text/image streaming and
+nonstreaming, approved tools, reload/retry of signed thinking, custom gateway/auth headers, and V2
+budget rejection with the intended service. Check Chat Completions/Responses, personal direct and
+Ollama regressions. Do not report live verification unless actual calls were performed. See the
+[user guide](native-model-connections.md) and [merge follow-up](upstream/v0.12.2-native-connections-followup.md).

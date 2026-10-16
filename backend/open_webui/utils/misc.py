@@ -590,6 +590,13 @@ def convert_output_to_messages(
 
             if reasoning_details:
                 pending_reasoning_details.extend(reasoning_details)
+                # Native envelopes terminate one exact provider response, including Continue.
+                # Never combine independently signed text/blocks into a new projection.
+                if any(
+                    detail.get('type') == 'reasoning.native' and detail.get('format') == 'open-webui-native-v1'
+                    for detail in reasoning_details
+                ):
+                    flush_pending()
 
         elif item_type == 'open_webui:code_interpreter':
             # Always include code interpreter content so the LLM knows

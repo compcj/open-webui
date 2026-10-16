@@ -100,6 +100,7 @@ async def test_server_send_normalizes_gemini_tools_before_budgeting(
     namespace = {
         'router': SimpleNamespace(post=lambda *a, **kw: lambda f: f),
         'Depends': Depends,
+        'HTTPException': HTTPException,
         'get_direct_chat_user': lambda: None,
         'Config': SimpleNamespace(get=AsyncMock(return_value=True)),
         'BYPASS_MODEL_ACCESS_CONTROL': False,

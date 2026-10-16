@@ -89,3 +89,14 @@ Schema 校验 `params`，之后才能进入审批或执行。调用携带产生�
 以及 Chat / Responses / 直连发送、续轮、审批恢复和模型切换。
 本地测试不能替代真实网关验收；应另用实际连接验证请求被接受和工具成功执行。
 具体命令见[开发指南](DEVELOPMENT.md#gemini-tool-schema-verification)。
+
+## 与原生连接的关系 / Native transport interoperability
+
+[原生 Gemini 连接](native-model-connections.md)默认使用 `parametersJsonSchema`。
+本页的手动兼容模式仍显式选择，面向需要受限 `parameters` 的网关；不能通过 URL 或模型名自动启用。
+两者共享原始 Schema 校验、目标身份解析和工具审批约束，但协议选择与 Schema 投影是独立设置。
+
+Native Gemini defaults to `parametersJsonSchema`. The manual compatibility profile remains an
+explicit choice for gateways requiring restricted `parameters`; protocol selection and schema
+projection are separate settings. Preserve original-schema validation, resolved target identity
+and approval checks across both paths. See [verification](DEVELOPMENT.md#native-model-connection-verification).

@@ -130,6 +130,17 @@ async def get_models_request(
     user: UserModel = None,
     config=None,
 ):
+    if (config or {}).get('api_type') in ('gemini', 'anthropic'):
+        from open_webui.utils.native_connections import discover_native_models
+
+        try:
+            return await discover_native_models(request, url, key, config, user=user)
+        except HTTPException as exc:
+            log.warning(
+                'Native model discovery failed (%s); configure model IDs manually or verify the connection',
+                exc.status_code,
+            )
+            return {'object': 'list', 'data': [], 'error': exc.detail}
     if is_anthropic_url(url):
         return await get_anthropic_models(url, key, user=user, config=config)
     return await send_get_request(request, f'{url}/models', key, user=user, config=config)
@@ -289,6 +300,9 @@ async def get_model_management_connection(url_idx: int) -> tuple[str, str, dict,
     except IndexError:
         raise HTTPException(status_code=404, detail='Connection not found')
 
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        raise HTTPException(status_code=501, detail='Native connections do not support model management')
+
     provider = api_config.get('provider', '')
     if provider not in MODEL_MANAGEMENT_ENDPOINTS:
         raise HTTPException(
@@ -399,13 +413,15 @@ async def get_anthropic_request_target(request: Request, form_data: dict, user: 
         raise HTTPException(status_code=404, detail=ERROR_MESSAGES.MODEL_NOT_FOUND())
 
     url, key, api_config = await get_openai_connection(model['urlIdx'])
+    if api_config.get('api_type') == 'gemini':
+        raise HTTPException(status_code=501, detail='Gemini connections do not support Anthropic endpoint passthrough')
     prefix_id = api_config.get('prefix_id')
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
 
     headers, cookies = await get_headers_and_cookies(request, url, key, api_config, user=user)
 
     # Anthropic's native endpoints reject bearer auth, the key belongs in x-api-key.
-    if is_anthropic_url(url):
+    if is_anthropic_url(url) and api_config.get('api_type') != 'anthropic':
         headers.setdefault('anthropic-version', ANTHROPIC_VERSION)
         if api_config.get('auth_type') in (None, 'bearer'):
             headers.pop('Authorization', None)
@@ -478,7 +494,10 @@ class OpenAIConfigForm(BaseModel):
     @field_validator('OPENAI_API_CONFIGS')
     @classmethod
     def validate_connection_headers(cls, configs):
+        from open_webui.utils.native_providers import validate_connection
+
         for config in configs.values():
+            validate_connection(config or {})
             validate_connection_headers_config(config)
         return configs
 
@@ -535,12 +554,24 @@ async def speech(request: Request, user=Depends(get_verified_user)):
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    body = await request.body()
+    try:
+        speech_payload = JSONCodec.loads(body)
+    except (ValueError, TypeError):
+        speech_payload = {}
+    speech_model = (request.app.state.OPENAI_MODELS or {}).get(
+        speech_payload.get('model') if isinstance(speech_payload, dict) else None
+    )
+    if speech_model and 'urlIdx' in speech_model:
+        _, _, speech_config = await get_openai_connection(speech_model['urlIdx'])
+        if speech_config.get('api_type') in ('gemini', 'anthropic'):
+            raise HTTPException(status_code=501, detail='Native connections do not support audio speech')
+
     idx = None
     try:
         _, api_base_urls, _, _ = await get_openai_runtime_config()
         idx = api_base_urls.index('https://api.openai.com/v1')
 
-        body = await request.body()
         name = hashlib.sha256(body).hexdigest()
 
         SPEECH_CACHE_DIR = CACHE_DIR / 'audio' / 'speech'
@@ -553,6 +584,8 @@ async def speech(request: Request, user=Depends(get_verified_user)):
             return FileResponse(file_path)
 
         url, key, api_config = await get_openai_connection(idx)
+        if api_config.get('api_type') in ('gemini', 'anthropic'):
+            raise HTTPException(status_code=501, detail='Native connections do not support audio speech')
 
         headers, cookies = await get_headers_and_cookies(request, url, key, api_config, user=user)
 
@@ -811,6 +844,11 @@ async def get_models(request: Request, url_idx: int | None = None, user=Depends(
     else:
         url, key, api_config = await get_openai_connection(url_idx)
 
+        if api_config.get('api_type') in ('gemini', 'anthropic'):
+            from open_webui.utils.native_connections import discover_native_models
+
+            return await discover_native_models(request, url, key, api_config, user=user)
+
         r = None
         async with aiohttp.ClientSession(
             trust_env=True,
@@ -997,6 +1035,9 @@ class ConnectionVerificationForm(BaseModel):
     @field_validator('config')
     @classmethod
     def validate_connection_headers(cls, config):
+        from open_webui.utils.native_providers import validate_connection
+
+        validate_connection(config or {})
         return validate_connection_headers_config(config)
 
 
@@ -1010,6 +1051,11 @@ async def verify_connection(
     key = form_data.key
 
     api_config = form_data.config or {}
+
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        from open_webui.utils.native_connections import discover_native_models
+
+        return await discover_native_models(request, url, key, api_config, user=user)
 
     async with aiohttp.ClientSession(
         trust_env=True,
@@ -1510,6 +1556,30 @@ async def generate_chat_completion(
     prefix_id = api_config.get('prefix_id', None)
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
 
+    from open_webui.utils.native_providers import (
+        NATIVE_API_TYPES,
+        build_request,
+        make_binding,
+        normalize_response,
+        prepare_payload,
+        validate_connection,
+    )
+
+    native_type = api_config.get('api_type')
+    is_native = native_type in NATIVE_API_TYPES
+    # This marker is server-owned and must never be accepted from an API caller.
+    payload.pop('_native_transport', None)
+    payload.pop('_native_tool_schema_compatibility', None)
+    if is_native:
+        try:
+            validate_connection(api_config)
+            payload = prepare_payload(native_type, payload)
+            binding = make_binding(native_type, url, payload['model'])
+            binding.update(connection_id=str(idx), connection_prefix=prefix_id or '')
+            payload['_native_transport'] = {'api_type': native_type, 'base_url': url, 'binding': binding}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # Add user info to the payload if the model is a pipeline
     if 'pipeline' in model and model.get('pipeline'):
         payload['user'] = {
@@ -1520,9 +1590,9 @@ async def generate_chat_completion(
         }
 
     # Check if model is a reasoning model that needs special handling
-    if is_openai_new_model(payload['model']):
+    if not is_native and is_openai_new_model(payload['model']):
         payload = openai_reasoning_model_handler(payload)
-    elif 'api.openai.com' not in url:
+    elif not is_native and 'api.openai.com' not in url:
         # Remove "max_completion_tokens" from the payload for backward compatibility
         if 'max_completion_tokens' in payload:
             payload['max_tokens'] = payload['max_completion_tokens']
@@ -1532,7 +1602,7 @@ async def generate_chat_completion(
         del payload['max_tokens']
 
     # Convert the modified body back to JSON
-    if 'logit_bias' in payload and payload['logit_bias']:
+    if not is_native and 'logit_bias' in payload and payload['logit_bias']:
         logit_bias = convert_logit_bias_input_to_json(payload['logit_bias'])
 
         if logit_bias:
@@ -1547,6 +1617,7 @@ async def generate_chat_completion(
         api_config.get('provider') == 'llama.cpp'
         # These flags apply to Chat Completions, not the Responses API.
         and not is_responses
+        and not is_native
         # The frontend sends this ID when the user clicks Continue.
         and (metadata or {}).get('assistant_message_id')
         # Tool follow-ups retain the metadata but must start a new assistant turn.
@@ -1568,9 +1639,26 @@ async def generate_chat_completion(
     compatibility = await resolve_tool_schema_compatibility(model_info, get_model=Models.get_model_by_id)
     payload = normalize_gemini_tool_schemas(payload, compatibility=compatibility)
     record_gemini_tool_compatibility(metadata, compatibility, form_data['model'])
-    payload = await apply_context_compaction(request, user, payload, metadata, form_data['model'])
+    if is_native:
+        payload['_native_tool_schema_compatibility'] = compatibility
+    is_streaming_request = bool(payload.get('stream', False))
+    requested_model = payload.get('model')
+    try:
+        # Validate native replay even when compaction is off, before any result
+        # selections are prepared. V2 estimates the same native wire representation.
+        if is_native:
+            build_request(native_type, url, payload, binding)
+        payload = await apply_context_compaction(request, user, payload, metadata, form_data['model'])
+        if is_native:
+            request_url, payload = build_request(native_type, url, payload, binding)
+    except ValueError as exc:
+        if not is_native:
+            raise
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if api_config.get('azure') or api_config.get('provider') == 'azure':
+    if is_native:
+        pass  # Converted above, after final budgeting and result selection.
+    elif api_config.get('azure') or api_config.get('provider') == 'azure':
         # Only set api-key header if not using Azure Entra ID authentication
         auth_type = api_config.get('auth_type', 'bearer')
         if auth_type not in ('azure_ad', 'microsoft_entra_id'):
@@ -1602,17 +1690,15 @@ async def generate_chat_completion(
             request_url = f'{url}/responses'
         else:
             request_url = f'{url}/chat/completions'
-    requested_model = payload.get('model')
     # For Chat Completions, strip image parts from multimodal tool messages
     # (Chat Completions doesn't support images in tool content).
-    if not is_responses and 'messages' in payload:
+    if not is_native and not is_responses and 'messages' in payload:
         for message in payload['messages']:
             if message.get('role') == 'tool' and isinstance(message.get('content'), list):
                 message['content'] = ''.join(
                     part.get('text', '') for part in message['content'] if part.get('type') in ('input_text', 'text')
                 )
 
-    is_streaming_request = bool(payload.get('stream', False))
     if not is_streaming_request:
         payload.pop('stream_options', None)
 
@@ -1679,6 +1765,14 @@ async def generate_chat_completion(
                     )
 
             streaming = True
+            if is_native:
+                from open_webui.utils.native_connections import native_chat_stream
+
+                return StreamingResponse(
+                    native_chat_stream(r, native_type, requested_model, binding),
+                    status_code=r.status,
+                    headers=_clean_proxy_headers(r.headers),
+                )
             return StreamingResponse(
                 stream_wrapper(r),
                 status_code=r.status,
@@ -1709,10 +1803,19 @@ async def generate_chat_completion(
                     return PlainTextResponse(status_code=r.status, content=response, headers=retry_headers)
 
             # Convert Responses API result to simple format
-            if is_responses and isinstance(response, dict):
+            if is_native:
+                try:
+                    if not isinstance(response, dict):
+                        raise ValueError('Invalid native provider response')
+                    response = normalize_response(native_type, response, requested_model, binding)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+            elif is_responses and isinstance(response, dict):
                 response = convert_responses_result(response)
 
             return response
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception(e)
 
@@ -1751,6 +1854,8 @@ async def embeddings(request: Request, form_data: dict, user):
         idx = models[model_id]['urlIdx']
 
     url, key, api_config = await get_openai_connection(idx)
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        raise HTTPException(status_code=501, detail='Native connections do not support embeddings')
 
     r = None
     streaming = False
@@ -1882,6 +1987,8 @@ async def responses(
             idx = models[model_id]['urlIdx']
 
     url, key, api_config = await get_openai_connection(idx)
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        raise HTTPException(status_code=501, detail='Native connections do not support the Responses endpoint')
 
     payload['model'] = strip_provider_model_prefix(payload['model'], api_config.get('prefix_id'))
     from open_webui.utils.gemini import normalize_gemini_tool_schemas, resolve_tool_schema_compatibility
@@ -2006,6 +2113,8 @@ async def proxy(path: str, request: Request, user=Depends(get_direct_chat_user))
             idx = models[model_id]['urlIdx']
 
     url, key, api_config = await get_openai_connection(idx)
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        raise HTTPException(status_code=501, detail='Native connections do not support this passthrough endpoint')
     base_url = url
 
     r = None

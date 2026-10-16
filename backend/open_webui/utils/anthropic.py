@@ -133,6 +133,8 @@ def _finalize_openai_content(blocks: list) -> str | list:
 
 def is_anthropic_messages_passthrough(url: str, api_config: dict | None = None) -> bool:
     api_config = api_config or {}
+    if api_config.get('api_type') in ('gemini', 'anthropic'):
+        return api_config['api_type'] == 'anthropic'
     provider = str(api_config.get('provider', '')).lower()
 
     return is_anthropic_url(url or '') or provider == 'litellm'

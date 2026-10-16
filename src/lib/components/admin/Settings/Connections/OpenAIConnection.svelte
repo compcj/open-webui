@@ -1,12 +1,17 @@
 <script lang="ts">
 	import { getContext, tick } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n = getContext<any>('i18n');
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Cog6 from '$lib/components/icons/Cog6.svelte';
 	import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+	import {
+		CONNECTION_PROTOCOLS,
+		connectionRequestRoute,
+		normalizeConnectionProtocol
+	} from '$lib/utils/connection-protocol';
 
 	import { connect } from 'socket.io-client';
 
@@ -17,7 +22,7 @@
 
 	export let url = '';
 	export let key = '';
-	export let config = {};
+	export let config: Record<string, any> = {};
 
 	let showConfigModal = false;
 </script>
@@ -45,8 +50,8 @@
 <div class="flex w-full gap-2 items-center">
 	<Tooltip
 		className="w-full relative"
-		content={$i18n.t(`WebUI will make requests to "{{url}}/chat/completions"`, {
-			url
+		content={$i18n.t('WebUI will make requests to "{{route}}"', {
+			route: connectionRequestRoute(url, config?.api_type)
 		})}
 		placement="top-start"
 	>
@@ -55,8 +60,15 @@
 				class="absolute top-0 bottom-0 left-0 right-0 opacity-60 bg-white dark:bg-gray-900 z-10"
 			></div>
 		{/if}
-		<div class="flex w-full gap-2">
-			<div class="flex-1 relative">
+		<div class="flex w-full min-w-0 gap-2 flex-wrap items-center">
+			<span class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-gray-850">
+				{$i18n.t(
+					CONNECTION_PROTOCOLS.find(
+						(protocol) => protocol.value === normalizeConnectionProtocol(config?.api_type)
+					)?.label ?? 'Chat Completions'
+				)}
+			</span>
+			<div class="flex-1 min-w-0 relative">
 				<input
 					class=" outline-hidden w-full bg-transparent {pipeline ? 'pr-8' : ''}"
 					placeholder={$i18n.t('API Base URL')}

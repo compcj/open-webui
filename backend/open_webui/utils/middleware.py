@@ -370,6 +370,27 @@ def append_to_text_field(item: dict, key: str, value: str) -> None:
     item[key] = text
 
 
+def append_native_streamed_reasoning(output: list, details):
+    """A completed native envelope belongs to this round's current output position."""
+    native = [
+        copy.deepcopy(item)
+        for item in details
+        if item.get('type') == 'reasoning.native' and item.get('format') == 'open-webui-native-v1'
+    ]
+    if not native:
+        return None
+    item = {
+        'type': 'reasoning',
+        'id': output_id('r'),
+        'status': 'completed',
+        'content': [],
+        'summary': None,
+        'reasoning_details': native,
+    }
+    output.append(item)
+    return item
+
+
 def merge_streamed_reasoning_details(target: list, details) -> None:
     items = details if isinstance(details, list) else [details]
     for item in items:
@@ -4858,10 +4879,23 @@ async def non_streaming_chat_response_handler(response, ctx):
             # Native tools only run on the streaming path; still finish the turn.
             tool_calls = choices[0].get('message', {}).get('tool_calls') if choices else None
 
+            choice_message = choices[0].get('message', {}) if choices else {}
+            terminal_choice = bool(
+                choices
+                and (
+                    choices[0].get('finish_reason')
+                    or choice_message.get('reasoning_content')
+                    or choice_message.get('reasoning')
+                    or get_reasoning_details(choice_message)
+                )
+            )
             if (continuing and 'error' not in response_data) or (
-                not continuing and choices and (content or response_output or tool_calls)
+                not continuing
+                and 'error' not in response_data
+                and choices
+                and (content or response_output or tool_calls or terminal_choice)
             ):
-                if content or response_output or tool_calls or continuing:
+                if content or response_output or tool_calls or continuing or terminal_choice:
                     if not continuing:
                         await event_emitter(
                             {
@@ -4878,6 +4912,20 @@ async def non_streaming_chat_response_handler(response, ctx):
                         choice_message = choices[0].get('message', {}) if choices else {}
                         reasoning_content = choice_message.get('reasoning_content') or choice_message.get('reasoning')
                         reasoning_details = get_reasoning_details(choice_message)
+                        detail_items = (
+                            reasoning_details
+                            if isinstance(reasoning_details, list)
+                            else [reasoning_details]
+                            if isinstance(reasoning_details, dict)
+                            else []
+                        )
+                        native_details = [
+                            item
+                            for item in detail_items
+                            if item.get('type') == 'reasoning.native' and item.get('format') == 'open-webui-native-v1'
+                        ]
+                        if native_details:
+                            reasoning_details = [item for item in detail_items if item not in native_details]
                         response_output = []
                         if reasoning_content or reasoning_details:
                             reasoning_item = {
@@ -4906,6 +4954,8 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'content': [{'type': 'output_text', 'text': content}],
                             }
                         )
+                        if native_details:
+                            append_native_streamed_reasoning(response_output, native_details)
 
                     if continuing:
                         message = ctx.get('assistant_message') or {}
@@ -6064,6 +6114,37 @@ async def streaming_chat_response_handler(response, ctx):
                                         if isinstance(reasoning_details, dict)
                                         else []
                                     )
+                                    native_reasoning_item = (
+                                        append_native_streamed_reasoning(output, reasoning_detail_items)
+                                        if any(
+                                            item.get('type') == 'reasoning.native'
+                                            and item.get('format') == 'open-webui-native-v1'
+                                            for item in reasoning_detail_items
+                                        )
+                                        else None
+                                    )
+                                    if native_reasoning_item is not None:
+                                        await emit_response_completion_event(
+                                            {
+                                                'type': 'response.output_item.added',
+                                                'output_index': len(output) - 1,
+                                                'item': native_reasoning_item.copy(),
+                                            }
+                                        )
+                                        reasoning_detail_items = [
+                                            item
+                                            for item in reasoning_detail_items
+                                            if not (
+                                                item.get('type') == 'reasoning.native'
+                                                and item.get('format') == 'open-webui-native-v1'
+                                            )
+                                        ]
+                                        await flush_pending_delta_data()
+                                        await event_emitter(
+                                            {'type': 'chat:completion', 'data': {'output': full_output()}}
+                                        )
+                                        await save_current_response_stream()
+                                        data = None
                                     existing_reasoning_item = next(
                                         (item for item in reversed(output) if item.get('type') == 'reasoning'),
                                         None,
@@ -6370,7 +6451,13 @@ async def streaming_chat_response_handler(response, ctx):
 
                     if output:
                         # Clean up the last message item
-                        if output[-1].get('type') == 'message' and not continuing:
+                        has_native_envelope = any(
+                            detail.get('type') == 'reasoning.native' and detail.get('format') == 'open-webui-native-v1'
+                            for item in output
+                            for detail in item.get('reasoning_details', [])
+                            if isinstance(detail, dict)
+                        )
+                        if output[-1].get('type') == 'message' and not continuing and not has_native_envelope:
                             parts = output[-1].get('content', [])
                             if parts and parts[-1].get('type') == 'output_text':
                                 parts[-1]['text'] = parts[-1]['text'].strip()
@@ -6478,6 +6565,9 @@ async def streaming_chat_response_handler(response, ctx):
                     # request. Its first stream is a fresh round too; replaying the
                     # stored execution queue remains guarded by deduplication.
                     response_usage = await stream_body_handler(response, form_data, new_tool_round=continuing)
+                except Exception as e:
+                    await emit_message_error(get_message_error_content(e))
+                    return
                 finally:
                     if response.background:
                         await response.background()

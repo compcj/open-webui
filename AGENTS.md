@@ -192,3 +192,16 @@ check passed based only on formatting or isolated unit tests.
   existing PR policy before opening a PR.
 - Keep enduring rules here or in the scoped `AGENTS.md` files. Tool adapters should only load or
   point to these sources; do not duplicate the rules or require a particular agent plugin.
+
+## Native model connections
+
+Server Connections select an explicit protocol: default Chat Completions, Responses, Gemini or
+Anthropic. Preserve existing `OPENAI_API_*` storage and legacy `chat_completions`; never infer
+protocol from a URL/model or add a migration. Native protocols are admin server connections only,
+exclude Azure, and preserve custom gateways, header precedence and request identity controls.
+Preserve signed native reasoning replay bound to protocol/connection/model and original content;
+required missing/edited signatures fail explicitly without rerunning tools. Count native framing,
+replay and output defaults before final budget validation and tool-result adoption. Keep citations,
+approvals and off/legacy/V2 behavior aligned across transports. See the
+[user guide](docs/native-model-connections.md), [decision record](docs/upstream/v0.12.2-native-connections-followup.md)
+and [verification](docs/DEVELOPMENT.md#native-model-connection-verification).

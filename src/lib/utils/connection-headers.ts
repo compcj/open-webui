@@ -64,6 +64,8 @@ const RESERVED_SESSION_HEADERS = new Set([
 	'user-agent',
 	'api-key',
 	'x-api-key',
+	'x-goog-api-key',
+	'anthropic-version',
 	'http-referer',
 	'x-title'
 ]);

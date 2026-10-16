@@ -52,6 +52,10 @@ describe('connection header options', () => {
 
 	it.each([
 		'Authorization',
+		'x-goog-api-key',
+		'X-Goog-Api-Key',
+		'anthropic-version',
+		'Anthropic-Version',
 		'content-length',
 		'User-Agent',
 		'HTTP-Referer',

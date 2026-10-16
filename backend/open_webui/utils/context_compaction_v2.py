@@ -342,7 +342,44 @@ def estimate_message(message: dict) -> int:
     return total
 
 
+def native_request(payload: dict):
+    marker = payload.get('_native_transport')
+    if not isinstance(marker, dict) or marker.get('api_type') not in {'gemini', 'anthropic'}:
+        return None
+    from open_webui.utils.native_providers import build_request
+
+    return marker, build_request(marker['api_type'], marker['base_url'], payload, marker['binding'])[1]
+
+
+def native_budget_projection(value):
+    """Keep wire framing/signatures, replacing only encoded image bytes with an allowance."""
+    if isinstance(value, list):
+        projected, media = [], 0
+        for item in value:
+            part, count = native_budget_projection(item)
+            projected.append(part)
+            media += count
+        return projected, media
+    if not isinstance(value, dict):
+        return value, 0
+    if 'inlineData' in value or 'fileData' in value:
+        key = 'inlineData' if 'inlineData' in value else 'fileData'
+        return {**value, key: {k: v for k, v in value[key].items() if k != 'data'}}, 1
+    if value.get('type') == 'image':
+        source = value.get('source') or {}
+        return {**value, 'source': {k: v for k, v in source.items() if k != 'data'}}, 1
+    result, media = {}, 0
+    for key, item in value.items():
+        result[key], count = native_budget_projection(item)
+        media += count
+    return result, media
+
+
 def estimate_payload_tokens(payload: dict) -> int:
+    native = native_request(payload)
+    if native is not None:
+        wire, media = native_budget_projection(native[1])
+        return 3 + estimate_text(wire) + 4096 * media
     return (
         3
         + sum(estimate_message(m) for m in payload.get('messages', []))
@@ -1055,6 +1092,10 @@ async def emit_event(metadata: dict, kind: str, data: dict) -> None:
 
 
 def request_fingerprint(payload: dict) -> str:
+    native = native_request(payload)
+    if native is not None:
+        marker, wire = native
+        return digest({'native': wire, 'binding': marker['binding'], 'api_type': marker['api_type']})
     return digest(
         {
             'messages': [wire_message(m) for m in payload.get('messages', [])],
