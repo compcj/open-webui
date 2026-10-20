@@ -794,7 +794,8 @@
 		currentId: null
 	};
 
-	let taskIds = null;
+	let taskIds: string[] | null = null;
+	const stoppingChats = new Map<string, number>();
 
 	// Chat Input
 	let prompt = '';
@@ -2950,7 +2951,8 @@
 					);
 				});
 				try {
-					await Promise.all([stopResponse(false, id), settled]);
+					const [stopped] = await Promise.all([stopResponse(false, id), settled]);
+					if (!stopped) throw new Error('Backend cancellation was not confirmed');
 				} finally {
 					clearTimeout(timer);
 					bridgeCancellations.delete(id);
@@ -3600,7 +3602,12 @@
 	let processingQueueChats = new Set<string>();
 
 	const processNextInQueue = async (targetChatId: string) => {
-		if (processingQueueChats.has(targetChatId)) return;
+		if (
+			targetChatId !== $chatId ||
+			processingQueueChats.has(targetChatId) ||
+			stoppingChats.has(targetChatId)
+		)
+			return;
 
 		const queue = $chatRequestQueues[targetChatId];
 		if (!queue || queue.length === 0) return;
@@ -3649,18 +3656,21 @@
 
 		const targetChatId = $chatId;
 		processingQueueChats.add(targetChatId);
+		let stopped = false;
 		try {
+			stopped = await stopResponse(false);
+			if (!stopped || $chatId !== targetChatId) return;
+			await tick();
+			if ($chatId !== targetChatId) return;
 			chatRequestQueues.update((q) => ({
 				...q,
-				[targetChatId]: queue.filter((m) => m.id !== id)
+				[targetChatId]: (q[targetChatId] ?? []).filter((m) => m.id !== id)
 			}));
-			await stopResponse(false);
-			await tick();
 			await submitPrompt(item.prompt, item.files);
 		} finally {
 			processingQueueChats.delete(targetChatId);
 			// Completion can arrive before submitPrompt returns, while the queue is locked.
-			if ($chatId === targetChatId) {
+			if (stopped && $chatId === targetChatId) {
 				await processNextInQueue(targetChatId);
 			}
 		}
@@ -4392,7 +4402,7 @@
 				return { status: 'rejected' };
 			} else {
 				// Interrupt: stop current generation and proceed
-				await stopResponse();
+				if (!(await stopResponse(false))) return { status: 'rejected' };
 				await tick();
 			}
 		}
@@ -4962,9 +4972,11 @@
 	};
 
 	const stopResponse = async (processQueue = true, messageId = history.currentId) => {
+		const targetChatId = $chatId;
+		const currentId = history.currentId;
 		const responseMessage = messageId ? history.messages[messageId] : null;
 		if (responseMessage && (responseMessage.user_id ?? chat?.user_id ?? $user?.id) !== $user?.id)
-			return;
+			return false;
 		eventTarget.dispatchEvent(new CustomEvent('voice:cancel_animation'));
 		cancelBrowserInteractions();
 		if (bridge?.connected && responseMessage) responseMessage.bridgeStopping = true;
@@ -4974,20 +4986,28 @@
 			(hasTaskIds || (responseMessage?.role === 'assistant' && responseMessage?.done !== true));
 
 		if (hasTaskIds || hasPendingAssistantResponse) {
-			if ($chatId) {
-				await stopTasksByChatId(localStorage.token, $chatId).catch((error) => {
-					toast.error(`${error}`);
-					return null;
-				});
-			} else {
-				for (const taskId of taskIds) {
-					const res = await stopTask(localStorage.token, taskId).catch((error) => {
-						toast.error(`${error}`);
-						return null;
-					});
-				}
+			stoppingChats.set(targetChatId, (stoppingChats.get(targetChatId) ?? 0) + 1);
+			try {
+				const results = $chatId
+					? [await stopTasksByChatId(localStorage.token, $chatId)]
+					: await Promise.all(
+							(taskIds ?? []).map((taskId) => stopTask(localStorage.token, taskId))
+						);
+				const failed = results.find((result) => result?.status === false);
+				if (failed) throw failed.message;
+			} catch (error) {
+				if (responseMessage) responseMessage.bridgeStopping = false;
+				toast.error(`${error}`);
+				return false;
+			} finally {
+				const remaining = (stoppingChats.get(targetChatId) ?? 1) - 1;
+				if (remaining) stoppingChats.set(targetChatId, remaining);
+				else stoppingChats.delete(targetChatId);
 			}
 
+			// Cancellation events or navigation may have selected a newer reply while
+			// the backend was confirming this stop. Its state belongs to that reply.
+			if ($chatId !== targetChatId || history.currentId !== currentId) return false;
 			taskIds = null;
 
 			// Set all response messages to done
@@ -5009,8 +5029,9 @@
 		}
 
 		if (processQueue) {
-			await processNextInQueue($chatId);
+			await processNextInQueue(targetChatId);
 		}
+		return true;
 	};
 
 	const submitMessage = async (parentId, prompt) => {

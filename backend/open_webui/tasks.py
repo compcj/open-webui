@@ -20,9 +20,22 @@ response_streams: dict[str, dict] = {}
 REDIS_TASKS_KEY = f'{REDIS_KEY_PREFIX}:tasks'
 REDIS_ITEM_TASKS_KEY = f'{REDIS_KEY_PREFIX}:tasks:item'
 REDIS_RESPONSE_STREAMS_KEY = f'{REDIS_KEY_PREFIX}:tasks:response_streams'
+REDIS_TASK_STOP_KEY = f'{REDIS_KEY_PREFIX}:tasks:stop'
 REDIS_PUBSUB_CHANNEL = f'{REDIS_KEY_PREFIX}:tasks:commands'
 REDIS_PUBSUB_RECONNECT_INTERVAL = 1.0
 REDIS_PUBSUB_MAX_RECONNECT_INTERVAL = 30.0
+REDIS_TASK_STOP_POLL_INTERVAL = 0.5
+TASK_STOP_TIMEOUT = 5.0
+REDIS_TASK_STOP_TTL = max(REDIS_TASK_TTL, 300)
+
+
+def cancel_local_task(task_id: str):
+    task = tasks.get(task_id)
+    # Repeated stop requests must not interrupt cancellation-state persistence
+    # or transport cleanup that is already running in the owning task.
+    if task and not task.done() and not task.cancelling():
+        task.cancel()
+    return task
 
 
 async def redis_task_command_listener(app):
@@ -47,9 +60,7 @@ async def redis_task_command_listener(app):
                     if command.get('action') != 'stop':
                         continue
 
-                    local_task = tasks.get(command.get('task_id'))
-                    if local_task:
-                        local_task.cancel()
+                    cancel_local_task(command.get('task_id'))
                 except Exception as e:
                     log.exception(f'Error handling distributed task command: {e}')
             log.warning('Redis task command listener stopped. Retrying.')
@@ -68,14 +79,30 @@ async def redis_task_command_listener(app):
 
 async def redis_task_heartbeat(app):
     redis: Redis = app.state.redis
+    next_heartbeat = asyncio.get_running_loop().time() + REDIS_TASK_TTL / 4
     while True:
-        await asyncio.sleep(REDIS_TASK_TTL / 4)
+        await asyncio.sleep(REDIS_TASK_STOP_POLL_INTERVAL)
         try:
+            task_ids = list(tasks)
+            if not task_ids:
+                continue
+            # Pub/Sub is only a fast notification. Stop requests survive a
+            # subscriber disconnect independently of the task's liveness lease.
             pipe = redis.pipeline(transaction=False)
-            for task_id in list(tasks):
-                # EXPIRE cannot recreate a task already removed by cleanup.
-                pipe.expire(f'{REDIS_TASKS_KEY}:{task_id}', REDIS_TASK_TTL)
-            await pipe.execute()
+            for task_id in task_ids:
+                pipe.get(f'{REDIS_TASK_STOP_KEY}:{task_id}')
+            for task_id, state in zip(task_ids, await pipe.execute()):
+                if state in ('cancelled', b'cancelled'):
+                    cancel_local_task(task_id)
+
+            now = asyncio.get_running_loop().time()
+            if REDIS_TASK_TTL > 0 and now >= next_heartbeat:
+                pipe = redis.pipeline(transaction=False)
+                for task_id in task_ids:
+                    # EXPIRE cannot recreate a task already removed by cleanup.
+                    pipe.expire(f'{REDIS_TASKS_KEY}:{task_id}', REDIS_TASK_TTL)
+                await pipe.execute()
+                next_heartbeat = now + REDIS_TASK_TTL / 4
         except Exception:
             log.exception('Redis task heartbeat failed')
 
@@ -143,6 +170,9 @@ async def cleanup_task(redis, task_id: str, id=None):
     """
     if redis:
         await redis_cleanup_task(redis, task_id, id)
+        # Only the owner calls cleanup_task. Expiry pruning calls
+        # redis_cleanup_task directly and must never acknowledge cancellation.
+        await redis.set(f'{REDIS_TASK_STOP_KEY}:{task_id}', 'done', ex=REDIS_TASK_STOP_TTL)
 
     tasks.pop(task_id, None)  # Remove the task if it exists
     response_streams.pop(task_id, None)
@@ -256,41 +286,46 @@ async def clear_response_stream(redis, task_id: str | None):
         response_streams.pop(task_id, None)
 
 
-async def stop_task(redis, task_id: str):
-    """
-    Cancel a running task and remove it from the global task list.
-    """
-    if redis:
-        # Look up the item_id before cleanup so we can remove the set entry too
-        item_id = await redis.hget(REDIS_TASKS_KEY, task_id)
-        # PUBSUB: All instances check if they have this task, and stop if so.
-        await redis_send_command(
-            redis,
-            {
-                'action': 'stop',
-                'task_id': task_id,
-            },
-        )
-        # Always clean Redis directly — hdel/srem are idempotent, safe even
-        # if the done_callback on the owning process also fires cleanup.
-        await redis_cleanup_task(redis, task_id, item_id or None)
-        return {'status': True, 'message': f'Task {task_id} stopped.'}
+async def stop_task(redis, task_id: str, *, allow_missing=False):
+    """Request cancellation and acknowledge it only after the owner finishes."""
+    task = cancel_local_task(task_id)
+    if task:
+        # wait() neither cancels the task again on timeout nor propagates a
+        # disconnect of the stop request into the task's cleanup.
+        done, _ = await asyncio.wait({task}, timeout=TASK_STOP_TIMEOUT)
+        if done:
+            return {'status': True, 'message': f'Task {task_id} stopped.'}
+    elif redis:
+        stop_key = f'{REDIS_TASK_STOP_KEY}:{task_id}'
+        if await redis.get(stop_key) in ('done', b'done'):
+            return {'status': True, 'message': f'Task {task_id} already stopped.'}
+        if (
+            not allow_missing
+            and await redis.hget(REDIS_TASKS_KEY, task_id) is None
+            and await redis.get(stop_key) is None
+        ):
+            return {'status': False, 'message': f'Task with ID {task_id} not found.'}
 
-    task = tasks.pop(task_id, None)
-    if not task:
+        # NX cannot overwrite an acknowledgement racing this request. Keep the
+        # intent separate from the lease so expiry pruning cannot erase it.
+        await redis.set(stop_key, 'cancelled', nx=True, ex=REDIS_TASK_STOP_TTL)
+        try:
+            await redis_send_command(redis, {'action': 'stop', 'task_id': task_id})
+        except Exception:
+            log.exception('Could not publish task cancellation; the owner will poll the saved request')
+
+        deadline = asyncio.get_running_loop().time() + TASK_STOP_TIMEOUT
+        while True:
+            if await redis.get(stop_key) in ('done', b'done'):
+                return {'status': True, 'message': f'Task {task_id} stopped.'}
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(REDIS_TASK_STOP_POLL_INTERVAL, remaining))
+    else:
         return {'status': False, 'message': f'Task with ID {task_id} not found.'}
 
-    task.cancel()  # Request task cancellation
-    try:
-        await task  # Wait for the task to handle the cancellation
-    except asyncio.CancelledError:
-        # Task successfully canceled
-        return {'status': True, 'message': f'Task {task_id} successfully stopped.'}
-
-    if task.cancelled() or task.done():
-        return {'status': True, 'message': f'Task {task_id} successfully cancelled.'}
-
-    return {'status': True, 'message': f'Cancellation requested for {task_id}.'}
+    return {'status': False, 'message': 'Task cancellation has not finished. Please try stopping again.'}
 
 
 async def stop_item_tasks(redis: Redis, item_id: str):
@@ -301,10 +336,9 @@ async def stop_item_tasks(redis: Redis, item_id: str):
     if not task_ids:
         return {'status': True, 'message': f'No tasks found for item {item_id}.'}
 
-    # Cleanup mutates the local task list while cancellation is awaited.
-    for task_id in list(task_ids):
-        # A task that already finished needs no stopping; continue with the rest.
-        await stop_task(redis, task_id)
+    results = await asyncio.gather(*(stop_task(redis, task_id) for task_id in task_ids))
+    if failed := next((result for result in results if not result.get('status')), None):
+        return failed
 
     return {'status': True, 'message': f'All tasks for item {item_id} stopped.'}
 

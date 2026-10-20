@@ -109,7 +109,6 @@ from open_webui.env import (
     MAX_BODY_LOG_SIZE,
     # Redis
     REDIS_KEY_PREFIX,
-    REDIS_TASK_TTL,
     REDIS_URL,
     RESET_CONFIG_ON_START,
     SAFE_MODE,
@@ -285,6 +284,7 @@ from open_webui.utils.session_pool import cleanup_response, get_client_timeout, 
 from open_webui.utils.tool_approval import (
     ResolveToolCallForm,
     build_tool_approval_resume_payload,
+    pending_tool_calls,
     resolve_tool_call_output,
 )
 from open_webui.utils.tools import set_terminal_servers, set_tool_servers
@@ -418,8 +418,7 @@ async def lifespan(app: FastAPI):
 
     if app.state.redis is not None:
         app.state.redis_task_command_listener = asyncio.create_task(redis_task_command_listener(app))
-        if REDIS_TASK_TTL > 0:
-            app.state.redis_task_heartbeat = asyncio.create_task(redis_task_heartbeat(app))
+        app.state.redis_task_heartbeat = asyncio.create_task(redis_task_heartbeat(app))
 
     if WEBSOCKET_MANAGER == 'redis':
         app.state.redis_event_listener = asyncio.create_task(redis_event_listener())
@@ -2267,9 +2266,35 @@ async def stop_tasks_by_chat_id_endpoint(request: Request, chat_id: str, user=De
         task_ids = await Chats.filter_task_ids_by_user_id(
             chat, user.id, await list_task_ids_by_item_id(request.app.state.redis, chat_id)
         )
-        result = {'status': True, 'message': 'No tasks found.'}
-        for task_id in task_ids:
-            result = await stop_task(request.app.state.redis, task_id)
+        if request.app.state.redis:
+            # A worker may still be executing after its Redis lease was pruned.
+            # Recover the author's task identities from saved unfinished replies.
+            for message in (chat.chat.get('history', {}).get('messages') or {}).values():
+                if (message.get('user_id') or chat.user_id) != user.id:
+                    continue
+                if message.get('role') != 'assistant' or message.get('done') is not False:
+                    continue
+                task_id = (message.get('meta') or {}).get('task_id')
+                if not task_id or task_id in task_ids:
+                    continue
+                output = message.get('output')
+                pending = pending_tool_calls(output) if isinstance(output, list) else []
+                # An approval pause has no running worker. Keep the existing
+                # rejection path even after its completion acknowledgement expires.
+                if pending and all(
+                    item.get('status') in {'pending', 'queued', 'requires_approval'}
+                    and item.get('approved') is not True
+                    for item in pending
+                ):
+                    continue
+                task_ids.append(task_id)
+        results = await asyncio.gather(
+            *(stop_task(request.app.state.redis, task_id, allow_missing=True) for task_id in task_ids)
+        )
+        result = next(
+            (result for result in results if not result.get('status')),
+            results[-1] if results else {'status': True, 'message': 'No tasks found.'},
+        )
 
     if not socket_id and str(result.get('message', '')).startswith('No tasks found'):
         messages_map = await Chats.get_messages_map_by_chat_id(chat_id) or {}

@@ -215,7 +215,7 @@
 	);
 
 	export let history;
-	export let taskIds = null;
+	export let taskIds: string[] | null = null;
 	export let askUser: AskUserPrompt = {
 		show: false,
 		questions: [],
