@@ -3204,6 +3204,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity Search コンテキスト使用量",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright タイムアウト (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApiのAPIKey",
 	"settings.admin.web.searchapiEngine.label": "SearchApiエンジン",
 	"settings.admin.web.searchLimits.description": "結果の件数と並列検索リクエストを制御します。",

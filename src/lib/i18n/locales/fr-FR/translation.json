@@ -3222,6 +3222,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Utilisation du contexte de recherche de Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Délai d'attente Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL du websocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Clé API SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Moteur de recherche SearchApi",
 	"settings.admin.web.searchLimits.description": "Limites pour la recherche.",

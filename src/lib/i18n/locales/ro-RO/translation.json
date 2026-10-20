@@ -3222,6 +3222,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Utilizarea contextului de căutare Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Timp limită Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL WebSocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Cheie API pentru SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Motorul SearchApi",
 	"settings.admin.web.searchLimits.description": "Controlează volumul rezultatelor și cererile de căutare paralele.",

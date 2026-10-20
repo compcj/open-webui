@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Nýtsla av Perplexity-leitihøpi",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright-tíðarmark (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket-URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API-lykil",
 	"settings.admin.web.searchapiEngine.label": "SearchApi-motorur",
 	"settings.admin.web.searchLimits.description": "Stýr úrslitamongdini og samstundis leitingarfyrispurningum.",

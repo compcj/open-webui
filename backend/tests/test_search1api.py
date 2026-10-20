@@ -6,6 +6,7 @@ from types import ModuleType
 from urllib.parse import urlparse
 
 import pytest
+from unittest.mock import AsyncMock
 
 
 @dataclass
@@ -95,7 +96,8 @@ def load_module(response):
 
 
 @pytest.mark.asyncio
-async def test_request_and_result_normalisation():
+@pytest.mark.parametrize('endpoint', [None, 'search', 'ask'])
+async def test_request_and_result_normalisation(endpoint):
     module, session = load_module(
         FakeResponse(
             {
@@ -119,16 +121,17 @@ async def test_request_and_result_normalisation():
             }
         )
     )
-    results = await module.search_search1api('test-key', 'open webui', 2)
+    kwargs = {} if endpoint is None else {'endpoint': endpoint}
+    results = await module.search_search1api('test-key', 'open webui', 2, **kwargs)
     assert session.calls == [
         (
-            'https://api.search1api.com/search',
+            f'https://api.search1api.com/{endpoint or "search"}',
             {
                 'headers': {
                     'Authorization': 'Bearer test-key',
                     'Content-Type': 'application/json',
                 },
-                'json': {'query': 'open webui', 'max_results': 2},
+                'json': {'query': 'open webui'} if endpoint == 'ask' else {'query': 'open webui', 'max_results': 2},
             },
         )
     ]
@@ -139,11 +142,13 @@ async def test_request_and_result_normalisation():
 
 
 @pytest.mark.asyncio
-async def test_allow_and_block_domain_filters():
+@pytest.mark.parametrize('endpoint', ['search', 'ask'])
+async def test_allow_and_block_domain_filters(endpoint):
     module, _ = load_module(
         FakeResponse(
             {
                 'results': [
+                    {'title': 'Outside first', 'link': 'https://outside.example/first'},
                     {
                         'title': 'Allowed',
                         'link': 'https://allowed.example/a',
@@ -169,19 +174,54 @@ async def test_allow_and_block_domain_filters():
         )
     )
     results = await module.search_search1api(
-        'test-key', 'filtered query', 10, ['allowed.example', '!blocked.allowed.example']
+        'test-key', 'filtered query', 2, ['allowed.example', '!blocked.allowed.example'], endpoint=endpoint
     )
     assert [result.title for result in results] == ['Allowed', 'Subdomain']
 
 
 @pytest.mark.asyncio
-async def test_empty_results():
-    module, _ = load_module(FakeResponse({'results': []}))
-    assert await module.search_search1api('test-key', 'none', 3) == []
+@pytest.mark.parametrize('endpoint', ['search', 'ask'])
+@pytest.mark.parametrize('payload', [{}, {'results': []}])
+async def test_empty_results(endpoint, payload):
+    module, _ = load_module(FakeResponse(payload))
+    assert await module.search_search1api('test-key', 'none', 3, endpoint=endpoint) == []
 
 
 @pytest.mark.asyncio
-async def test_http_error_is_propagated():
-    module, _ = load_module(FakeResponse(error=RuntimeError('upstream failed')))
+@pytest.mark.parametrize('endpoint', ['search', 'ask'])
+async def test_http_error_is_propagated_without_fallback(endpoint):
+    module, session = load_module(FakeResponse(error=RuntimeError('upstream failed')))
     with pytest.raises(RuntimeError, match='upstream failed'):
-        await module.search_search1api('test-key', 'query', 3)
+        await module.search_search1api('test-key', 'query', 3, endpoint=endpoint)
+    assert len(session.calls) == 1
+    assert session.calls[0][0] == f'https://api.search1api.com/{endpoint}'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('endpoint', ['invalid', '', '/ask', 'ASK', None])
+async def test_invalid_endpoint_rejected_before_session_access(endpoint):
+    module, session = load_module(FakeResponse())
+    module.get_session = AsyncMock()
+    with pytest.raises(ValueError, match='endpoint'):
+        await module.search_search1api('test-key', 'query', 3, endpoint=endpoint)
+    module.get_session.assert_not_awaited()
+    assert session.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ask_preserves_query_and_available_results_with_partial_errors():
+    module, session = load_module(
+        FakeResponse(
+            {
+                'results': [{'link': 'https://available.example', 'snippet': 'available'}, {}],
+                'errors': [{'source': 'unavailable', 'message': 'failed'}],
+            }
+        )
+    )
+    query = '  ' + '问题' * 300 + '\n'
+    results = await module.search_search1api('test-key', query, 20, endpoint='ask')
+    assert session.calls[0][1]['json'] == {'query': query}
+    assert [result.model_dump() for result in results] == [
+        {'link': 'https://available.example', 'title': None, 'snippet': 'available'},
+        {'link': '', 'title': None, 'snippet': None},
+    ]

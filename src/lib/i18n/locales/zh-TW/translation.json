@@ -3188,6 +3188,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity 搜尋上下文使用量",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright 逾時時間（毫秒）",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "/search 使用關鍵字搜尋。/ask 自動選擇資訊來源，最多傳回 10 筆搜尋結果。",
+	"settings.admin.web.search1apiEndpoint.label": "Search1API 端點",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API 金鑰",
 	"settings.admin.web.searchapiEngine.label": "SearchApi 引擎",
 	"settings.admin.web.searchLimits.description": "控制結果數量與平行搜尋請求。",

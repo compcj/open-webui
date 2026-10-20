@@ -129,6 +129,7 @@
 		if (res) {
 			webConfig = res.web;
 			webConfig.TAVILY_SEARCH_DEPTH ??= 'basic';
+			webConfig.SEARCH1API_ENDPOINT ??= 'search';
 
 			// Convert array back to comma-separated string for display
 			if (Array.isArray(webConfig?.WEB_SEARCH_DOMAIN_FILTER_LIST)) {
@@ -662,6 +663,16 @@
 								/>
 							</div>
 						</div>
+						<AdminSettingRow
+							label={$i18n.t('settings.admin.web.search1apiEndpoint.label')}
+							description={$i18n.t('settings.admin.web.search1apiEndpoint.description')}
+							let:labelId
+						>
+							<SettingsSelect bind:value={webConfig.SEARCH1API_ENDPOINT} aria-labelledby={labelId}>
+								<option value="search">/search</option>
+								<option value="ask">/ask</option>
+							</SettingsSelect>
+						</AdminSettingRow>
 					{:else if webConfig.WEB_SEARCH_ENGINE === 'searchapi'}
 						<div class="mb-2.5 flex w-full flex-col">
 							<div>

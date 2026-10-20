@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Gebruik van zoekcontext voor Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright-time-out (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket-URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API-sleutel",
 	"settings.admin.web.searchapiEngine.label": "SearchApi Engine",
 	"settings.admin.web.searchLimits.description": "Bepaal het aantal resultaten en gelijktijdige zoekaanvragen.",

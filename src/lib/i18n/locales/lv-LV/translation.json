@@ -3222,6 +3222,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity meklēšanas konteksta lietojums",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright taimauts (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API atslēga",
 	"settings.admin.web.searchapiEngine.label": "SearchApi dzinējs",
 	"settings.admin.web.searchLimits.description": "Kontrolēt rezultātu apjomu un paralēlos meklēšanas pieprasījumus.",

@@ -3273,6 +3273,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "استخدام سياق البحث في Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "مهلة Playwright (مللي ثانية)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "عنوان WebSocket لخدمة Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "مفتاح API لـ SearchApi",
 	"settings.admin.web.searchapiEngine.label": "محرك SearchApi",
 	"settings.admin.web.searchLimits.description": "التحكم في عدد النتائج وطلبات البحث المتوازية.",

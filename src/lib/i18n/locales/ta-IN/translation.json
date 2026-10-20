@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "குழப்பமான தேடல் சூழல் பயன்பாடு",
 	"settings.admin.web.playwrightTimeoutMs.label": "நாடக ஆசிரியர் காலக்கெடு (மிவி)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "நாடக ஆசிரியர் வெப்சாக்கெட் URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API விசை",
 	"settings.admin.web.searchapiEngine.label": "SearchApi இன்ஜின்",
 	"settings.admin.web.searchLimits.description": "முடிவுகளின் எண்ணிக்கை மற்றும் ஒரே நேரத் தேடல் கோரிக்கைகளைக் கட்டுப்படுத்தவும்.",

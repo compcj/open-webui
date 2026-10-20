@@ -23,6 +23,7 @@ from sqlalchemy.orm import declarative_base
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
 DEPTH_KEY = 'web.search.tavily_search_depth'
+ENDPOINT_KEY = 'web.search.search1api_endpoint'
 
 
 def execute_nodes(path, names, namespace):
@@ -41,17 +42,19 @@ def execute_nodes(path, names, namespace):
     return namespace
 
 
-def tavily_defaults():
+def provider_defaults():
     tree = ast.parse((BACKEND / 'config.py').read_text(encoding='utf-8'))
     nodes = []
     for node in tree.body:
         if not isinstance(node, ast.Assign) or not isinstance(node.targets[0], ast.Name):
             continue
-        if node.targets[0].id.startswith('TAVILY_'):
+        if node.targets[0].id.startswith(('TAVILY_', 'SEARCH1API_')):
             nodes.append(node)
         elif node.targets[0].id == 'DEFAULT_CONFIG':
             pairs = [
-                (k, v) for k, v in zip(node.value.keys, node.value.values) if k.value.startswith('web.search.tavily_')
+                (k, v)
+                for k, v in zip(node.value.keys, node.value.values)
+                if k.value.startswith(('web.search.tavily_', 'web.search.search1api_'))
             ]
             node.value = ast.Dict(keys=[k for k, _ in pairs], values=[v for _, v in pairs])
             nodes.append(node)
@@ -66,12 +69,13 @@ def test_registered_default_uses_environment_or_basic(monkeypatch, env_depth):
         monkeypatch.delenv('TAVILY_SEARCH_DEPTH', raising=False)
     else:
         monkeypatch.setenv('TAVILY_SEARCH_DEPTH', env_depth)
-    assert tavily_defaults().get(DEPTH_KEY) == (env_depth or 'basic')
+    assert provider_defaults().get(DEPTH_KEY) == (env_depth or 'basic')
 
 
 @pytest_asyncio.fixture
 async def runtime(monkeypatch):
     monkeypatch.delenv('TAVILY_SEARCH_DEPTH', raising=False)
+    monkeypatch.delenv('SEARCH1API_ENDPOINT', raising=False)
     base = declarative_base()
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -125,7 +129,7 @@ async def runtime(monkeypatch):
     )
     namespace['ConfigForm'].model_rebuild(_types_namespace=namespace)
     defaults = {key: None for key in namespace['RETRIEVAL_CONFIG_KEYS'].values()}
-    defaults.update(tavily_defaults())
+    defaults.update(provider_defaults())
     defaults.update({'rag.reranking_engine': 'external', 'rag.hybrid_search': False})
     namespace['Config'].configure(defaults=defaults)
     async with engine.begin() as connection:
@@ -238,13 +242,15 @@ async def test_search_and_extract_depth_are_independent(runtime):
 
 
 @pytest.mark.asyncio
-async def test_search1api_persists_and_dispatches_with_its_config(runtime):
+@pytest.mark.parametrize('endpoint', ['search', 'ask'])
+async def test_search1api_persists_and_dispatches_with_its_config(runtime, endpoint):
     async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
         response = await client.post(
             '/config/update',
             json={
                 'web': {
                     'SEARCH1API_API_KEY': 'synthetic-search-key',
+                    'SEARCH1API_ENDPOINT': endpoint,
                     'WEB_SEARCH_RESULT_COUNT': 3,
                     'WEB_SEARCH_DOMAIN_FILTER_LIST': ['allowed.example'],
                 }
@@ -252,7 +258,61 @@ async def test_search1api_persists_and_dispatches_with_its_config(runtime):
         )
     assert response.status_code == 200
     assert response.json()['web']['SEARCH1API_API_KEY'] == 'synthetic-search-key'
+    assert response.json()['web'].get('SEARCH1API_ENDPOINT') == endpoint
     provider = AsyncMock(return_value=['result'])
     runtime['search_search1api'] = provider
     assert await runtime['search_web'](None, 'search1api', 'query') == ['result']
-    provider.assert_awaited_once_with('synthetic-search-key', 'query', 3, ['allowed.example'])
+    provider.assert_awaited_once_with('synthetic-search-key', 'query', 3, ['allowed.example'], endpoint=endpoint)
+
+
+@pytest.mark.parametrize('env_endpoint', [None, 'search', 'ask'])
+def test_search1api_registered_default_uses_environment_or_search(monkeypatch, env_endpoint):
+    if env_endpoint is None:
+        monkeypatch.delenv('SEARCH1API_ENDPOINT', raising=False)
+    else:
+        monkeypatch.setenv('SEARCH1API_ENDPOINT', env_endpoint)
+    assert provider_defaults().get(ENDPOINT_KEY) == (env_endpoint or 'search')
+
+
+@pytest.mark.asyncio
+async def test_search1api_default_and_saved_precedence_roundtrip(runtime, monkeypatch):
+    async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
+        assert (await client.get('/config')).json()['web'].get('SEARCH1API_ENDPOINT') == 'search'
+        response = await client.post('/config/update', json={'web': {'SEARCH1API_ENDPOINT': 'ask'}})
+        assert response.status_code == 200
+        monkeypatch.setenv('SEARCH1API_ENDPOINT', 'search')
+        runtime['Config'].configure(defaults={**runtime['Config'].DEFAULTS, **provider_defaults()})
+        saved = await client.get('/config')
+    assert saved.json()['web'].get('SEARCH1API_ENDPOINT') == 'ask'
+    assert await runtime['Config'].get(ENDPOINT_KEY) == 'ask'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('web', [{}, {'SEARCH1API_ENDPOINT': None}])
+async def test_search1api_omission_and_null_preserve_saved_endpoint(runtime, web):
+    await runtime['Config'].upsert({ENDPOINT_KEY: 'ask'})
+    async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
+        response = await client.post('/config/update', json={'web': web})
+    assert response.status_code == 200
+    assert response.json()['web'].get('SEARCH1API_ENDPOINT') == 'ask'
+    assert await runtime['Config'].get(ENDPOINT_KEY) == 'ask'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('invalid', ['auto', '', 'ASK', '/ask', 2])
+async def test_search1api_invalid_endpoint_returns_422_without_mutation(runtime, invalid):
+    await runtime['Config'].upsert({ENDPOINT_KEY: 'ask'})
+    async with AsyncClient(transport=ASGITransport(app=runtime['app']), base_url='http://test') as client:
+        response = await client.post('/config/update', json={'web': {'SEARCH1API_ENDPOINT': invalid}})
+    assert response.status_code == 422
+    assert response.json()['detail'][0]['loc'] == ['body', 'web', 'SEARCH1API_ENDPOINT']
+    assert await runtime['Config'].get(ENDPOINT_KEY) == 'ask'
+
+
+@pytest.mark.asyncio
+async def test_search1api_default_endpoint_is_forwarded_by_shared_router(runtime):
+    await runtime['Config'].upsert({'web.search.search1api_api_key': 'synthetic-key'})
+    provider = AsyncMock(return_value=[])
+    runtime['search_search1api'] = provider
+    assert await runtime['search_web'](None, 'search1api', 'query') == []
+    assert provider.await_args.kwargs == {'endpoint': 'search'}

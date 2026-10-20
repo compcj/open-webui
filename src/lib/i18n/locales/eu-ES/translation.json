@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity bilaketaren testuinguru-erabilera",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright itxarote-denbora (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URLa",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API gakoa",
 	"settings.admin.web.searchapiEngine.label": "SearchApi motorra",
 	"settings.admin.web.searchLimits.description": "Kontrolatu emaitza kopurua eta bilaketa-eskaera paraleloak.",

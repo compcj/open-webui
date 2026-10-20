@@ -3222,6 +3222,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Upotreba konteksta Perplexity pretrage",
 	"settings.admin.web.playwrightTimeoutMs.label": "Vremensko ograničenje za Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API ključ",
 	"settings.admin.web.searchapiEngine.label": "SearchApi pogon",
 	"settings.admin.web.searchLimits.description": "Kontrolišite broj rezultata i paralelne zahtjeve za pretragu.",

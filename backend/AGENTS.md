@@ -30,6 +30,16 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Search1API spans `config.py`, `retrieval/web/search1api.py`, `routers/retrieval.py`, and the
   frontend `WebSearch.svelte`. Preserve response normalization, result limits, domain filtering,
   HTTP error handling, configuration persistence, and the missing-key error.
+  `SEARCH1API_ENDPOINT` supplies the `search` default for `web.search.search1api_endpoint`;
+  admin API `web.SEARCH1API_ENDPOINT` accepts only `search`/`ask`. Omission or `null` preserves
+  the saved value, and enabled persistence retains its precedence over environment defaults.
+  Both built-in search and automatic retrieval use the shared dispatch and keyword-only
+  `endpoint` argument. `/search` sends `query` and `max_results`; `/ask` sends only `query`,
+  unchanged. Filter results before applying the local count limit. Invalid runtime endpoints
+  fail before network access; HTTP errors never trigger an automatic endpoint fallback.
+  Keep the tool schema and `SearchResult` structure unchanged. See
+  [verification](../docs/DEVELOPMENT.md#search1api-endpoint-verification) and the
+  [decision follow-up](../docs/upstream/v0.12.2-search1api-endpoint-followup.md).
 - Tavily search depth spans `config.py`, `retrieval/web/tavily.py`, and `routers/retrieval.py`.
   Preserve `TAVILY_SEARCH_DEPTH` (`basic` by default; `ultra-fast`, `fast`, `basic`, `advanced` accepted), the per-key setting
   `web.search.tavily_search_depth`, and its propagation through the shared search entry point.

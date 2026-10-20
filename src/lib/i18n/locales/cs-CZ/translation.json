@@ -3239,6 +3239,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Využití kontextu vyhledávání Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Časový limit Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "WebSocket URL pro Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "API klíč pro SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Jádro pro SearchApi",
 	"settings.admin.web.searchLimits.description": "Nastavte počet výsledků a souběžné požadavky vyhledávání.",

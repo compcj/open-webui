@@ -3222,6 +3222,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity Usar Búsqueda en Contexto",
 	"settings.admin.web.playwrightTimeoutMs.label": "Tiempo Límite de Espera (ms) de Playwright",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL de WebSocket de Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Clave API de SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Motor SearchApi",
 	"settings.admin.web.searchLimits.description": "Controla el volumen de resultados y las solicitudes de búsqueda en paralelo.",

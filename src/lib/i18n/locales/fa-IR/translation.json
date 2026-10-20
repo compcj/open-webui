@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "استفاده از زمینه جستجوی پرپلکسیتی",
 	"settings.admin.web.playwrightTimeoutMs.label": "مهلت زمانی پلی\u200cرایت (میلی\u200cثانیه)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "آدرس وب\u200cسوکت پلی\u200cرایت",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "کلید API SearchApi",
 	"settings.admin.web.searchapiEngine.label": "موتور SearchApi",
 	"settings.admin.web.searchLimits.description": "حجم نتایج و درخواست\u200cهای جستجوی موازی را کنترل کنید.",

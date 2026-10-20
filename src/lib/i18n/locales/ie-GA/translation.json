@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Úsáid Chomhthéacs Cuardaigh Mearbhall",
 	"settings.admin.web.playwrightTimeoutMs.label": "Teorainn Ama drámadóra (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL drámadóir WebSocket",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Eochair API SearchAPI",
 	"settings.admin.web.searchapiEngine.label": "Inneall SearchAPI",
 	"settings.admin.web.searchLimits.description": "Rialú a dhéanamh ar líon na dtorthaí agus ar iarratais chuardaigh chomhthreomhara.",

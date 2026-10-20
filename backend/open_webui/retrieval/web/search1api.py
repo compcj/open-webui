@@ -9,16 +9,23 @@ async def search_search1api(
     query: str,
     count: int,
     filter_list: list[str | None] | None = None,
+    *,
+    endpoint: str = 'search',
 ) -> list[SearchResult]:
     """Search the web using Search1API and return normalized results."""
+    if endpoint not in ('search', 'ask'):
+        raise ValueError(f'Unsupported Search1API endpoint: {endpoint!r}')
+
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',
     }
-    payload = {'query': query, 'max_results': count}
+    payload = {'query': query}
+    if endpoint == 'search':
+        payload['max_results'] = count
     session = await get_session()
     async with session.post(
-        'https://api.search1api.com/search',
+        f'https://api.search1api.com/{endpoint}',
         headers=headers,
         json=payload,
     ) as response:

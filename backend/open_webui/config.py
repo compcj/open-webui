@@ -1269,6 +1269,7 @@ SEARCHAPI_API_KEY = os.getenv('SEARCHAPI_API_KEY', '')
 SEARCHAPI_ENGINE = os.getenv('SEARCHAPI_ENGINE', '')
 
 SEARCH1API_API_KEY = os.getenv('SEARCH1API_API_KEY', '')
+SEARCH1API_ENDPOINT = os.getenv('SEARCH1API_ENDPOINT', 'search')
 
 SERPAPI_API_KEY = os.getenv('SERPAPI_API_KEY', '')
 
@@ -3089,6 +3090,7 @@ DEFAULT_CONFIG = {
     'web.search.searchapi_api_key': SEARCHAPI_API_KEY,
     'web.search.searchapi_engine': SEARCHAPI_ENGINE,
     'web.search.search1api_api_key': SEARCH1API_API_KEY,
+    'web.search.search1api_endpoint': SEARCH1API_ENDPOINT,
     'web.search.serpapi_api_key': SERPAPI_API_KEY,
     'web.search.serpapi_engine': SERPAPI_ENGINE,
     'web.search.bing_search_v7_endpoint': BING_SEARCH_V7_ENDPOINT,

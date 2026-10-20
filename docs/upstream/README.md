@@ -49,3 +49,9 @@ connection URLs, local machine paths, or scratch artifacts in these records.
 The [v0.12.2 native connection follow-up](v0.12.2-native-connections-followup.md) records explicit
 Gemini/Anthropic message transports, signed reasoning replay and cross-transport budget/header
 contracts. Read it alongside v0.12.2 decisions before merging provider, connection or compaction changes.
+
+## Search1API endpoint follow-up
+
+The [v0.12.2 Search1API endpoint follow-up](v0.12.2-search1api-endpoint-followup.md) records the
+admin-global `/search`/`/ask` selection, default and persistence compatibility, request differences
+and validation evidence. Read it before merging search-provider or retrieval-settings changes.

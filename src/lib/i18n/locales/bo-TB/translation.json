@@ -3188,6 +3188,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity འཚོལ་བཤེར་གྱི་ནང་དོན་བེད་སྤྱོད།",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright སྒུག་ཡུན་ཚད། (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API ལྡེ་མིག",
 	"settings.admin.web.searchapiEngine.label": "SearchApi Engine",
 	"settings.admin.web.searchLimits.description": "འབྲས་བུའི་མང་ཉུང་དང་དུས་མཉམ་འཚོལ་བཤེར་རེ་ཞུ་ཚོད་འཛིན་བྱོས།",

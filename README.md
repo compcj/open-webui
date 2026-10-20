@@ -34,7 +34,7 @@ This fork of Open WebUI integrates the official **[v0.12.2](https://github.com/o
 
 | 功能 / Feature                        | 本分支行为 / Fork behavior                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search1API                            | 管理员可配置搜索提供商与 API Key，支持规范化结果和域名过滤；`SEARCH1API_API_KEY` 提供环境默认值。<br>Admin-configured search provider with normalized results and domain filtering; `SEARCH1API_API_KEY` supplies an environment default.                                                                                                     |
+| Search1API                            | 管理员可配置 API Key 和 `/search`、`/ask` 接口，默认 `/search`，保存后全局生效；保留结果规范化和域名过滤。<br>Admins can configure the API key and choose `/search` or `/ask`, defaulting to `/search`; saved settings apply globally with normalized results and domain filtering.                                                           |
 | Tavily 搜索深度 / Search depth        | 管理员在“设置 → 网络搜索”选择 Tavily 后，可切换 `ultra-fast` / `fast` / `basic` / `advanced`，保存后全局生效，默认 `basic`。<br>Admins can select `ultra-fast` / `fast` / `basic` / `advanced` under Settings → Web Search → Tavily; the saved setting applies globally and defaults to `basic`.                                              |
 | 推理强度 / Reasoning effort           | 普通模型使用上游模型控件，兼容旧标准／自定义档位和记忆；直连等场景保留原入口。<br>Server models use upstream controls with legacy/custom choices and preference migration; direct connections retain the compatible selector.                                                                                                                 |
 | OpenClaw 技能 / Skills                | 支持原生技能及 `SKILL.md`、ZIP／`.skill`、直接链接、GitHub、skills.sh、ClawHub 导入；保留未知元数据，附件统一保存为 `data.files` 并接入版本历史；多技能归档提供选择器。<br>Native and OpenClaw skills with file/ZIP/`.skill`/URL imports, preserved metadata, canonical `data.files`, version history, and a picker for multi-skill archives. |
@@ -189,6 +189,37 @@ conversion conflicts stop migration with a skill ID/path. File edits require `ex
 stale versions conflict and old versionless attachment clients must refresh. URL imports retain the
 legacy descriptor response and accept `response_format=packages` for new clients. Both use the same
 network, redirect, archive and size checks; admins and users with `skills_import` may import.
+
+### Search1API 接口 / Search1API endpoint
+
+管理员在“设置 → 网络搜索”选择 Search1API 后，可配置 API Key 并选择 `/search` 或 `/ask`。
+`/search` 使用搜索关键词返回结果；`/ask` 根据自然语言查询自动选择搜索源并按相关性排序。
+选择保存后同时适用于聊天内置搜索和自动联网检索，刷新页面或切换搜索提供商不会重置已保存的值。
+
+In Admin Settings → Web Search, select Search1API, configure the API key, and choose `/search` or
+`/ask`. `/search` retrieves results using search keywords; `/ask` selects sources from a
+natural-language query and ranks results by relevance. The saved selection applies globally to
+built-in chat search and automatic web retrieval, and survives reloads and provider changes.
+
+`SEARCH1API_API_KEY` 提供密钥默认值；`SEARCH1API_ENDPOINT=search` 提供接口默认值，允许 `search` 和 `ask`。
+未配置接口时使用 `/search`。启用持久化配置时，已保存的管理员设置优先于环境默认值。
+配置 API 的 `web.SEARCH1API_ENDPOINT` 严格校验枚举；更新省略字段或传入 `null` 时保留原值。
+
+`SEARCH1API_API_KEY` supplies the default key. `SEARCH1API_ENDPOINT=search` supplies the default
+endpoint, accepting `search` or `ask`; an unconfigured endpoint uses `/search`. With persistent
+configuration enabled, saved admin settings take precedence over environment defaults.
+The configuration API validates `web.SEARCH1API_ENDPOINT`; omitted or `null` updates preserve
+the saved selection.
+
+`/ask` 仅接收查询文本，查询最长 500 字符，最多返回 10 条结果；本地仍按域名过滤和结果数量设置筛选。
+查询不会被自动截断，接口错误沿用现有错误提示，不自动回退到 `/search`。返回内容仍是搜索结果，
+详细事实和引文需继续读取来源正文。接口能力、限制和费用以 [Search1API 官方文档](https://s1.dev/docs/basic/ask)为准。
+
+`/ask` accepts only the query, with a maximum of 500 characters and up to ten returned results;
+local domain filters and result-count limits still apply. Queries are not truncated and endpoint
+errors use the existing error handling without automatic fallback to `/search`. Results remain
+search snippets; fetch source pages for detailed facts and quotations. See the
+[Search1API documentation](https://s1.dev/docs/basic/ask) for current capabilities, limits and pricing.
 
 ### Tavily 搜索深度 / Tavily search depth
 

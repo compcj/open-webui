@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Χρήση συμφραζομένων Perplexity Search",
 	"settings.admin.web.playwrightTimeoutMs.label": "Χρονικό όριο Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL WebSocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Κλειδί API SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Μηχανή SearchApi",
 	"settings.admin.web.searchLimits.description": "Ρυθμίζει τον όγκο των αποτελεσμάτων και τα παράλληλα αιτήματα αναζήτησης.",

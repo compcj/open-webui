@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "",
 	"settings.admin.web.playwrightTimeoutMs.label": "Dramaturg taymouti (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Dramaturg WebSocket URL manzili",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API kaliti",
 	"settings.admin.web.searchapiEngine.label": "SearchApi mexanizmi",
 	"settings.admin.web.searchLimits.description": "",

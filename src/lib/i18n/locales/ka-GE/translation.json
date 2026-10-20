@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity Search-ის კონტექსტის გამოყენება",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright-ის დროის ამოწურვა (მწმ)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright-ის WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API-ის გასაღები",
 	"settings.admin.web.searchapiEngine.label": "ძრავა SearchApi",
 	"settings.admin.web.searchLimits.description": "აკონტროლებს შედეგების მოცულობას და ძებნის პარალელურ მოთხოვნებს.",

@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity অনুসন্ধানের প্রসঙ্গ ব্যবহার",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright অপেক্ষার সময়সীমা (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API কী",
 	"settings.admin.web.searchapiEngine.label": "SearchApi ইঞ্জিন",
 	"settings.admin.web.searchLimits.description": "ফলাফলের সংখ্যা ও সমান্তরাল অনুসন্ধান অনুরোধ নিয়ন্ত্রণ করুন।",

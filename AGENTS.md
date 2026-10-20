@@ -118,9 +118,11 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 
 - Match nearby patterns and the checked-in formatter configuration. Keep diffs focused; do not
   reformat unrelated files or introduce dependencies for a small change without a concrete need.
-- Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API,
-  Tavily search depth, and model reasoning-effort behavior. The scoped guides define their contracts;
-  [the development guide](docs/DEVELOPMENT.md) maps their files/tests.
+- Preserve fork behavior when refactoring or merging upstream. In particular, check Search1API
+  endpoint selection, Tavily search depth, and model reasoning-effort behavior. The
+  [frontend](src/AGENTS.md#integration-contracts) and [backend](backend/AGENTS.md#fork-contracts)
+  guides define their contracts; [Search1API verification](docs/DEVELOPMENT.md#search1api-endpoint-verification)
+  and the development guide's regression map identify their files/tests.
 - Skills use upstream `data.files` as the sole editable file tree for native and OpenClaw packages.
   Legacy `meta.openclaw.files`/frontmatter are compatibility input/projections; preserve unknown
   frontmatter, source/config/env and original bytes without keeping a second mutable copy. Canonical

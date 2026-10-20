@@ -3204,6 +3204,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Penggunaan Konteks Pencarian Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Batas Waktu Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL WebSocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Kunci API SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Mesin SearchApi",
 	"settings.admin.web.searchLimits.description": "Kontrol volume hasil dan permintaan pencarian paralel.",

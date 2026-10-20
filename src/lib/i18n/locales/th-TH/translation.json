@@ -3188,6 +3188,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "การใช้บริบทการค้นหา Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright Timeout (มิลลิวินาที)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL WebSocket ของ Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "API Key ของ SearchApi",
 	"settings.admin.web.searchapiEngine.label": "เอนจินของ SearchApi",
 	"settings.admin.web.searchLimits.description": "ควบคุมปริมาณผลลัพธ์และคำขอค้นหาแบบขนาน",

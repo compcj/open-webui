@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "",
 	"settings.admin.web.playwrightTimeoutMs.label": "",
 	"settings.admin.web.playwrightWebsocketUrl.label": "",
+	"settings.admin.web.search1apiEndpoint.description": "/search uses keyword search. /ask automatically selects sources and returns up to 10 search results.",
+	"settings.admin.web.search1apiEndpoint.label": "Search1API Endpoint",
 	"settings.admin.web.searchapiApiKey.label": "",
 	"settings.admin.web.searchapiEngine.label": "",
 	"settings.admin.web.searchLimits.description": "",

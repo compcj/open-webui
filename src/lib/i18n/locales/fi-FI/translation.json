@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity Search kontekstin käyttö",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright aikakatkaisu (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket verkko-osoite",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API -avain",
 	"settings.admin.web.searchapiEngine.label": "SearchApi-moottori",
 	"settings.admin.web.searchLimits.description": "Säädä hakutulosten määrää ja samanaikaisia hakupyyntöjä.",

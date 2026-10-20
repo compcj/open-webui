@@ -368,6 +368,7 @@ RETRIEVAL_CONFIG_KEYS = {
     'SEARCHAPI_API_KEY': 'web.search.searchapi_api_key',
     'SEARCHAPI_ENGINE': 'web.search.searchapi_engine',
     'SEARCH1API_API_KEY': 'web.search.search1api_api_key',
+    'SEARCH1API_ENDPOINT': 'web.search.search1api_endpoint',
     'SEARXNG_LANGUAGE': 'web.search.searxng_language',
     'SEARXNG_QUERY_URL': 'web.search.searxng_query_url',
     'OPENSERP_BASE_URL': 'web.search.openserp_base_url',
@@ -722,6 +723,7 @@ async def get_rag_config(request: Request, user=Depends(get_admin_user)):
             'SEARCHAPI_API_KEY': config['web.search.searchapi_api_key'],
             'SEARCHAPI_ENGINE': config['web.search.searchapi_engine'],
             'SEARCH1API_API_KEY': config['web.search.search1api_api_key'],
+            'SEARCH1API_ENDPOINT': config['web.search.search1api_endpoint'],
             'SERPAPI_API_KEY': config['web.search.serpapi_api_key'],
             'SERPAPI_ENGINE': config['web.search.serpapi_engine'],
             'JINA_API_KEY': config['web.search.jina_api_key'],
@@ -808,6 +810,7 @@ class WebConfig(BaseModel):
     SEARCHAPI_API_KEY: str | None = None
     SEARCHAPI_ENGINE: str | None = None
     SEARCH1API_API_KEY: str | None = None
+    SEARCH1API_ENDPOINT: Literal['search', 'ask'] | None = None
     SERPAPI_API_KEY: str | None = None
     SERPAPI_ENGINE: str | None = None
     JINA_API_KEY: str | None = None
@@ -1033,7 +1036,9 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
         for field, value in form_data.web.model_dump(exclude_unset=True).items():
             if field == 'YOUTUBE_LOADER_TRANSLATION':
                 request.app.state.YOUTUBE_LOADER_TRANSLATION = value
-            elif field in {'BRAVE_SEARCH_CONTEXT_TOKENS', 'TAVILY_SEARCH_DEPTH'} and value is None:
+            elif (
+                field in {'BRAVE_SEARCH_CONTEXT_TOKENS', 'TAVILY_SEARCH_DEPTH', 'SEARCH1API_ENDPOINT'} and value is None
+            ):
                 continue
             else:
                 updates[RETRIEVAL_CONFIG_KEYS[field]] = value
@@ -1153,6 +1158,7 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
             'SEARCHAPI_API_KEY': config['web.search.searchapi_api_key'],
             'SEARCHAPI_ENGINE': config['web.search.searchapi_engine'],
             'SEARCH1API_API_KEY': config['web.search.search1api_api_key'],
+            'SEARCH1API_ENDPOINT': config['web.search.search1api_endpoint'],
             'SERPAPI_API_KEY': config['web.search.serpapi_api_key'],
             'SERPAPI_ENGINE': config['web.search.serpapi_engine'],
             'JINA_API_KEY': config['web.search.jina_api_key'],
@@ -2410,6 +2416,7 @@ async def search_web(
                 query,
                 config['web.search.result_count'],
                 config['web.search.domain.filter_list'],
+                endpoint=config['web.search.search1api_endpoint'],
             )
         else:
             raise Exception('No SEARCH1API_API_KEY found in environment variables')

@@ -3239,6 +3239,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Використання контексту Perplexity Search",
 	"settings.admin.web.playwrightTimeoutMs.label": "Тайм-аут Playwright (мс)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL-адреса WebSocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Ключ API для SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Рушій SearchApi",
 	"settings.admin.web.searchLimits.description": "Керуйте кількістю результатів та паралельними пошуковими запитами.",

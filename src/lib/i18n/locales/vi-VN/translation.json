@@ -3188,6 +3188,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Mức sử dụng ngữ cảnh Perplexity Search",
 	"settings.admin.web.playwrightTimeoutMs.label": "Thời gian chờ Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "URL WebSocket Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "Khóa API SearchApi",
 	"settings.admin.web.searchapiEngine.label": "Engine SearchApi",
 	"settings.admin.web.searchLimits.description": "Kiểm soát số lượng kết quả và các yêu cầu tìm kiếm song song.",

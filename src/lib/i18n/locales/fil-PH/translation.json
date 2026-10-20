@@ -3207,6 +3207,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Paggamit ng Konteksto sa Paghahanap ng Perplexity",
 	"settings.admin.web.playwrightTimeoutMs.label": "Timeout ng Playwright (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "WebSocket URL ng Playwright",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API Key",
 	"settings.admin.web.searchapiEngine.label": "Engine ng SearchApi",
 	"settings.admin.web.searchLimits.description": "Kontrolin ang dami ng resulta at mga sabay-sabay na request sa paghahanap.",

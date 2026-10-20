@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity ئىزدەش مۇھىتى ئىشلىتىش",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright ۋاقىت چەكلىمىسى (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API ئاچقۇچى",
 	"settings.admin.web.searchapiEngine.label": "SearchApi ماتورى",
 	"settings.admin.web.searchLimits.description": "نەتىجە سانى ۋە پاراللىل ئىزدەش تەلەپلىرىنى باشقۇرۇڭ.",

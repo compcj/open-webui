@@ -3201,6 +3201,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity 搜索上下文用量",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright 超时时间 (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket 地址",
+	"settings.admin.web.search1apiEndpoint.description": "/search 使用关键词搜索。/ask 自动选择信息来源，最多返回 10 条搜索结果。",
+	"settings.admin.web.search1apiEndpoint.label": "Search1API 端点",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi 接口密钥",
 	"settings.admin.web.searchapiEngine.label": "SearchApi 引擎",
 	"settings.admin.web.searchLimits.description": "控制结果数量和并行搜索请求。",

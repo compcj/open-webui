@@ -3190,6 +3190,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity 검색 컨텍스트 사용",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright 시간 초과 (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API 키",
 	"settings.admin.web.searchapiEngine.label": "SearchApi 엔진",
 	"settings.admin.web.searchLimits.description": "결과 수와 병렬 검색 요청을 제어합니다.",

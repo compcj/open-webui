@@ -3205,6 +3205,8 @@
 	"settings.admin.web.perplexitySearchContextUsage.label": "Perplexity Search kontextushasználata",
 	"settings.admin.web.playwrightTimeoutMs.label": "Playwright időtúllépés (ms)",
 	"settings.admin.web.playwrightWebsocketUrl.label": "Playwright WebSocket URL",
+	"settings.admin.web.search1apiEndpoint.description": "",
+	"settings.admin.web.search1apiEndpoint.label": "",
 	"settings.admin.web.searchapiApiKey.label": "SearchApi API kulcs",
 	"settings.admin.web.searchapiEngine.label": "SearchApi motor",
 	"settings.admin.web.searchLimits.description": "A találatok mennyiségének és a párhuzamos keresési kéréseknek a szabályozása.",

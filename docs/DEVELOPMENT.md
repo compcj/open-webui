@@ -182,7 +182,7 @@ Official commit IDs and actual ancestry, not local tag names alone, determine an
 
 | Behavior                              | Implementation boundary                                                                | Regression starting point                                                                                                                                                                    |
 | ------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search1API                            | `retrieval/web/search1api.py`, retrieval/config routes, admin WebSearch                | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py`                                                                                                           |
+| Search1API endpoint selection         | `config.py`, `retrieval/web/search1api.py`, retrieval/config routes, admin WebSearch   | `backend/tests/test_search1api.py`, `backend/tests/test_search1api_integration.py`, `backend/tests/test_search1api_missing_key.py`, `backend/tests/test_tavily_config.py`                    |
 | Tavily search depth                   | `config.py`, `retrieval/web/tavily.py`, retrieval/config routes, admin WebSearch       | `backend/tests/test_tavily.py`, `backend/tests/test_tavily_config.py`                                                                                                                        |
 | Reasoning effort and Responses        | Model metadata/defaults, chat controls, `utils/responses_reasoning.py`                 | `src/lib/utils/reasoning-effort.test.ts`, `backend/tests/test_openai_responses_payload.py`                                                                                                   |
 | Skills / OpenClaw                     | Admin discovery config, skill ACL, middleware, runtime, import/editor/export           | `backend/tests/test_skill_discovery_policy.py`, `backend/tests/test_skills_runtime.py`, `src/lib/utils/skills.test.ts`, `src/lib/utils/skill-discovery.test.ts`                              |
@@ -277,6 +277,46 @@ and subsequent requests and preserve sanitized results separately. Missing usage
 not zero. Local prefix checks do not establish a cache hit rate or savings. See
 [OpenRouter caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) and the
 [implementation record](upstream/v0.11.4-tool-citation-cache-followup.md).
+
+### Search1API endpoint verification
+
+Use Python 3.11/3.12 and the installed development dependencies. The provider tests mock HTTP;
+the shared configuration harness in `test_tavily_config.py` executes the configuration routes
+and persistence with isolated in-memory SQLite. It needs `pytest`, `pytest-asyncio`, `aiohttp`,
+`requests`, `fastapi`, `pydantic`, `httpx`, `sqlalchemy[asyncio]`, and `aiosqlite`.
+Use the repository's dependency versions; do not import the application against existing data
+just to run these tests.
+
+```sh
+python -m pytest backend/tests/test_search1api.py backend/tests/test_search1api_integration.py backend/tests/test_search1api_missing_key.py backend/tests/test_tavily_config.py backend/tests/test_tavily.py -q
+npm run test:frontend -- --run src/lib/components/admin/Settings/WebSearch.test.ts
+npm run check
+```
+
+Cover both endpoint URLs and payloads, result normalization, filtering before count limits,
+empty results, unchanged queries, HTTP failures without fallback, and rejection of invalid
+runtime endpoints before sending. The configuration checks cover environment defaults,
+saved-value precedence, save/read round trips, omitted/null compatibility, invalid enum
+rejection, shared dispatch and the existing Tavily behavior. `test_search1api_integration.py`
+is a source-wiring check, not proof of a live provider or complete application startup.
+
+For UI acceptance, use disposable data/static paths as described above:
+
+1. Select Search1API in Admin Settings → Web Search. With no saved value or environment override,
+   the endpoint must display `/search`. Check English and Chinese labels.
+2. Select `/ask`, save and reload; switch to another provider and back. The saved endpoint must
+   remain `/ask`. Repeat for `/search`, including keyboard selection, narrow layout and dark mode.
+3. Exercise both built-in chat search and automatic web retrieval with mocked provider transport.
+   Verify `/search` sends `query` plus `max_results`, while `/ask` sends only the unchanged `query`.
+   Both paths must retain normalized results, filtering, result limits and citations.
+4. Check missing-key and HTTP errors. Neither may silently select another endpoint.
+
+Real-provider checks are separate and consume credits; use a development key kept out of logs.
+Mocked request tests and a browser harness do not establish real-provider acceptance.
+After UI text changes, check translation extraction and repeat it to confirm stable output.
+Validate changed Markdown with installed Prettier, check local links/anchors and run
+`git diff --check`. Record actual commands, results and untested boundaries in the
+[decision follow-up](upstream/v0.12.2-search1api-endpoint-followup.md).
 
 ### Tavily search-depth verification
 
