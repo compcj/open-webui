@@ -490,6 +490,7 @@
 	let webSearchEnabled = false;
 	let codeInterpreterEnabled = false;
 	let knowledgeEnabled = false;
+	let knowledgeWriteEnabled = false;
 	let memoryEnabled = false;
 	let notesEnabled = false;
 	let webSearchActive = false;
@@ -499,8 +500,23 @@
 	// undefined means no pending toggle; null is a multi-model toggle (never remembered).
 	let pendingWebSearchToggleModelId: string | null | undefined;
 	let webSearchConfirmTimeout: ReturnType<typeof setTimeout> | undefined;
+	let toolFeatureUserId: string | null = $user?.id ?? null;
+
+	const syncToolFeatureAccount = () => {
+		const userId = $user?.id ?? null;
+		if (userId !== toolFeatureUserId) {
+			toolFeatureUserId = userId;
+			// Never retain an explicit write opt-in from the previous account.
+			knowledgeWriteEnabled = false;
+		}
+	};
+	$: {
+		$user?.id;
+		syncToolFeatureAccount();
+	}
 
 	const getToolFeatureContext = () => {
+		syncToolFeatureAccount();
 		const modelId = getToolFeatureModelId(selectedModels, atSelectedModel?.id);
 		const currentModels = atSelectedModel
 			? [atSelectedModel]
@@ -530,6 +546,7 @@
 				web_search: isDefault('web_search'),
 				image_generation: isDefault('image_generation'),
 				knowledge: true,
+				knowledge_write: false,
 				memory: true,
 				notes: true
 			},
@@ -546,12 +563,19 @@
 		const features = resolveToolFeatureState({
 			...context,
 			// Keep the requested selection while permissions or the master switch mask it.
-			available: { ...context.available, knowledge: true, memory: true, notes: true },
+			available: {
+				...context.available,
+				knowledge: true,
+				knowledge_write: true,
+				memory: true,
+				notes: true
+			},
 			overrides
 		});
 		webSearchEnabled = features.web_search;
 		imageGenerationEnabled = features.image_generation;
 		knowledgeEnabled = features.knowledge;
+		knowledgeWriteEnabled = features.knowledge_write;
 		memoryEnabled = features.memory;
 		notesEnabled = features.notes;
 	};
@@ -677,6 +701,7 @@
 		)
 			return;
 		if (feature === 'knowledge') knowledgeEnabled = enabled;
+		if (feature === 'knowledge_write') knowledgeWriteEnabled = enabled;
 		if (feature === 'memory') memoryEnabled = enabled;
 		if (feature === 'notes') notesEnabled = enabled;
 		return persistToolFeaturePreference(modelId, feature, enabled);
@@ -1260,6 +1285,7 @@
 							web_search: input.webSearchEnabled,
 							image_generation: input.imageGenerationEnabled,
 							knowledge: input.knowledgeEnabled,
+							knowledge_write: input.knowledgeWriteEnabled,
 							memory: input.memoryEnabled,
 							notes: input.notesEnabled
 						}
@@ -1334,6 +1360,7 @@
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
 		knowledgeEnabled = false;
+		knowledgeWriteEnabled = false;
 		memoryEnabled = false;
 		notesEnabled = false;
 		codeInterpreterEnabled = false;
@@ -1413,6 +1440,7 @@
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
 		knowledgeEnabled = false;
+		knowledgeWriteEnabled = false;
 		memoryEnabled = false;
 		notesEnabled = false;
 		codeInterpreterEnabled = false;
@@ -1488,6 +1516,7 @@
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
 		knowledgeEnabled = false;
+		knowledgeWriteEnabled = false;
 		memoryEnabled = false;
 		notesEnabled = false;
 		codeInterpreterEnabled = false;
@@ -2404,6 +2433,7 @@
 				webSearchEnabled = false;
 				imageGenerationEnabled = false;
 				knowledgeEnabled = false;
+				knowledgeWriteEnabled = false;
 				memoryEnabled = false;
 				notesEnabled = false;
 				codeInterpreterEnabled = false;
@@ -4574,6 +4604,7 @@
 		return {
 			...features,
 			knowledge: available.knowledge && knowledgeEnabled,
+			knowledge_write: available.knowledge_write && knowledgeEnabled && knowledgeWriteEnabled,
 			memory: Boolean(
 				available.memory &&
 				memoryEnabled &&
@@ -5244,6 +5275,7 @@
 		selectedFilterIds,
 		imageGenerationEnabled,
 		knowledgeEnabled,
+		knowledgeWriteEnabled,
 		memoryEnabled,
 		notesEnabled,
 		webSearchEnabled,
@@ -5745,6 +5777,7 @@
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
 										bind:knowledgeEnabled
+										bind:knowledgeWriteEnabled
 										bind:memoryEnabled
 										bind:notesEnabled
 										bind:codeInterpreterEnabled
@@ -5856,6 +5889,7 @@
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
 										bind:knowledgeEnabled
+										bind:knowledgeWriteEnabled
 										bind:memoryEnabled
 										bind:notesEnabled
 										bind:codeInterpreterEnabled
@@ -5934,6 +5968,7 @@
 									bind:selectedFilterIds
 									bind:imageGenerationEnabled
 									bind:knowledgeEnabled
+									bind:knowledgeWriteEnabled
 									bind:memoryEnabled
 									bind:notesEnabled
 									bind:codeInterpreterEnabled

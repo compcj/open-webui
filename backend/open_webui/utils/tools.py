@@ -80,6 +80,7 @@ from open_webui.tools.builtin import (
     read_tool_result,
     replace_memory_content,
     replace_note_content,
+    replace_knowledge_file_content,
     search_calendar_events,
     search_channel_messages,
     search_channels,
@@ -107,6 +108,7 @@ from open_webui.tools.builtin import (
     create_skill,
     update_skill_files,
     write_note,
+    write_knowledge_file,
 )
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
 from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
@@ -135,7 +137,7 @@ from open_webui.utils.terminals import (
     terminal_context_config,
     terminal_context_id,
 )
-from open_webui.utils.tool_features import memory_enabled, scope_attachment_tool
+from open_webui.utils.tool_features import knowledge_write_context, memory_enabled, scope_attachment_tool
 from open_webui.utils.voice_avatar import avatar_animation_tools
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
@@ -283,6 +285,8 @@ async def get_async_tool_function_and_apply_extra_params(
         sig, type_hints = function_introspection
 
     def coerce_kwargs(kwargs):
+        if getattr(function, '__tool_strict_types__', False):
+            return kwargs
         for name, value in kwargs.items():
             if name not in sig.parameters or value is None:
                 continue
@@ -756,6 +760,17 @@ async def get_builtin_tools(
     # If model has attached knowledge (any type), only provide query_knowledge_files
     # Otherwise, provide all KB browsing tools
     model_knowledge = get_attached_knowledge(model, metadata)
+    write_context = knowledge_write_context(features, model, metadata)
+    if write_context['enabled']:
+        read_collection_ids = {item.get('id') for item in model_knowledge if item.get('type') == 'collection'}
+        model_knowledge = [
+            *model_knowledge,
+            *[
+                {'type': 'collection', 'id': knowledge_id, 'source': 'chat'}
+                for knowledge_id in write_context['knowledge_ids']
+                if knowledge_id not in read_collection_ids
+            ],
+        ]
     attachment_knowledge = model_knowledge
     if metadata.get('note_id'):
         attachment_knowledge = [*model_knowledge, {'type': 'note', 'id': metadata['note_id'], 'source': 'chat'}]
@@ -809,6 +824,18 @@ async def get_builtin_tools(
             builtin_functions.append(view_file)
         if any(item.get('type') == 'note' for item in model_knowledge):
             builtin_functions.append(view_note)
+
+    if write_context['enabled']:
+        for function in (
+            write_knowledge_file,
+            replace_knowledge_file_content,
+            list_knowledge_bases,
+            search_knowledge_bases,
+            list_knowledge,
+            view_knowledge_file,
+        ):
+            if function not in builtin_functions:
+                builtin_functions.append(function)
 
     # Chats tools - search and fetch user's chat history
     if is_builtin_tool_enabled('chats'):
@@ -995,6 +1022,7 @@ async def get_builtin_tools(
                 '__chat_id__': extra_params.get('__chat_id__'),
                 '__message_id__': extra_params.get('__message_id__'),
                 '__model_knowledge__': model_knowledge,
+                '__knowledge_write_context__': write_context,
             },
             get_builtin_function_introspection(func),
         )

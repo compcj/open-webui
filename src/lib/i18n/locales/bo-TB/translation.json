@@ -4172,5 +4172,10 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube བརྙན་ཟློས་ཆས།",
 	"Zoom in": "ཆེ་རུ་གཏོང་བ།",
-	"Zoom out": "ཆུང་དུ་གཏོང་བ།"
+	"Zoom out": "ཆུང་དུ་གཏོང་བ།",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

@@ -142,6 +142,32 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
 - App interactions apply current channel feature permission and group membership. Private interactions
   may use read access; any stored message update or public reply rechecks write access after the App call.
 
+## Knowledge write tools
+
+- Register `write_knowledge_file` and `replace_knowledge_file_content` through the existing builtin
+  pipeline. Require explicit `knowledge_write=true`, knowledge reading, model builtin capability
+  and both category permissions. Missing write opt-in denies execution.
+- Bind write scope separately from read injection: union model, folder and current-chat collection
+  attachments even when `file_context` is enabled. An attached collection restricts targets but does
+  not grant access. Recheck collection write ACLs and refuse external collections at execution.
+- Edits additionally require actual collection membership and file-level write access. Preserve
+  owner-provenance checks in `has_access_to_file`; sharing a readable file into another collection
+  must not grant permission to change its text.
+- Use explicit users and database sessions with existing upload/process/associate and content-update
+  pipelines. Confirm processed state and the persisted association before reporting create success.
+  Only clean up a file created by this invocation that remains unassociated.
+- Edit extracted text, retaining uploaded bytes and shared-file reindex behavior. Reject blank or
+  oversized content, unsafe names, conflicting inputs and invalid ranges. Nonempty `replace_range`
+  ranges require matching `expected`; use original character offsets for the entire batch.
+- Distinguish saved text with incomplete indexing from a failed save. Include the file ID and
+  actionable recovery guidance; do not blindly retry an append. Pre-existing equal text alone does
+  not prove a save; configured retrieval bypass must report indexing as skipped. Approvals and transport retries use
+  existing dispatch and saved results, never a second execution of a resolved write.
+- Keep target discovery, write-access metadata and exact document reads usable with either
+  `ENABLE_KB_EXEC` value. Apply collection scope before discovery count/offset/limit, preserving
+  query and read-access filtering. See [verification](../docs/DEVELOPMENT.md#knowledge-write-verification)
+  and the [follow-up decision](../docs/upstream/v0.12.2-knowledge-write-followup.md).
+
 ## Tool citation prefix contract
 
 - Install fixed citation instructions before the initial native tool request. Attach dynamic sources

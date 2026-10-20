@@ -44,6 +44,7 @@ This fork of Open WebUI integrates the official **[v0.12.2](https://github.com/o
 | 聊天访问 / Chat access                | 临时聊天与 Direct API Chat 有独立开关，默认开启，管理员豁免；详见[访问控制](docs/chat-access-controls.md)。<br>Independent temporary-chat and Direct API Chat switches, enabled by default with admin exemption; see [access controls](docs/chat-access-controls.md).                                                                         |
 | 引用证据 / Citation evidence          | 搜索摘要与正文摘录均可编号引用，但区分证据类型；详细事实和引文需抓取正文，空摘要仅作导航。<br>Numbered search snippets and page excerpts retain distinct evidence types; detailed claims and quotations require fetched content, while empty snippets provide navigation only.                                                                |
 | 终端文件 / Terminal files             | 签名链接绑定用户、终端和原始上下文，访问仍需授权；保留静态/SVG 隔离，拒绝同源端口预览。<br>Signed delivery links bind the user, terminal, and original context; access still requires authorization, with isolated static/SVG handling and no same-origin port previews.                                                                      |
+| 知识库写入 / Knowledge writes         | 独立开关默认关闭，可在已有知识库新增文本、追加或修改检索文本；每次检查范围和写权限，保留原始上传文件。<br>A separate control defaults off; create text files or append/edit retrieval text in existing knowledge bases, with scope and write-access checks while preserving original uploads.                                                 |
 
 ### v0.12.2 新增能力 / New capabilities
 
@@ -76,6 +77,26 @@ Apps 默认关闭。开启后，只读频道成员可进行私有 App 交互；�
 Apps default off. Read-only channel members may use private App interactions; public replies and
 message updates require current write access. Channel feature permission and private-group membership
 also apply, and write access is checked again after the App responds.
+
+### 知识库写入 / Knowledge writes
+
+在聊天输入区的工具菜单中，保持“知识库”读取开启，再开启独立的“知识库写入”。
+模型设置中的内置工具也须允许读取和写入；首次使用默认不启用写入，显式选择按用户及模型记忆。
+关闭读取会暂停写入并保留选择。可创建 `.md`／`.txt` 文档，或全文替换、局部修改及追加已有文档的检索文本。
+
+有模型、文件夹或当前聊天挂载的知识库时，只能写入这些库；没有挂载时，可选择有写权限的库。
+挂载不授予写权限，外部知识库不支持写入。编辑保留原始上传文件，关联同一文件的知识库沿用现有索引同步。
+使用示例、文件权限及索引失败恢复见[知识库写入指南](docs/knowledge-write-tools.md)。
+
+In the chat input's tools menu, enable **Knowledge Base** reading, then opt in to **Knowledge Write**.
+The model must allow both builtin categories. Writing defaults off and explicit choices are remembered
+per user and model; disabling reading pauses writing while retaining the choice. Create `.md`/`.txt`
+documents or replace, edit and append to existing retrieval text.
+
+When the model, folder or chat has attached knowledge bases, those collections define the write scope;
+otherwise choose a collection you can write to. Attachments do not grant write permission, and external
+knowledge bases are unsupported. Edits preserve original uploads and update indices for collections
+sharing the file. See the [knowledge write guide](docs/knowledge-write-tools.md) for examples and recovery.
 
 ### 原生模型连接 / Native model connections
 

@@ -4210,5 +4210,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube video reproduktor",
 	"Zoom in": "Povećaj",
-	"Zoom out": "Smanji"
+	"Zoom out": "Smanji",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

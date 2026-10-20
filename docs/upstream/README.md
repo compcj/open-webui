@@ -55,3 +55,9 @@ contracts. Read it alongside v0.12.2 decisions before merging provider, connecti
 The [v0.12.2 Search1API endpoint follow-up](v0.12.2-search1api-endpoint-followup.md) records the
 admin-global `/search`/`/ask` selection, default and persistence compatibility, request differences
 and validation evidence. Read it before merging search-provider or retrieval-settings changes.
+
+## Knowledge write follow-up
+
+The [v0.12.2 knowledge write follow-up](v0.12.2-knowledge-write-followup.md) records separate
+default-off authorization, attachment scope, extracted-text editing and partial indexing failures.
+Read it before merging builtin tools, knowledge/file permissions or chat preference changes.

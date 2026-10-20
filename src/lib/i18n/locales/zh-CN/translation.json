@@ -4186,5 +4186,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube 视频播放器",
 	"Zoom in": "放大",
-	"Zoom out": "缩小"
+	"Zoom out": "缩小",
+	"Create and edit files in knowledge bases": "创建和编辑知识库中的文件",
+	"Knowledge Write": "知识库写入",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "知识库读取已关闭，知识库写入已暂停。",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "仅在聊天中明确启用知识库写入且已开启知识库读取时，允许创建和编辑知识库文件。",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "知识库写入"
 }

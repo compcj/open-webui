@@ -188,6 +188,7 @@ Official commit IDs and actual ancestry, not local tag names alone, determine an
 | Skills / OpenClaw                     | Admin discovery config, skill ACL, middleware, runtime, import/editor/export           | `backend/tests/test_skill_discovery_policy.py`, `backend/tests/test_skills_runtime.py`, `src/lib/utils/skills.test.ts`, `src/lib/utils/skill-discovery.test.ts`                              |
 | Tool preferences and settings         | Chat/SettingsModal, queued top-level UI patches, backend user settings                 | `src/lib/components/chat/SettingsModal.test.ts`, `src/lib/utils/ui-settings.test.ts`, `src/lib/utils/tool-feature-preferences.test.ts`, `src/lib/components/chat/Chat.tool-features.test.ts` |
 | Knowledge, memory, notes              | Feature controls, explicit attachments, builtin-tool permission checks                 | `backend/tests/test_chat_tool_features.py`                                                                                                                                                   |
+| Knowledge writes                      | Default-off chat/model gates, attachment scope, live KB/file ACL, upload/text update   | `backend/tests/test_knowledge_write_tools.py`, `backend/tests/test_chat_tool_features.py`, frontend tool preference/chat tests                                                               |
 | Search/page evidence                  | Builtin web tools, source conversion, escaped metadata, stable numbering               | `backend/tests/test_builtin_web_tools.py`, `backend/tests/test_web_tool_citations.py`                                                                                                        |
 | Tool citation cache                   | Middleware attachment/approval, output replay, provider conversion and V2 raw ranges   | `backend/tests/test_tool_citation_replay.py`, `backend/tests/test_web_tool_citations.py`, `src/lib/utils/citations.test.ts`                                                                  |
 | Image engines and context             | Admin engine editor, POST verify, generation/edit tools, persisted tool output         | `backend/tests/test_image_generation_engines.py`, `backend/tests/test_image_tool_context.py`, `backend/tests/test_comfyui_errors.py`                                                         |
@@ -220,6 +221,65 @@ The fork also adjusts `.github/workflows/docker.yaml`: the current image workflo
 GHCR and has removed Helm chart notification and Docker Hub copy steps. During upstream workflow
 merges, review the current triggers, destinations, permissions, and recent history before restoring
 any removed publishing steps.
+
+### Knowledge write verification
+
+Use supported Python 3.11/3.12, Node 22 and installed dependencies. Before any application import,
+set disposable `DATA_DIR`, `STATIC_DIR` and SQLite `DATABASE_URL` as described above. Use synthetic
+users, uploads, chat data and credentials. The upload/content pipeline may commit text before an
+embedding failure; never run mutation checks against existing user data.
+
+```sh
+python -m pytest backend/tests/test_knowledge_write_tools.py backend/tests/test_knowledge_write_integration.py backend/tests/test_knowledge_write_dispatch.py backend/tests/test_chat_tool_features.py -q
+python -m pytest backend/tests/test_tool_dispatch_v0122.py backend/tests/test_approval_execution_helper.py backend/tests/test_native_connections_integration.py backend/tests/test_native_provider_adapters.py backend/tests/test_gemini_tool_schema.py backend/tests/test_gemini_schema_compiler.py backend/tests/test_streaming_tool_call_dedup.py -q
+npm run test:frontend -- --run src/lib/utils/tool-feature-preferences.test.ts src/lib/components/chat/Chat.tool-features.test.ts src/lib/components/chat/MessageInput/ContextToolFeatures.test.ts src/lib/components/admin/Settings/WebSearch.test.ts src/lib/components/chat/SettingsModal.test.ts src/lib/components/chat/Chat.voice.test.ts
+npm run check
+```
+
+On hosts that disable automatic pytest plugins, add `-p pytest_asyncio.plugin`; use
+`-p no:cacheprovider` and a fresh task-owned `--basetemp` where shared caches/temp roots are inaccessible.
+These are runner options, not new application configuration. Record type diagnostics before frontend
+edits and compare by file, message and mapped source position afterward; an unchanged existing
+failure count does not make the overall type check pass.
+
+Cover create, full replacement, original-offset range edits and append; missing write opt-in,
+disabled model/reading, attachment scope with either `file_context` value, read-only access,
+file provenance, external bases, name/content/size/range validation and processing failure.
+Check attached targets beyond the first global page: scope must precede pagination, with search
+terms and read permissions still applied.
+Assert saved text with failed indexing returns partial completion and a file ID, and that cleanup
+only removes the current call's new orphan. Preserve original pre-save failures for unchanged text;
+configured retrieval bypass reports saved text with indexing skipped. Exercise both `ENABLE_KB_EXEC` modes, direct and
+`call_tool` dispatch, denied and resumed approval, and replay without a second write across the
+four native protocols.
+
+For workflow acceptance with disposable data:
+
+1. Open a fresh chat: writing is off. Enable reading and writing, save a Markdown document, and
+   verify it appears at the target knowledge root and is found by retrieval. Repeat with KB exec
+   enabled and disabled. Check model/folder/chat attachment scope and a forbidden target.
+2. Read the exact extracted text, append at its original EOF, then replace a range with matching
+   `expected`. Verify retrieval reflects the revised content. Try a stale expected value and confirm
+   no content change. Check a PDF/text original upload remains byte-identical after text edits.
+3. Associate a file with two collections; confirm permitted edits reindex both. Try a file whose
+   owner differs from a writable collection's owner and verify read access alone cannot authorize edits.
+4. Simulate processing, association and embedding failures. Confirm no false success, preserved
+   associated files, explicit partial completion after a text save, and recovery by verified full-text
+   save without duplicating an append.
+5. Deny an approval, then approve another and repeat its resume. Revoke write access while awaiting
+   approval. Verify denial/revocation prevents mutation and a completed call executes only once.
+6. In home and chat composers, check write selection, read-off pause/resume, reload/reset, model and
+   multi-model limits, account isolation and ordered settings saves. Exercise English/Chinese text,
+   keyboard operation, narrow screens and dark mode.
+
+Use mocked embedding/provider boundaries for deterministic local integration and state those limits;
+component harnesses and isolated route tests do not demonstrate a complete deployed application.
+After text changes, run translation extraction twice in a disposable copy of the locale tree and
+compare output hashes. Preserve unrelated existing keys/translations when integrating new keys.
+Run installed Prettier on explicit changed frontend/Markdown/locale paths, Ruff format and the CI
+F-rule subset on changed Python files, local Markdown link/anchor checks, and `git diff --check`.
+Record actual evidence and untested boundaries in the
+[decision follow-up](upstream/v0.12.2-knowledge-write-followup.md).
 
 ### Gemini tool schema verification
 

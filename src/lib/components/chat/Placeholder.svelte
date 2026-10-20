@@ -73,6 +73,7 @@
 
 	export let imageGenerationEnabled = false;
 	export let knowledgeEnabled = false;
+	export let knowledgeWriteEnabled = false;
 	export let memoryEnabled = false;
 	export let notesEnabled = false;
 	export let codeInterpreterEnabled = false;
@@ -285,6 +286,7 @@
 						bind:selectedFilterIds
 						bind:imageGenerationEnabled
 						bind:knowledgeEnabled
+						bind:knowledgeWriteEnabled
 						bind:memoryEnabled
 						bind:notesEnabled
 						bind:codeInterpreterEnabled

@@ -25,6 +25,7 @@ from open_webui.env import (
     KB_EXEC_MAX_OUTPUT_CHARS,
     KNOWLEDGE_GREP_MAX_MATCHES,
 )
+from open_webui.tools.knowledge_write import knowledge_write_access
 
 log = logging.getLogger(__name__)
 
@@ -612,6 +613,8 @@ async def _kb_ls(args: list[str], flags: set[str], user: dict, model_knowledge: 
     lines = []
     for kb_id, kb_name, kb_desc in kb_ids:
         header = f'Knowledge Base: {kb_name} ({kb_id})'
+        knowledge = await Knowledges.get_knowledge_by_id(kb_id)
+        header += f'\n  write_access: {str(await knowledge_write_access(knowledge, user)).lower()}'
         if kb_desc:
             header += f'\n  {kb_desc}'
         lines.append(header)
@@ -1070,6 +1073,8 @@ async def _kb_sed(
 
 async def _kb_tree(args: list[str], flags: set[str], user: dict, model_knowledge: list[dict] | None) -> str:
     """Show directory tree structure."""
+    from open_webui.models.knowledge import Knowledges
+
     kb_ids = await _get_accessible_kb_ids(user, model_knowledge)
     direct_files = (
         [f for f in await _get_accessible_files(user, model_knowledge) if not f.get('knowledge_id')]
@@ -1085,6 +1090,8 @@ async def _kb_tree(args: list[str], flags: set[str], user: dict, model_knowledge
     for kb_id, kb_name, kb_desc in kb_ids:
         tree = await _build_directory_tree(kb_id)
         header = f'Knowledge Base: {kb_name} ({kb_id})'
+        knowledge = await Knowledges.get_knowledge_by_id(kb_id)
+        header += f'\n  write_access: {str(await knowledge_write_access(knowledge, user)).lower()}'
         if kb_desc:
             header += f'\n  {kb_desc}'
         output.append(header)

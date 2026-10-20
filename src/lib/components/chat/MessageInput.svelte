@@ -257,6 +257,7 @@
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
 	export let knowledgeEnabled = false;
+	export let knowledgeWriteEnabled = false;
 	export let memoryEnabled = false;
 	export let notesEnabled = false;
 	export let toolApprovalMode = 'full';
@@ -315,6 +316,7 @@
 		selectedFilterIds,
 		imageGenerationEnabled,
 		knowledgeEnabled,
+		knowledgeWriteEnabled,
 		memoryEnabled,
 		notesEnabled,
 		webSearchEnabled,
@@ -914,7 +916,12 @@
 		$_user
 	);
 	$: memoryDisabled = !($settings?.memory ?? $config?.features?.enable_memories ?? false);
-	$: contextToolState = { knowledge: knowledgeEnabled, memory: memoryEnabled, notes: notesEnabled };
+	$: contextToolState = {
+		knowledge: knowledgeEnabled,
+		knowledge_write: knowledgeWriteEnabled,
+		memory: memoryEnabled,
+		notes: notesEnabled
+	};
 	$: showContextTools = Object.values(contextToolAvailability).some(Boolean);
 	$: showWebSearchButton =
 		selectedModelIds.length === webSearchCapableModels.length &&
@@ -2295,6 +2302,7 @@
 															webSearchEnabled = false;
 															imageGenerationEnabled = false;
 															knowledgeEnabled = false;
+															knowledgeWriteEnabled = false;
 															memoryEnabled = false;
 															notesEnabled = false;
 															codeInterpreterEnabled = false;

@@ -4191,5 +4191,10 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Reprodutor de vídeo de YouTube",
 	"Zoom in": "Ampliar",
-	"Zoom out": "Reducir"
+	"Zoom out": "Reducir",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

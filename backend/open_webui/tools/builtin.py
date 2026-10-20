@@ -65,6 +65,11 @@ from open_webui.routers.retrieval import search_web as _search_web
 from open_webui.socket.main import sio
 from open_webui.tasks import stop_item_tasks
 from open_webui.tools.knowledge_fs import kb_exec  # noqa: F401 — re-exported
+from open_webui.tools.knowledge_write import (
+    knowledge_write_access,
+    replace_knowledge_file_content,
+    write_knowledge_file,
+)
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.notifications import notify_target
@@ -2122,6 +2127,7 @@ async def list_knowledge_bases(
     skip: int = 0,
     __request__: Request = None,
     __user__: dict = None,
+    __knowledge_write_context__: dict = None,
 ) -> str:
     """
     List the user's accessible knowledge bases so a relevant internal source
@@ -2143,13 +2149,13 @@ async def list_knowledge_bases(
         user_id = __user__.get('id')
         user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id, include_inherited=True)]
 
+        search_filter = {'query': '', 'user_id': user_id, 'group_ids': user_group_ids}
+        scope = (__knowledge_write_context__ or {}).get('knowledge_ids')
+        if (__knowledge_write_context__ or {}).get('enabled') and scope:
+            search_filter['knowledge_ids'] = scope
         result = await Knowledges.search_knowledge_bases(
             user_id,
-            filter={
-                'query': '',
-                'user_id': user_id,
-                'group_ids': user_group_ids,
-            },
+            filter=search_filter,
             skip=skip,
             limit=count,
         )
@@ -2166,6 +2172,7 @@ async def list_knowledge_bases(
                     'description': knowledge_base.description or '',
                     'file_count': file_count,
                     'updated_at': knowledge_base.updated_at,
+                    'write_access': await knowledge_write_access(knowledge_base, __user__),
                 }
             )
 
@@ -2181,6 +2188,7 @@ async def search_knowledge_bases(
     skip: int = 0,
     __request__: Request = None,
     __user__: dict = None,
+    __knowledge_write_context__: dict = None,
 ) -> str:
     """
     Search the user's accessible knowledge bases by name and description to find
@@ -2203,13 +2211,13 @@ async def search_knowledge_bases(
         user_id = __user__.get('id')
         user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id, include_inherited=True)]
 
+        search_filter = {'query': query, 'user_id': user_id, 'group_ids': user_group_ids}
+        scope = (__knowledge_write_context__ or {}).get('knowledge_ids')
+        if (__knowledge_write_context__ or {}).get('enabled') and scope:
+            search_filter['knowledge_ids'] = scope
         result = await Knowledges.search_knowledge_bases(
             user_id,
-            filter={
-                'query': query,
-                'user_id': user_id,
-                'group_ids': user_group_ids,
-            },
+            filter=search_filter,
             skip=skip,
             limit=count,
         )
@@ -2226,6 +2234,7 @@ async def search_knowledge_bases(
                     'description': knowledge_base.description or '',
                     'file_count': file_count,
                     'updated_at': knowledge_base.updated_at,
+                    'write_access': await knowledge_write_access(knowledge_base, __user__),
                 }
             )
 
@@ -3087,6 +3096,7 @@ async def list_knowledge(
     __request__: Request = None,
     __user__: dict = None,
     __model_knowledge__: Optional[list[dict]] = None,
+    __knowledge_write_context__: dict = None,
 ) -> str:
     """
     List knowledge bases, files, and notes attached to the current model.
@@ -3107,6 +3117,13 @@ async def list_knowledge(
     if not __user__:
         return JSONCodec.dumps({'error': 'User context not available'})
 
+    write_context = __knowledge_write_context__ or {}
+    if write_context.get('enabled') and knowledge_id:
+        scope = write_context.get('knowledge_ids') or []
+        if scope and knowledge_id not in scope:
+            return JSONCodec.dumps({'error': 'Knowledge base is outside the attached write scope'})
+        __model_knowledge__ = [*(__model_knowledge__ or []), {'type': 'collection', 'id': knowledge_id}]
+        __model_knowledge__ = list({(item.get('type'), item.get('id')): item for item in __model_knowledge__}.values())
     if not __model_knowledge__:
         return JSONCodec.dumps({'knowledge_bases': [], 'files': [], 'notes': []})
 
@@ -3165,6 +3182,7 @@ async def list_knowledge(
                         'name': knowledge.name,
                         'description': knowledge.description or '',
                         'file_count': file_count,
+                        'write_access': await knowledge_write_access(knowledge, __user__),
                     }
 
                     # Include file listing only when this KB is targeted

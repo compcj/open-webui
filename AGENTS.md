@@ -114,6 +114,23 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
   events together. See [feature guide](docs/context-compaction.md), scoped frontend/backend rules,
   and [verification commands](docs/DEVELOPMENT.md#context-compaction-verification).
 
+## Knowledge write tools
+
+Knowledge writes require an explicit `features.knowledge_write=true` opt-in, default off, together
+with knowledge reading and model builtin-tool permission. Reading or attaching a resource never
+grants write access. Preserve the user's write preference when reading is temporarily disabled.
+Limit writes to attached model/folder/chat collections when present, independently of `file_context`;
+otherwise require current write access to the chosen collection. Recheck collection access at execution,
+and membership plus file write access for edits. External collections are unsupported.
+
+Create UTF-8 Markdown/text files in existing collection roots; edit extracted retrieval text while
+preserving original uploads and existing shared-file index propagation. Report persisted text with
+failed indexing as partial completion, and never repeat a resolved tool during approval/retry replay.
+See [backend rules](backend/AGENTS.md#knowledge-write-tools),
+[frontend rules](src/AGENTS.md#knowledge-write-controls),
+[user guide](docs/knowledge-write-tools.md), and
+[verification](docs/DEVELOPMENT.md#knowledge-write-verification).
+
 ## Implementation boundaries
 
 - Match nearby patterns and the checked-in formatter configuration. Keep diffs focused; do not

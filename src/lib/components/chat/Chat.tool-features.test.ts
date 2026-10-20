@@ -12,6 +12,7 @@ const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
 const ast = parse(source);
 const handlers = new Set([
 	'getToolFeatureContext',
+	'syncToolFeatureAccount',
 	'applyToolFeatureDefaults',
 	'persistChatUserSettings',
 	'persistToolFeaturePreference',
@@ -76,7 +77,8 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		} } }));
 		let selectedModels = ['a'], selectedModelIds = ['a'], atSelectedModel;
 		let webSearchEnabled = false, imageGenerationEnabled = false, codeInterpreterEnabled = false;
-		let knowledgeEnabled = false, memoryEnabled = false, notesEnabled = false;
+		let knowledgeEnabled = false, knowledgeWriteEnabled = false, memoryEnabled = false, notesEnabled = false;
+		let toolFeatureUserId = 'user-a';
 		let webSearchActive = false, webSearchConfirmed = false, showWebSearchConfirm = false;
 		let pendingWebSearchPrompt = null, pendingWebSearchToggleModelId;
 		let webSearchConfirmTimeout;
@@ -98,7 +100,7 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 			contextToggle: (feature, enabled) => handleContextToolToggle(feature, enabled),
 			reasoning: (modelId, value) => persistLastUsedReasoningEffort(modelId, value),
 			cancel: () => cancelWebSearch(),
-			state: () => ({ webSearchEnabled, imageGenerationEnabled, webSearchConfirmed, showWebSearchConfirm, settings: $settings }),
+			state: () => ({ knowledgeWriteEnabled, webSearchEnabled, imageGenerationEnabled, webSearchConfirmed, showWebSearchConfirm, settings: $settings }),
 			select: (ids, atId) => { selectedModels = ids; atSelectedModel = $models.find(m => m.id === atId); selectedModelIds = atId ? [atId] : ids; },
 			config: $config, models: $models, settings, user, localStorage,
 			newChat: () => { chatIdProp = ''; return resetInput(); },
@@ -119,6 +121,90 @@ afterEach(() => {
 });
 
 describe('knowledge, memory and notes controls', () => {
+	it('leaves writes off in legacy inputs and ignores model defaults', async () => {
+		const chat = createChat();
+		chat.models[0].info.meta.defaultFeatureIds = ['knowledge_write'];
+		chat.models[0].info.meta.capabilities.knowledge_write = true;
+		await chat.resetInput();
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		await chat.restoreChatInput(JSON.stringify({ knowledgeEnabled: true }));
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+	});
+
+	it('remembers explicit write opt-in and masks it while reading is paused', async () => {
+		const chat = createChat({ textScale: 1.2, reasoningEffortByModel: { a: 'high' } });
+		await chat.resetInput();
+		await chat.contextToggle('knowledge_write', true);
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+		await chat.contextToggle('knowledge', false);
+		expect(chat.getFeatures()).toMatchObject({ knowledge: false, knowledge_write: false });
+		expect(chat.state().knowledgeWriteEnabled).toBe(true);
+		await chat.contextToggle('knowledge', true);
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+		expect(chat.state().settings).toEqual({
+			textScale: 1.2,
+			reasoningEffortByModel: { a: 'high' },
+			toolFeaturesByModel: { a: { knowledge_write: true, knowledge: true } }
+		});
+		chat.select(['b']);
+		await chat.resetInput();
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		chat.select(['b'], 'a');
+		await chat.resetInput();
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+		await chat.newChat();
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+	});
+
+	it('restores saved write choices and uses remembered opt-in only without a draft override', async () => {
+		const chat = createChat({ toolFeaturesByModel: { a: { knowledge_write: true } } });
+		await chat.restoreChatInput(JSON.stringify({ knowledgeWriteEnabled: false }));
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		await chat.restoreChatInput(
+			JSON.stringify({ knowledgeEnabled: false, knowledgeWriteEnabled: true })
+		);
+		expect(chat.state().knowledgeWriteEnabled).toBe(true);
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		await chat.contextToggle('knowledge', true);
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+		await chat.restoreChatInput('{}');
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+		await chat.newChat();
+		await chat.restoreChatInput(JSON.stringify({ knowledgeWriteEnabled: false }));
+		expect(chat.getFeatures().knowledge_write).toBe(true);
+	});
+
+	it.each(['knowledge', 'knowledge_write', 'builtin_tools'])(
+		'intersects the %s gate and never saves multi-model write toggles',
+		async (gate) => {
+			const chat = createChat({ toolFeaturesByModel: { a: { knowledge_write: true } } });
+			chat.select(['a', 'b']);
+			await chat.resetInput();
+			expect(chat.getFeatures().knowledge_write).toBe(false);
+			await chat.contextToggle('knowledge_write', true);
+			expect(chat.getFeatures().knowledge_write).toBe(true);
+			if (gate === 'builtin_tools') chat.models[1].info.meta.capabilities.builtin_tools = false;
+			else chat.models[1].info.meta.builtinTools = { [gate]: false };
+			expect(chat.getFeatures().knowledge_write).toBe(false);
+			await chat.contextToggle('knowledge_write', true);
+			expect(chat.updateUserSettings).not.toHaveBeenCalled();
+			expect(chat.state().settings.toolFeaturesByModel).toEqual({ a: { knowledge_write: true } });
+		}
+	);
+
+	it('cancels a write save and clears the previous account selection', async () => {
+		const chat = createChat();
+		await chat.resetInput();
+		const saving = chat.contextToggle('knowledge_write', true);
+		chat.user.set({ id: 'user-b', role: 'admin' });
+		chat.settings.set({});
+		await saving;
+		expect(chat.updateUserSettings).not.toHaveBeenCalled();
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+		await chat.resetInput();
+		expect(chat.getFeatures().knowledge_write).toBe(false);
+	});
 	it('defaults to enabled without writing account settings', async () => {
 		const chat = createChat();
 		await chat.resetInput();

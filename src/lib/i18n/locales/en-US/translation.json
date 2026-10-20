@@ -4191,5 +4191,10 @@
 	"YouTube": "",
 	"YouTube video player": "",
 	"Zoom in": "",
-	"Zoom out": ""
+	"Zoom out": "",
+	"Create and edit files in knowledge bases": "Create and edit files in knowledge bases",
+	"Knowledge Write": "Knowledge Write",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "Knowledge Write is paused while Knowledge Base is disabled.",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "Create and edit knowledge files only when explicitly enabled in the chat and Knowledge Base reading is enabled.",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "Knowledge Write"
 }

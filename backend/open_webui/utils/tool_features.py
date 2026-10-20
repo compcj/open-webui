@@ -7,6 +7,35 @@ from open_webui.models.config import Config
 from open_webui.utils.access_control import has_permission
 
 
+def knowledge_write_context(features: dict, model: dict, metadata: dict) -> dict:
+    """Separate opt-in write policy; file_context never hides chat collection scope."""
+    meta = (model or {}).get('info', {}).get('meta', {})
+    builtin = meta.get('builtinTools') or {}
+    enabled = (
+        features.get('knowledge_write') is True
+        and bool(features.get('knowledge', True))
+        and builtin.get('knowledge', True)
+        and builtin.get('knowledge_write', True)
+        and (meta.get('capabilities') or {}).get('builtin_tools', True)
+    )
+    ids = list(
+        dict.fromkeys(
+            item['id']
+            for source in (
+                meta.get('knowledge') or [],
+                metadata.get('folder_knowledge') or [],
+                metadata.get('files') or [],
+            )
+            for item in source
+            if isinstance(item, dict)
+            and item.get('type') == 'collection'
+            and isinstance(item.get('id'), str)
+            and item['id']
+        )
+    )
+    return {'enabled': bool(enabled), 'knowledge_ids': ids}
+
+
 async def memory_enabled(features: dict, model: dict, user) -> bool:
     if not features.get('memory', False):
         return False

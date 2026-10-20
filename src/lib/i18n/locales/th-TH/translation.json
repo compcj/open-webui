@@ -4172,5 +4172,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "เครื่องเล่นวิดีโอ YouTube",
 	"Zoom in": "ซูมเข้า",
-	"Zoom out": "ซูมออก"
+	"Zoom out": "ซูมออก",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

@@ -25,15 +25,44 @@ describe('getToolFeatureModelId', () => {
 });
 
 describe('resolveToolFeatureState', () => {
-	const contextDefaults = { knowledge: false, memory: false, notes: false };
+	const contextDefaults = { knowledge: false, knowledge_write: false, memory: false, notes: false };
 	const defaults = { ...contextDefaults, web_search: true, image_generation: false };
 	const available = {
 		knowledge: true,
+		knowledge_write: true,
 		memory: true,
 		notes: true,
 		web_search: true,
 		image_generation: true
 	};
+
+	it('requires an explicit write choice and preserves it while reading is paused', () => {
+		expect(resolveToolFeatureState({ modelId: 'a', defaults, available }).knowledge_write).toBe(
+			false
+		);
+		const preferences = { a: { knowledge_write: true } };
+		expect(
+			resolveToolFeatureState({ modelId: 'a', defaults, available, preferences }).knowledge_write
+		).toBe(true);
+		expect(
+			resolveToolFeatureState({
+				modelId: 'a',
+				defaults,
+				available,
+				preferences,
+				overrides: { knowledge: false }
+			}).knowledge_write
+		).toBe(true);
+		expect(
+			resolveToolFeatureState({
+				modelId: 'a',
+				defaults,
+				available,
+				preferences,
+				overrides: { knowledge_write: false }
+			}).knowledge_write
+		).toBe(false);
+	});
 
 	it('keeps model preferences and features independent', () => {
 		const preferences = {
@@ -107,16 +136,19 @@ describe('context tool availability', () => {
 	it('uses existing category and feature gates without a knowledge management permission', () => {
 		expect(getContextToolAvailability(models, features, admin)).toEqual({
 			knowledge: true,
+			knowledge_write: true,
 			memory: true,
 			notes: true
 		});
 		expect(getContextToolAvailability(models, features, { role: 'user' })).toEqual({
 			knowledge: true,
+			knowledge_write: true,
 			memory: false,
 			notes: false
 		});
 		expect(getContextToolAvailability(models, {}, admin)).toEqual({
 			knowledge: true,
+			knowledge_write: true,
 			memory: false,
 			notes: false
 		});
@@ -126,6 +158,7 @@ describe('context tool availability', () => {
 		for (const selected of [[], [undefined], [...models, undefined]]) {
 			expect(getContextToolAvailability(selected, features, admin)).toEqual({
 				knowledge: false,
+				knowledge_write: false,
 				memory: false,
 				notes: false
 			});
@@ -139,7 +172,17 @@ describe('context tool availability', () => {
 				features,
 				admin
 			)
-		).toEqual({ knowledge: true, memory: false, notes: false });
+		).toEqual({ knowledge: true, knowledge_write: true, memory: false, notes: false });
+	});
+
+	it.each([
+		{ builtinTools: { knowledge_write: false } },
+		{ builtinTools: { knowledge: false } },
+		{ capabilities: { builtin_tools: false } }
+	])('requires every model to allow knowledge reading and writing: %o', (meta) => {
+		expect(
+			getContextToolAvailability([...models, { info: { meta } }], features, admin).knowledge_write
+		).toBe(false);
 	});
 });
 

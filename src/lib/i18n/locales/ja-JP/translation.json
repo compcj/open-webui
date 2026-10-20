@@ -4189,5 +4189,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube動画プレーヤー",
 	"Zoom in": "拡大",
-	"Zoom out": "縮小"
+	"Zoom out": "縮小",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

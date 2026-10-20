@@ -276,6 +276,9 @@ class KnowledgeTable:
                 stmt = select(Knowledge, User).outerjoin(User, User.id == Knowledge.user_id)
 
                 if filter:
+                    # Internal caller scopes must constrain totals and pagination as well as rows.
+                    if 'knowledge_ids' in filter:
+                        stmt = stmt.filter(Knowledge.id.in_(filter['knowledge_ids']))
                     query_key = filter.get('query')
                     if query_key:
                         stmt = stmt.filter(

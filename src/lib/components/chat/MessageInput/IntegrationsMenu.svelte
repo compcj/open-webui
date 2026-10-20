@@ -83,9 +83,15 @@
 	export let imageGenerationEnabled = false;
 	export let showCodeInterpreterButton = false;
 	export let codeInterpreterEnabled = false;
-	export let contextToolState: ContextToolState = { knowledge: false, memory: false, notes: false };
+	export let contextToolState: ContextToolState = {
+		knowledge: false,
+		knowledge_write: false,
+		memory: false,
+		notes: false
+	};
 	export let contextToolAvailability: ContextToolState = {
 		knowledge: false,
+		knowledge_write: false,
 		memory: false,
 		notes: false
 	};

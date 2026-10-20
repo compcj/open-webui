@@ -129,6 +129,21 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
   English labels, parameter validation feedback, inherited values and narrow-screen controls.
 - See [feature guide](../docs/context-compaction.md) and [verification map](../docs/DEVELOPMENT.md#context-compaction-verification).
 
+## Knowledge write controls
+
+`knowledge_write` is a separate context-tool preference, default false in old and new chat inputs.
+Model `meta.builtinTools.knowledge_write` defaults to permitted selection, but never implicitly
+enables the outgoing request. Apply builtin capability, knowledge-read and write-category gates
+across every selected model. Turning reading off masks writing without erasing the remembered
+choice; explain the dependency in the control.
+
+Keep the request field, home/chat composers, restored inputs, reset flows and model controls aligned.
+Persist explicit choices per user/model through the existing ordered settings queue; multi-model
+choices stay local and account switches cancel stale saves and clear prior-account overrides.
+Maintain English and Chinese labels, descriptions and dependency hints, including keyboard and
+narrow/dark layouts. See [user guide](../docs/knowledge-write-tools.md) and
+[verification](../docs/DEVELOPMENT.md#knowledge-write-verification).
+
 ## Formatting and tests
 
 - `.prettierrc` defines tabs, single quotes, no trailing commas, 100-column print width, and LF.

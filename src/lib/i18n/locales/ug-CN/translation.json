@@ -4191,5 +4191,10 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube سىن قويغۇچ",
 	"Zoom in": "چوڭايتىش",
-	"Zoom out": "كىچىكلىتىش"
+	"Zoom out": "كىچىكلىتىش",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

@@ -4172,5 +4172,10 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Trình phát video YouTube",
 	"Zoom in": "Phóng to",
-	"Zoom out": "Thu nhỏ"
+	"Zoom out": "Thu nhỏ",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

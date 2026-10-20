@@ -1,4 +1,4 @@
-export type ContextToolFeature = 'knowledge' | 'memory' | 'notes';
+export type ContextToolFeature = 'knowledge' | 'knowledge_write' | 'memory' | 'notes';
 
 export type ContextToolState = Record<ContextToolFeature, boolean>;
 
@@ -12,6 +12,7 @@ const TOOL_FEATURES: ToolFeature[] = [
 	'web_search',
 	'image_generation',
 	'knowledge',
+	'knowledge_write',
 	'memory',
 	'notes'
 ];
@@ -46,6 +47,7 @@ export function getContextToolAvailability(
 		);
 	return {
 		knowledge: modelAllows('knowledge'),
+		knowledge_write: modelAllows('knowledge') && modelAllows('knowledge_write'),
 		memory: Boolean(
 			modelAllows('memory') &&
 			features?.enable_memories &&

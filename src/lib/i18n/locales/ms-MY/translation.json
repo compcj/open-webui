@@ -4189,5 +4189,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Pemain video YouTube",
 	"Zoom in": "Zum masuk",
-	"Zoom out": "Zum keluar"
+	"Zoom out": "Zum keluar",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

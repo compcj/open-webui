@@ -111,6 +111,52 @@ class ChatToolFeaturesTests(unittest.TestCase):
                 }
             )
 
+    def test_knowledge_writes_are_explicit_and_obey_read_and_model_gates(self):
+        writes = {'write_knowledge_file', 'replace_knowledge_file_content'}
+        self.assertFalse(writes & set(self.tools({})))
+        self.assertFalse(writes & set(self.tools({'knowledge_write': 'true'})))
+        for enabled in (False, True):
+            self.env.ENABLE_KB_EXEC = enabled
+            self.assertTrue(writes <= set(self.tools({'knowledge_write': True})))
+            self.assertFalse(writes & set(self.tools({'knowledge_write': True, 'knowledge': False})))
+        for key, value in (
+            ('builtinTools', {'knowledge_write': False}),
+            ('builtinTools', {'knowledge': False}),
+            ('capabilities', {'builtin_tools': False}),
+        ):
+            self.model['info']['meta'][key] = value
+            self.assertFalse(writes & set(self.tools({'knowledge_write': True})))
+            self.model['info']['meta'][key] = {}
+
+    def test_write_scope_includes_chat_collections_with_file_context_enabled(self):
+        self.model['info']['meta'].update(
+            knowledge=[{'type': 'collection', 'id': 'model-kb'}], capabilities={'file_context': True}
+        )
+        self.metadata.update(
+            folder_knowledge=[{'type': 'collection', 'id': 'folder-kb'}],
+            files=[{'type': 'collection', 'id': 'chat-kb'}],
+        )
+        result = self.tools({'knowledge_write': True})
+        asyncio.run(result['write_knowledge_file']['callable'](knowledge_id='chat-kb', filename='a', content='b'))
+        context = self.namespace['write_knowledge_file'].call_args.kwargs['__knowledge_write_context__']
+        self.assertEqual(set(context['knowledge_ids']), {'model-kb', 'folder-kb', 'chat-kb'})
+        self.assertIs(context['enabled'], True)
+        # The existing read-only attachment helper keeps its prior file_context semantics.
+        read_scope = self.namespace['get_attached_knowledge'](self.model, self.metadata)
+        self.assertEqual({item['id'] for item in read_scope}, {'model-kb', 'folder-kb'})
+
+    def test_write_targets_can_be_discovered_and_read_with_both_exec_modes(self):
+        for exec_enabled in (False, True):
+            self.env.ENABLE_KB_EXEC = exec_enabled
+            self.model['info']['meta']['knowledge'] = [{'type': 'file', 'id': 'attached'}]
+            self.metadata['files'] = [{'type': 'collection', 'id': 'chat-kb'}]
+            tools = self.tools({'knowledge_write': True})
+            for name in ('list_knowledge_bases', 'search_knowledge_bases', 'list_knowledge', 'view_knowledge_file'):
+                self.assertIn(name, tools)
+            asyncio.run(tools['list_knowledge']['callable'](knowledge_id='chat-kb'))
+            bound = self.namespace['list_knowledge'].call_args.kwargs['__model_knowledge__']
+            self.assertIn('chat-kb', {item['id'] for item in bound})
+
     def test_legacy_and_true_retain_discovery(self):
         for features in ({}, {'knowledge': True, 'notes': True}):
             result = self.tools(features)

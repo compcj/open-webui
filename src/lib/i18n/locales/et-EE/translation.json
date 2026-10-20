@@ -4191,5 +4191,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube'i videomängija",
 	"Zoom in": "Suurenda",
-	"Zoom out": "Vähenda"
+	"Zoom out": "Vähenda",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

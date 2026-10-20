@@ -4191,5 +4191,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube வீடியோ பிளேயர்",
 	"Zoom in": "பெரிதாக்கவும்",
-	"Zoom out": "சிறிதாக்கவும்"
+	"Zoom out": "சிறிதாக்கவும்",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }

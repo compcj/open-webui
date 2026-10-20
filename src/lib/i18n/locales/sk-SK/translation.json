@@ -4229,5 +4229,10 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Prehrávač videa YouTube",
 	"Zoom in": "Priblížiť",
-	"Zoom out": "Oddialiť"
+	"Zoom out": "Oddialiť",
+	"Create and edit files in knowledge bases": "",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
 }
