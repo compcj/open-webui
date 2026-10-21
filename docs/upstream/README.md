@@ -11,7 +11,11 @@ AGENTS.md instructions, and the current user request govern implementation.
 | v0.12.0          | [Historical decisions, compatibility and validation](v0.12.0-decisions.md)     |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
-The current record is v0.12.2. Earlier release records and the citation follow-up remain historical references.
+The current release decision record is v0.12.2. The [2026-10-22 fork audit](v0.12.2-fork-audit.md)
+extends its coverage through `c21cfb72b`, with feature/fix evidence, all 73 fork-only commits,
+remote verification of two commits missing locally, and a [475-path net difference inventory](v0.12.2-fork-files.md).
+These are dated snapshots; recompute the tree/history comparison for later work.
+Earlier release records and their validation numbers remain historical references.
 
 The v0.11.4 [tool citation cache follow-up](v0.11.4-tool-citation-cache-followup.md) changes source
 placement while retaining D05's evidence and numbering policy. Check it alongside the original
@@ -39,6 +43,9 @@ release record; it has its own implementation and validation status.
    decisions or claim implementation before it exists.
 7. Update README for user-visible behavior, AGENTS.md for current invariants, and DEVELOPMENT.md for
    commands/test locations. Keep rationale here rather than duplicating it in each instruction file.
+   Check the full tree diff and all reachable fork-only commits, including side parents. Distinguish
+   surviving changes from upstream equivalents and fork-specific merge regressions; do not infer
+   current uniqueness from an old commit subject. Keep pre-existing uncommitted changes separate.
 
 Use repository-relative source and test links. Store real full commit IDs once available; never
 invent a future merge or validation commit. Do not include credentials, real chat data, private
@@ -65,3 +72,11 @@ Read it before merging builtin tools, knowledge/file permissions or chat prefere
 The [v0.12.2 knowledge direct import follow-up](v0.12.2-knowledge-direct-import-followup.md) extends
 that authorization to URL and admin-terminal file imports without routing source bodies through the
 model. Read it before merging URL ingestion, terminal file access or knowledge processing changes.
+
+## Reply lifecycle follow-up
+
+The [current audit](v0.12.2-fork-audit.md#近期回复生命周期修复) records confirmed cancellation across
+Redis workers, preservation of interrupted streams/SSE completion, and isolation of concurrent model
+requests. Read it before merging task scheduling, streaming handlers or multi-model fan-out. Current
+user behavior is in [chat access and stopping](../chat-access-controls.md), with checks in
+[DEVELOPMENT](../DEVELOPMENT.md#chat-lifecycle-and-request-isolation-verification).

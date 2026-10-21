@@ -138,8 +138,11 @@ do not delete shared caches or change permissions as an incidental test fix.
 packages and refreshes `static/pyodide/`. Review changes to the tracked `pyodide-lock.json`.
 Transient package/HTTP download failures retry up to three times; exhausted or permanent failures
 stop preparation with the original cause instead of continuing with missing wheels.
-CI gives the build an 8192 MB Node heap; on a memory-constrained machine report the limitation
-instead of claiming the build passed. `hatch_build.py` also invokes npm install/build when packaging
+Frontend build CI gives Vite an 8192 MiB Node heap. Local Docker builds default to an overridable
+6144 MiB `NODE_OPTIONS` build argument; the GHCR image workflow separately inserts an inherited
+12288 MiB build-stage setting. These are different build paths, not a global runtime setting.
+On a memory-constrained machine report the limitation instead of claiming the build passed.
+`hatch_build.py` also invokes npm install/build when packaging
 the Python project; `pip install .` is not a lightweight Python-only setup.
 
 ## What the existing CI actually checks
@@ -179,6 +182,8 @@ Read [the upstream merge index](upstream/README.md) and the
 [v0.12.2 decisions](upstream/v0.12.2-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
+The [dated fork audit](upstream/v0.12.2-fork-audit.md) inventories current behavior and all
+fork-only commits. Its historical verification numbers do not establish current runtime health.
 
 | Behavior                              | Implementation boundary                                                                | Regression starting point                                                                                                                                                                    |
 | ------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -201,6 +206,83 @@ Official commit IDs and actual ancestry, not local tag names alone, determine an
 | Skill URL MIME and TLS                | Validated redirect downloads, SSL policy and descriptor/package parsing                | `backend/tests/test_skill_url_download.py`, `backend/tests/test_skill_files_compat.py`                                                                                                       |
 | S3 completed cache                    | Adjacent atomic downloads, concurrent readers and failure cleanup                      | `backend/tests/test_s3_storage_atomic.py`                                                                                                                                                    |
 | Tika versions and JSON                | Extraction loader response negotiation and version-specific endpoint                   | `backend/tests/test_tika_loader.py`                                                                                                                                                          |
+
+Additional boundaries that must survive upstream integration:
+
+| Behavior                                | Implementation boundary                                                                         | Regression starting point                                                                                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parallel model isolation                | Per-reply payload, metadata, `Request.state`, plugin body and direct model                      | `backend/tests/test_chat_model_isolation.py`                                                                                                                                             |
+| Confirmed cancellation and queueing     | Redis task owner/stop state, chat stop API, frontend stop/queue/bridge handlers                 | `backend/tests/test_task_cancellation.py`, `src/lib/components/chat/Chat.stop.test.ts`                                                                                                   |
+| Streaming completion and recovery       | SSE marker, interrupted output persistence, explicit error clearing, partial-call suppression   | `backend/tests/test_streaming_error_recovery.py`, `src/lib/components/chat/Chat.stream-errors.test.ts`                                                                                   |
+| Waiting indicator and note titles       | Visible-content detection, user-input pauses, dedicated title task instead of direct chat API   | `src/lib/components/chat/Messages/ResponseMessage.loading.test.ts`, `src/lib/components/notes/NoteEditor.test.ts`                                                                        |
+| Tool IDs and split calls                | Provider identity, per-round execution IDs, deterministic split IDs, superseded UI placeholders | `backend/tests/test_streaming_tool_call_dedup.py`, `backend/tests/test_streaming_tool_call_rounds.py`, `src/lib/components/chat/Messages/structuredOutput.split-tools.test.ts`           |
+| Dispatch and original schema validation | Registered `call_tool` targets, approval recovery and stateful Responses error results          | `backend/tests/test_tool_dispatch_v0122.py`, `backend/tests/test_v0122_tool_chain.py`, `backend/tests/test_approval_execution_helper.py`                                                 |
+| Model controls and access grants        | Legacy migration, empty explicit options, JSON shape changes, admin model responses             | `backend/tests/test_model_controls_compat.py`, `src/lib/utils/model-controls.test.ts`                                                                                                    |
+| Personal direct Gemini schema profiles  | Per-connection model-ID list, direct request projection and execution validation                | `src/lib/utils/model-tool-schema.test.ts`, `src/lib/apis/model-tool-schema.test.ts`, `backend/tests/test_gemini_tool_schema.py`                                                          |
+| Shared privacy and live permissions     | Actor credentials, transcript privacy, socket rooms, current chat/model access                  | `backend/tests/test_chat_response_privacy.py`, `backend/tests/test_socket_chat_access.py`, `backend/tests/test_realtime_authorization.py`, `backend/tests/test_standard_voice_access.py` |
+| App interaction permission              | Private interaction versus public writes, post-response write recheck                           | `backend/tests/test_apps_channel_permissions.py`                                                                                                                                         |
+| GCS/Azure completed cache               | Adjacent atomic downloads, concurrent readers and failure cleanup                               | `backend/tests/test_cloud_storage_atomic.py`                                                                                                                                             |
+| Build/release reliability               | Temporary npm caches, bounded Pyodide retries, fixed-commit release notes                       | `scripts/npm-ci.test.js`, `scripts/prepare-pyodide.test.js`, `scripts/prepare-release.test.js`                                                                                           |
+
+### Fork documentation audit
+
+For documentation maintenance, establish the comparison before reading commit subjects as features:
+
+```sh
+git status --short
+git branch --show-current
+git rev-parse HEAD
+git rev-parse --is-shallow-repository
+git ls-remote https://github.com/open-webui/open-webui.git refs/tags/v0.12.2
+git merge-base HEAD 6a18585ff4c2e5f6805f682222cfbc46dc669ef8
+git diff --name-status 6a18585ff4c2e5f6805f682222cfbc46dc669ef8 HEAD
+git log --topo-order --format="%H %s" 6a18585ff4c2e5f6805f682222cfbc46dc669ef8..HEAD
+git diff
+```
+
+These commands deliberately pin the currently integrated release; update the official SHA when the
+comparison target changes. `ls-remote` needs network access but does not fetch objects or alter local
+tags. A shallow checkout limits historical attribution even when both complete comparison trees are
+present. Verify the complete history using a read-only remote comparison when available. For the
+recorded snapshot, the following returns 73 commits, while local `rev-list` returns only 71:
+
+```sh
+gh api repos/compcj/open-webui/compare/6a18585ff4c2e5f6805f682222cfbc46dc669ef8...c21cfb72b1bdd05dc80e166c0dd4cfd4b053600b --jq '{ahead_by, behind_by, total_commits, commits: [.commits[].sha]}'
+```
+
+For larger histories, follow API pagination and compare the distinct SHA count with `total_commits`.
+Inspect missing commits and their parents through the commit API. GitHub compare file lists can be
+truncated (300 paths here), so retain the local complete-tree diff for the file inventory.
+
+Inspect every changed path by feature and check current source/tests against the upstream
+tree; first-parent history omits merged side branches. Count tests, translation catalogs, generated
+assets, documentation and workflow changes separately from product features. Preserve dirty files,
+and distinguish formatting-only changes from changed JSON values.
+
+Update README's additions/differences/fixes and the appropriate current guides. Add dated evidence to
+the audit or a follow-up record; do not rewrite old validation results as if rerun today. Check local
+Markdown links and anchors, code/test paths, script names and defaults, then run installed Prettier
+on the explicit changed Markdown files and `git diff --check`. Do not install application dependencies
+or run asset preparation merely to verify prose. Report absent tools and unrun runtime checks.
+
+### Chat lifecycle and request isolation verification
+
+Run with installed dependencies under Python 3.11/3.12 and Node 22. Tests use synthetic input and
+isolated state; the documented commands are not a claim that they ran during a documentation audit.
+
+```sh
+python -m pytest backend/tests/test_task_cancellation.py backend/tests/test_streaming_error_recovery.py backend/tests/test_chat_model_isolation.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_tool_call_rounds.py -q
+npm run test:frontend -- --run src/lib/components/chat/Chat.stop.test.ts src/lib/components/chat/Chat.stream-errors.test.ts src/lib/components/chat/Messages/structuredOutput.split-tools.test.ts
+```
+
+Cover missed Pub/Sub delivery, publish failure, expired leases, zero task TTL, repeated stops during
+cleanup, author filtering and approval pauses. A stop timeout must leave the queue/reply retryable;
+navigating or selecting a new reply must not let an old stop mutate it. Exercise transport resets both
+before and after a tool round, buffered deltas, SSE completion before HTTP EOF, a literal `[DONE]` in
+message text, and approval continuation without tool re-execution. Compare same-model and different-model
+parallel replies in off/legacy/V2 modes, including saved branch selections and plugins reading the body.
+These isolated/loopback tests do not prove deployment-level Redis failover or real-provider behavior;
+exercise those separately in disposable environments before making such claims.
 
 Search1API's test named `test_search1api_integration.py` checks source wiring, not a live provider.
 Some existing tests isolate functions through AST loading to avoid importing database/config side

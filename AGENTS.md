@@ -43,6 +43,15 @@ Before merging another upstream release, read [the merge index](docs/upstream/RE
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
+For a full fork audit, use the [v0.12.2 difference inventory](docs/upstream/v0.12.2-fork-audit.md)
+as the last dated snapshot, then recompute both the complete upstream-to-HEAD tree diff and all
+reachable fork-only commits, including merged side branches and the dirty working-tree diff.
+Record exact SHAs and shallow-history limits; verify missing history through read-only remote commit
+and compare APIs when available. Classify current additions, behavior/policy differences,
+important fixes, and upstream convergence separately; a historical fork commit alone does not prove
+a feature is still unique. README carries the complete user-facing inventory, this guide and scoped
+guides carry current invariants, the audit/decision records carry evidence, and DEVELOPMENT carries checks.
+
 Current shared contracts: automatic skill discovery is separately authorized from skill access;
 workspace discovery uses an admin allowlist (empty by default, including for admins), and terminal
 discovery uses only a server-stored admin connection opt-in (false by default). Manual skills and
@@ -66,6 +75,22 @@ current rules in scoped guides, rationale in the decision record, and commands i
 - Apps default off. Private interactions allow read-only channel members; public replies and message
   updates require live write permission after the App responds. Apply channel feature and group-member checks.
 - The migration head is `a122d15e0001`, joining `a120d13e0003` and `0bd252b206fb`; do not rewrite old revisions.
+
+## Reply lifecycle and concurrent models
+
+Each parallel model reply owns its nested input, metadata and mutable request state; V2 branch
+identity, tool selections, retries and caches must not leak between replies. Preserve consumed
+request bytes for plugins while keeping parsed JSON and direct-model objects independent.
+Treat the SSE `[DONE]` event as completion independently of HTTP EOF. A transport interruption must
+persist buffered partial output and prior tool results, mark unfinished items incomplete and avoid
+executing partial tool calls or code. Clear a recovered stream error only through an explicit recovery signal.
+
+Stopping a backend task requires completion confirmation from the executing worker. Redis Pub/Sub is a
+notification, not proof of cancellation; persisted stop intent survives missed delivery and lease pruning.
+Repeated stops must not interrupt cleanup. On timeout, preserve retryable state and do not advance
+queued requests. Navigation or a newer reply must not be mutated by an earlier stop response.
+Keep reply-author permissions for approval and stop. See [chat access and stopping](docs/chat-access-controls.md),
+[backend rules](backend/AGENTS.md), and [regression checks](docs/DEVELOPMENT.md#chat-lifecycle-and-request-isolation-verification).
 
 ## Tool citation prefix contract
 

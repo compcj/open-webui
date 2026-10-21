@@ -20,7 +20,8 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   gating display, export and explicit dependency install. Use `expected_version_id`; surface 409
   conflicts/refresh-required errors and never retry a stale edit by dropping its version. New URL
   imports request `response_format=packages`; keep multi-skill selection and file/history UI.
-  The `$` mention picker hides `user-invocable: false` skills.
+  The integrations menu filters `user-invocable: false` from OpenClaw compatibility metadata;
+  do not assume every mention picker applies that filter or treat it as access control.
 - `npm run i18n:parse` regenerates and formats catalogs from `src/**/*.{js,ts,svelte}`. Inspect
   added and removed keys, preserve existing translations and placeholders, and verify a second run
   produces no changes before pushing UI text changes. Dynamic message keys (for example, image-engine
@@ -43,6 +44,16 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Submit only changed top-level UI settings: omission preserves a value, explicit `null` resets it.
   Nested preference maps remain whole fields. Keep ordered saves, account isolation, and error
   feedback; do not send a stale snapshot of every setting.
+- Remember explicit tool-feature choices per user and single model (including an `@` override);
+  multi-model changes stay local and availability intersects every selected model. Existing chat
+  drafts override remembered choices, while new chats start from account preferences. Preserve
+  paused choices when capability or master switches disable a feature. A remembered search toggle
+  is not consent: keep confirmation and pending-enable invalidation on model/account changes.
+- Gemini tool-schema conversion is explicit: server models use metadata/base-model inheritance;
+  browser-direct models use the selected connection's map keyed by unprefixed provider model ID.
+  Default means no conversion. Never infer it from a model name, URL, provider metadata or a
+  same-ID server model; keep separate personal connections isolated. See the
+  [compatibility guide](../docs/gemini-tool-compatibility.md).
 - Workspace auto-discovery is administered through `GET/POST /api/v1/configs/skills` using
   `AUTO_DISCOVERY_SKILL_IDS`. The UI is not an access-control boundary. Expose terminal
   `config.auto_discover_skills` only for admin-managed connections, and clear stale discovery
@@ -68,7 +79,13 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   text; the frontend must not regenerate it or reorder sources. See the
   [citation follow-up](../docs/upstream/v0.11.4-tool-citation-cache-followup.md).
 - Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
-  same-origin port proxies. Do not restore a setting that grants terminal HTML the WebUI origin.
+  same-origin port proxies. System-terminal HTML displays source; SVG images use signed delivery.
+  Do not restore a setting that grants terminal HTML the WebUI origin.
+- When stopping backend tasks, end local generation and release a queued prompt only after acknowledgement.
+  Preserve retryable state on failure and reject results after navigating to another chat. Only an
+  explicit stream `error: null` clears a prior error. Hide superseded split-tool placeholders only
+  in rendered output; preserve their raw replay data. Show Thinking for pending empty output,
+  including empty native envelopes, but not while waiting for `ask_user` or after completion.
 
 See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and future merge checks.
 
@@ -79,7 +96,10 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
 - Before applying a revision comparison, verify both the current draft and selected version are
   unchanged. Preserve optimistic skill versions, incremental settings saves and model-control precedence.
 - Terminal reads, comparison reads, saves, notebook execution, batch deletes and ZIP downloads carry
-  the active chat context. Signed delivery URLs retain their original identity; HTML/SVG stay isolated.
+  captured terminal and chat identities. Cancel invalidated reads and reject late completions on
+  connection/chat changes; dispose a notebook kernel through its original connection even if it
+  finishes starting after unmount. Signed delivery URLs retain their original identity; HTML/SVG
+  stay isolated.
 - Skills support `.skill` as ZIP-compatible packages. Do not turn overview truncation or search omissions
   into editable content; file edits still operate on canonical `data.files` with `expected_version_id`.
 
@@ -168,8 +188,10 @@ Keep protocol selection explicit in admin Connections: Chat Completions (empty/d
 Gemini and Anthropic. Accept legacy `chat_completions`; never guess from model names or URLs.
 Fill protocol default URLs only when blank, retain manual model IDs and custom gateways, and reject
 native+Azure. Native `api_key` authentication is distinct from existing bearer/none/session/oauth.
-Preserve custom header and UA/session controls. Do not expose native protocols as new personal
-browser-direct options. Preserve optional native `reasoning_details` through streaming, saves,
+Preserve custom header and UA/session controls: explicit values override matching custom headers;
+an absent opt-in does not synthesize a connection session header. Keep temporary-chat session identity stable from its original
+root message, independent of socket reconnections, and reset it for the next chat. Do not expose
+native protocols as new personal browser-direct options. Preserve optional native `reasoning_details` through streaming, saves,
 approvals and reload; display text must not replace exact signed blocks. See the
 [native guide](../docs/native-model-connections.md) and
 [verification](../docs/DEVELOPMENT.md#native-model-connection-verification).

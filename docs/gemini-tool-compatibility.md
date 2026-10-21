@@ -6,10 +6,15 @@
 
 ## 启用方式
 
-在模型编辑页的 **工具 Schema 兼容性 / Tool schema compatibility** 选择 **Gemini**。
+在模型编辑页的 **工具 Schema 兼容模式（Tool schema compatibility）** 选择 **Gemini**。
 基础模型默认使用 **Default (no conversion)**；派生模型可继承基础模型，也可显式覆盖。
 设置保存在 `meta.tool_schema_compatibility`，只接受 `default` 或 `gemini`。
 直连模型使用连接中对应模型的手动配置。模型名称、URL 和供应商名称都不会自动启用转换。
+
+个人直连在连接编辑器的 **Tool schema compatibility** 中添加模型并选择 Gemini，填写供应商原始模型 ID，
+不包含连接的 Prefix ID；同名模型在不同连接中分别配置。没有明确配置时保持 Default，
+不会从供应商返回的元数据或同 ID 的服务端模型继承。该设置只启用 Schema 兼容处理，
+不把个人直连变成[原生 Gemini 服务器连接](native-model-connections.md)。
 
 启用后，服务端 Chat Completions、Responses 和浏览器直连发送边界共用同一个编译器。
 转换发生在最终 Token 预算计算之前，不改变工具名称、调用 ID、结果配对、消息历史或供应商扩展字段。

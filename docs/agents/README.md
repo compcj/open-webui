@@ -45,6 +45,13 @@ scoped guides, user-facing behavior in README, and commands in DEVELOPMENT.md. V
 explain why a difference exists and when it may be removed; historical plans do not authorize a
 new push, release, deployment, or change of product policy.
 
+For a complete comparison, start from the [dated fork audit](../upstream/v0.12.2-fork-audit.md) and
+recompute both the upstream-to-HEAD file diff and all reachable fork-only commits. Record the two
+exact revisions, shallow boundaries and uncommitted changes. First-parent logs miss merged side
+branches, and historical feature commits may now be upstream equivalents. Keep README's additions,
+behavior/decision differences and important fixes aligned with current source and test evidence;
+preserve previous validation reports as dated records rather than current pass claims.
+
 ## Ownership and parallel work
 
 Small tasks can be completed by one agent. When work is delegated or parallelized:

@@ -61,6 +61,11 @@ new files, notebook execution, batch deletion and ZIP downloads carry the curren
 reads use the same terminal and chat as the selected files. Switching chats must not reuse content
 from a previous workspace. File saves retain their version/concurrency checks where supported.
 
+Connection/chat changes cancel or discard late directory and source-read results. Notebook kernels
+created by a stale request are cleaned up using their original connection/context. A revision
+comparison also verifies that the draft and selected version have not changed before applying it;
+opening a comparison does not reserve the editor or authorize overwriting a later edit.
+
 These operations still require current terminal and chat access. Signed delivery links continue to
 resolve their original context, independently of the currently open chat. HTML is source/download
 content and SVG previews remain isolated; the new file actions do not enable same-origin port previews.

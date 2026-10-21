@@ -81,6 +81,55 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Preserve named
   engine settings and context-only image deduplication across normal, approved, and replayed tools.
 
+## Chat controls and execution reliability
+
+- Global temporary-chat and direct-API controls default on and exempt admins. Enforce them at the
+  generation endpoints through `utils/chat_access.py`, including OpenAI, Ollama and Anthropic proxy
+  routes. Disabling direct API chat still permits valid WebUI conversation requests; a supplied
+  chat ID alone is insufficient. Missing/null fields from older admin clients preserve saved values.
+- Knowledge and notes preferences control workspace discovery and tools; explicit attachments retain
+  scoped readers with execution-time ACL checks. Memory opt-in governs tools, automatic context and
+  post-turn review together, including model capability, global/user settings and user permissions.
+  Keep `utils/tool_features.py` authoritative across those paths.
+- Each concurrent model reply owns its nested payload, metadata and `Request.state`, including
+  compaction/retry state, tool-schema validation and skill caches. Preserve cached immutable request
+  body bytes for plugins, but never share parsed mutable JSON between replies. Keep
+  `tests/test_chat_model_isolation.py` when changing multi-model dispatch.
+- Treat `[DONE]` as terminal and close the active iterator promptly; a Chat Completions
+  `finish_reason` still permits trailing usage before `[DONE]`. On transport failure, flush buffered
+  content and persist incomplete output; cancellation preserves that output and shields cleanup.
+  Never dispatch partial tool arguments or legacy code from an interrupted round. Clear an upstream error
+  only after actual recovery, retaining unrecovered errors even when partial content exists.
+- A repeated tool ID in one batch/replay must not execute twice. A fresh provider round may reuse
+  an ID and needs a distinct stable execution identity. Deterministically split concatenated calls,
+  retire their parent placeholder, preserve completed children and resume only pending children.
+- Redis cancellation intent is independent of the liveness lease. Pub/Sub is a notification;
+  owner polling must recover missed messages even when task TTL is disabled. Report stopped only
+  after owner completion/cleanup, never after lease pruning or publication alone. Repeated stops
+  must not cancel cleanup again; timeout remains retryable. Recover expired-lease tasks only from
+  the requesting reply author's unfinished messages, preserving approval-pause rejection semantics.
+
+## Image profiles and storage
+
+- Named image profiles use request-local config snapshots and expose only ID/name to ordinary users.
+  Missing/deleted IDs use the default profile. An absent paired edit profile inherits global editing;
+  explicit `disabled` removes the edit tool and rejects execution. Preserve per-engine parameters
+  and description suffixes without mutating cached tool schemas or leaking another profile's secrets.
+- Persist compact image references; resolve authorized bytes only for vision-capable sends. Tool
+  context images must not create duplicate display attachments. Retain references across approval,
+  reload and follow-up turns; do not persist inline Base64 as image-context metadata.
+- Preserve safe stage-specific ComfyUI errors and distinguish pre-submission failures from uncertain
+  queued/executing work. Never log full workflows or return raw authenticated transport errors.
+  Download credentials apply only to the configured image service's origin; redact secret fields
+  from persisted image metadata.
+- S3, GCS and Azure cache downloads write to unique short adjacent temporary files and atomically
+  replace the final path after success. Failure removes only its temporary file and preserves any
+  existing cache. Keep concurrent-reader and long multibyte-filename coverage.
+- Tika requests require `Accept: application/json` so supported server versions return the metadata
+  envelope expected by the loader. Preserve the version-specific endpoint and content-key handling.
+
+## Terminal context
+
 Terminal AGENTS.md is a synthetic user message. Enrich each user message from its own `files` in
 `process_messages_with_output` before stripping those fields and injecting AGENTS.md. Do not pair
 attachments by ordinal positions after output expansion or repeat the old async enrichment path.
@@ -322,6 +371,12 @@ priority. Native `api_key` maps to `x-goog-api-key` or `x-api-key`; Anthropic su
 `anthropic-version: 2023-06-01` unless explicitly configured. Paginate native model discovery and
 retain manual IDs. Unsupported endpoints fail explicitly rather than switching protocols.
 
+Connection UA/session controls default to existing behavior. Explicit controls override matching
+custom headers case-insensitively; validate header names/values and prevent session headers from
+replacing authentication or standard transport headers. Saved chats use the chat ID; temporary/local
+chats use `connection_session_id` from the root message, never the reusable socket ID. Verification
+and requests without conversation identity do not invent a session header.
+
 Native text/image/tool streams and nonstreams share permissions, approval, citation and usage flows.
 Keep exact native blocks/parts and signatures in optional `reasoning_details`, bound to protocol,
 connection, model and original content. Validate replay; fail required missing/edited signatures and
@@ -332,3 +387,15 @@ off/legacy behavior and admin-configured context windows. Gemini defaults to `pa
 manual restricted-schema projection remains separate and explicit. See the
 [guide](../docs/native-model-connections.md), [follow-up](../docs/upstream/v0.12.2-native-connections-followup.md)
 and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
+
+## Gemini schema compatibility
+
+`meta.tool_schema_compatibility` is an explicit `default`/`gemini` choice with base-model inheritance;
+browser-direct descriptors never resolve a colliding server model. Compile copies before final
+budgeting using `utils/gemini_schema.py`; never infer the profile from model/URL/provider names.
+Resolve only bounded local references and preserve original JSON types and constraints for execution
+validation. Unsupported or over-budget schemas fail with tool/path diagnostics, without schema values
+or a truncated definition. Validate the original schema before approval, callbacks or execution;
+freeze each generating round's mode across model switches and approval resumes, and strip internal
+markers before transport. Model arguments cannot override `__` runtime parameters. See the
+[compatibility guide](../docs/gemini-tool-compatibility.md) and its regression commands.
