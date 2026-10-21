@@ -112,7 +112,7 @@ class ChatToolFeaturesTests(unittest.TestCase):
             )
 
     def test_knowledge_writes_are_explicit_and_obey_read_and_model_gates(self):
-        writes = {'write_knowledge_file', 'replace_knowledge_file_content'}
+        writes = {'write_knowledge_file', 'replace_knowledge_file_content', 'import_knowledge_url'}
         self.assertFalse(writes & set(self.tools({})))
         self.assertFalse(writes & set(self.tools({'knowledge_write': 'true'})))
         for enabled in (False, True):
@@ -127,6 +127,16 @@ class ChatToolFeaturesTests(unittest.TestCase):
             self.model['info']['meta'][key] = value
             self.assertFalse(writes & set(self.tools({'knowledge_write': True})))
             self.model['info']['meta'][key] = {}
+
+    def test_terminal_import_requires_selected_terminal_and_model_capability(self):
+        self.metadata['terminal_id'] = 'saved'
+        tools = self.tools({'knowledge_write': True})
+        self.assertIn('import_knowledge_terminal_file', tools)
+        self.model['info']['meta']['capabilities'] = {'terminal': False}
+        self.assertNotIn('import_knowledge_terminal_file', self.tools({'knowledge_write': True}))
+        self.model['info']['meta']['capabilities'] = {}
+        self.metadata.clear()
+        self.assertNotIn('import_knowledge_terminal_file', self.tools({'knowledge_write': True}))
 
     def test_write_scope_includes_chat_collections_with_file_context_enabled(self):
         self.model['info']['meta'].update(

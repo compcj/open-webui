@@ -126,6 +126,10 @@ and membership plus file write access for edits. External collections are unsupp
 Create UTF-8 Markdown/text files in existing collection roots; edit extracted retrieval text while
 preserving original uploads and existing shared-file index propagation. Report persisted text with
 failed indexing as partial completion, and never repeat a resolved tool during approval/retry replay.
+URL and terminal imports keep source bodies outside model/tool messages and reuse file processing.
+Terminal import binds the current actor and selected admin connection/context; never open a supplied
+terminal path on the WebUI host or accept a model-supplied connection/credential. Preserve URL network
+policy, size/type limits, live permissions, original document bytes and compact verified results.
 See [backend rules](backend/AGENTS.md#knowledge-write-tools),
 [frontend rules](src/AGENTS.md#knowledge-write-controls),
 [user guide](docs/knowledge-write-tools.md), and

@@ -231,6 +231,8 @@ embedding failure; never run mutation checks against existing user data.
 
 ```sh
 python -m pytest backend/tests/test_knowledge_write_tools.py backend/tests/test_knowledge_write_integration.py backend/tests/test_knowledge_write_dispatch.py backend/tests/test_chat_tool_features.py -q
+python -m pytest backend/tests/test_knowledge_import.py backend/tests/test_knowledge_import_sources.py backend/tests/test_knowledge_import_integration.py backend/tests/test_knowledge_import_dispatch.py -q
+python -m pytest backend/tests/test_terminal_files.py backend/tests/test_terminal_file_routes.py -q
 python -m pytest backend/tests/test_tool_dispatch_v0122.py backend/tests/test_approval_execution_helper.py backend/tests/test_native_connections_integration.py backend/tests/test_native_provider_adapters.py backend/tests/test_gemini_tool_schema.py backend/tests/test_gemini_schema_compiler.py backend/tests/test_streaming_tool_call_dedup.py -q
 npm run test:frontend -- --run src/lib/utils/tool-feature-preferences.test.ts src/lib/components/chat/Chat.tool-features.test.ts src/lib/components/chat/MessageInput/ContextToolFeatures.test.ts src/lib/components/admin/Settings/WebSearch.test.ts src/lib/components/chat/SettingsModal.test.ts src/lib/components/chat/Chat.voice.test.ts
 npm run check
@@ -253,6 +255,16 @@ configured retrieval bypass reports saved text with indexing skipped. Exercise b
 `call_tool` dispatch, denied and resumed approval, and replay without a second write across the
 four native protocols.
 
+For direct imports, verify single-page URL extraction and original-byte preservation for supported
+document URLs and terminal files. Use synthetic content larger than a deliberately small test model
+window and check start/middle/end text plus retrieval hits. Assert tool outputs, citations and provider
+continuations contain compact status only, not source text/Base64. Check actual streamed size, empty
+extraction, source/override type restrictions, root-name conflicts, network policy and redirect handling.
+Terminal cases must include the current actor/chat/context, permission revocation, context changes,
+model capability, disabled/missing admin connections, personal direct connections and invalid paths.
+Exercise cancellation during download and persistence, safe orphan cleanup, retained partial results,
+configured indexing bypass, denied/resumed approval and completed-result replay without another import.
+
 For workflow acceptance with disposable data:
 
 1. Open a fresh chat: writing is off. Enable reading and writing, save a Markdown document, and
@@ -271,6 +283,13 @@ For workflow acceptance with disposable data:
 6. In home and chat composers, check write selection, read-off pause/resume, reload/reset, model and
    multi-model limits, account isolation and ordered settings saves. Exercise English/Chinese text,
    keyboard operation, narrow screens and dark mode.
+7. Directly import a controlled web page and a document URL with knowledge writing enabled. Verify
+   the root entry, extracted text, retrieval and original document download. Confirm web-search
+   toggle and `fetch_url` display limits do not gate or truncate the import.
+8. Select a disposable admin terminal, generate a large UTF-8 document there and import its absolute
+   path. Verify complete content and compact tool/model messages; repeat with PDF/Word fixtures.
+   Deny an approval, revoke terminal access and change its chat context to verify isolation. Stop a
+   download/processing operation and inspect persisted files before any manual retry.
 
 Use mocked embedding/provider boundaries for deterministic local integration and state those limits;
 component harnesses and isolated route tests do not demonstrate a complete deployed application.
@@ -279,7 +298,8 @@ compare output hashes. Preserve unrelated existing keys/translations when integr
 Run installed Prettier on explicit changed frontend/Markdown/locale paths, Ruff format and the CI
 F-rule subset on changed Python files, local Markdown link/anchor checks, and `git diff --check`.
 Record actual evidence and untested boundaries in the
-[decision follow-up](upstream/v0.12.2-knowledge-write-followup.md).
+[write decision follow-up](upstream/v0.12.2-knowledge-write-followup.md) and
+[direct import follow-up](upstream/v0.12.2-knowledge-direct-import-followup.md).
 
 ### Gemini tool schema verification
 

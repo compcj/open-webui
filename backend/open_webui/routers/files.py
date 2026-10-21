@@ -1020,6 +1020,32 @@ async def rename_file_by_id(
 ############################
 
 
+async def _cleanup_new_orphan_upload(request, file_id, user, *, before_cleanup=None):
+    """Clean one confirmed new upload, preserving a concurrently attached file."""
+    file = await Files.get_file_by_id(file_id)
+    if not file:
+        if before_cleanup is not None:
+            await before_cleanup()
+        return True
+    if file.user_id != user.id or not await Files.delete_owned_orphan_by_id(file_id, user.id):
+        return False
+    if before_cleanup is not None:
+        await before_cleanup()
+    # No transaction spans external storage/vector IO. The conditional SQL delete
+    # has already established that this invocation owns an unassociated file.
+    collection_name = f'file-{file_id}'
+    present = await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=collection_name)
+    if type(present) is not bool:
+        raise RuntimeError('Upload index cleanup could not be verified')
+    if present:
+        await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=collection_name)
+        if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=collection_name) is not False:
+            raise RuntimeError('Upload index cleanup could not be verified')
+    await asyncio.to_thread(Storage.delete_file, file.path)
+    await publish_event(request, EVENTS.FILE_DELETED, actor=user, subject_id=file_id, data={'filename': file.filename})
+    return True
+
+
 @router.delete('/{id}')
 async def delete_file_by_id(
     request: Request, id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)

@@ -144,7 +144,8 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
 
 ## Knowledge write tools
 
-- Register `write_knowledge_file` and `replace_knowledge_file_content` through the existing builtin
+- Register `write_knowledge_file`, `replace_knowledge_file_content`, `import_knowledge_url` and
+  `import_knowledge_terminal_file` through the existing builtin
   pipeline. Require explicit `knowledge_write=true`, knowledge reading, model builtin capability
   and both category permissions. Missing write opt-in denies execution.
 - Bind write scope separately from read injection: union model, folder and current-chat collection
@@ -156,6 +157,18 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
 - Use explicit users and database sessions with existing upload/process/associate and content-update
   pipelines. Confirm processed state and the persisted association before reporting create success.
   Only clean up a file created by this invocation that remains unassociated.
+- Direct imports carry sources outside model context: never return full text, Base64 or raw file models.
+  Web pages use the configured loader without `fetch_url` display truncation; documents preserve upload
+  bytes. Reuse URL/SSRF/redirect policy, actual streamed size and allowed-type checks. Source retrieval
+  must not hold a database transaction or forward WebUI credentials to arbitrary URLs.
+- Terminal imports use only the current selected admin connection and model terminal capability.
+  Recheck connection, actor, chat/context and KB access, fetch through the fixed terminal file API,
+  and refuse redirects. Never read a supplied path from the backend host or accept a model-selected
+  terminal identity. Preserve signed download and browser response-isolation rules.
+- Import cancellation must settle already-started blocking persistence work before cleanup and retain
+  the existing interrupted-call semantics. Distinguish retained partial files from cleaned failures;
+  report saved/associated/indexed state accurately, including configured indexing bypass. Never retry
+  a resolved import automatically. See the [direct import decision](../docs/upstream/v0.12.2-knowledge-direct-import-followup.md).
 - Edit extracted text, retaining uploaded bytes and shared-file reindex behavior. Reject blank or
   oversized content, unsafe names, conflicting inputs and invalid ranges. Nonempty `replace_range`
   ranges require matching `expected`; use original character offsets for the entire batch.

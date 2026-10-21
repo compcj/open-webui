@@ -41,7 +41,7 @@ def _check_context(knowledge_id, request, user, context):
         raise ValueError('Knowledge base is outside the attached write scope')
 
 
-def _filename(filename):
+def _root_filename(filename):
     if (
         not isinstance(filename, str)
         or not filename
@@ -57,6 +57,11 @@ def _filename(filename):
         )
     ):
         raise ValueError('Invalid root filename')
+    return filename
+
+
+def _filename(filename):
+    filename = _root_filename(filename)
     if not PurePath(filename).suffix:
         filename += '.md'
     if len(filename.encode('utf-8')) > 255 or PurePath(filename).suffix.lower() not in ('.md', '.txt'):

@@ -68,7 +68,7 @@ def load_source(namespace, relative, names):
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
 
 
-async def isolated_scenario():
+async def isolated_scenario(import_scenario=None):
     # Config imports can start migrations/copy assets; only model-required constants
     # are provided. Config.get/upsert below remain the real database implementation.
     config_module = ModuleType('open_webui.config')
@@ -166,6 +166,9 @@ async def isolated_scenario():
 
         async def delete_collection(self, collection_name):
             self.collections.pop(collection_name, None)
+
+        async def has_collection(self, collection_name):
+            return collection_name in self.collections
 
         async def delete(self, collection_name, ids=None, filter=None):
             self.collections[collection_name] = [
@@ -294,6 +297,7 @@ async def isolated_scenario():
             'ContentForm',
             'update_file_data_content_by_id',
             'delete_file_by_id',
+            '_cleanup_new_orphan_upload',
         },
     )
     # Lazy imports in the production tools reach these exact source functions.
@@ -310,6 +314,7 @@ async def isolated_scenario():
             'is_external_knowledge',
             'external_knowledge_error',
             'add_file_to_knowledge_by_id',
+            '_add_file_to_knowledge',
         },
     )
     knowledge_router = ModuleType('open_webui.routers.knowledge')
@@ -566,6 +571,8 @@ async def isolated_scenario():
         for entries in vectors.collections.values()
         for entry in entries
     )
+    if import_scenario is not None:
+        await import_scenario(ns, request, owner, base, data, vectors)
     await async_engine.dispose()
     print('knowledge write SQLite integration passed')
 

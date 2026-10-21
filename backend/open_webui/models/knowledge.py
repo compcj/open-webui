@@ -26,6 +26,8 @@ from sqlalchemy import (
     UniqueConstraint,
     delete,
     func,
+    insert,
+    literal,
     or_,
     select,
     update,
@@ -721,14 +723,25 @@ class KnowledgeTable:
             )
 
             try:
-                result = KnowledgeFile(**knowledge_file.model_dump())
-                db.add(result)
-                await db.commit()
-                await db.refresh(result)
-                if result:
-                    return KnowledgeFileModel.model_validate(result)
-                else:
+                # Share the file-row lock used by orphan cleanup; no external IO
+                # runs while this short membership transaction holds it.
+                live = await db.execute(select(File.id).where(File.id == file_id).with_for_update())
+                if live.scalar_one_or_none() is None:
                     return None
+                values = knowledge_file.model_dump()
+                # Atomic existence check: SQLite deployments may have FK checks
+                # disabled, so a stale upload must not acquire a new membership
+                # after orphan cleanup has removed its file row.
+                result = await db.execute(
+                    insert(KnowledgeFile).from_select(
+                        list(values),
+                        select(*(literal(value) for value in values.values())).where(
+                            select(File.id).where(File.id == file_id).exists()
+                        ),
+                    )
+                )
+                await db.commit()
+                return knowledge_file if result.rowcount == 1 else None
             except Exception:
                 return None
 

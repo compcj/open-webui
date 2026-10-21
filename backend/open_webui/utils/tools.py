@@ -65,6 +65,8 @@ from open_webui.tools.builtin import (
     get_current_timestamp,
     grep_chat_files,
     grep_knowledge_files,
+    import_knowledge_url,
+    import_knowledge_terminal_file,
     kb_exec,
     list_automations,
     list_chat_files,
@@ -761,6 +763,10 @@ async def get_builtin_tools(
     # Otherwise, provide all KB browsing tools
     model_knowledge = get_attached_knowledge(model, metadata)
     write_context = knowledge_write_context(features, model, metadata)
+    write_context['terminal_enabled'] = bool(
+        (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
+        and getattr(request.state, 'direct', False) is not True
+    )
     if write_context['enabled']:
         read_collection_ids = {item.get('id') for item in model_knowledge if item.get('type') == 'collection'}
         model_knowledge = [
@@ -829,6 +835,7 @@ async def get_builtin_tools(
         for function in (
             write_knowledge_file,
             replace_knowledge_file_content,
+            import_knowledge_url,
             list_knowledge_bases,
             search_knowledge_bases,
             list_knowledge,
@@ -836,6 +843,8 @@ async def get_builtin_tools(
         ):
             if function not in builtin_functions:
                 builtin_functions.append(function)
+        if metadata.get('terminal_id') and write_context['terminal_enabled']:
+            builtin_functions.append(import_knowledge_terminal_file)
 
     # Chats tools - search and fetch user's chat history
     if is_builtin_tool_enabled('chats'):

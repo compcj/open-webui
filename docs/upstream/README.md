@@ -61,3 +61,7 @@ and validation evidence. Read it before merging search-provider or retrieval-set
 The [v0.12.2 knowledge write follow-up](v0.12.2-knowledge-write-followup.md) records separate
 default-off authorization, attachment scope, extracted-text editing and partial indexing failures.
 Read it before merging builtin tools, knowledge/file permissions or chat preference changes.
+
+The [v0.12.2 knowledge direct import follow-up](v0.12.2-knowledge-direct-import-followup.md) extends
+that authorization to URL and admin-terminal file imports without routing source bodies through the
+model. Read it before merging URL ingestion, terminal file access or knowledge processing changes.

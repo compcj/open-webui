@@ -1599,6 +1599,9 @@ async def process_file(
             file = None
 
     if file:
+        # File and access checks produce detached Pydantic data. Release their
+        # read transaction before storage, loaders or vector services perform IO.
+        await db.commit()
         try:
             collection_name = form_data.collection_name
             file_collection_name = f'file-{file.id}'

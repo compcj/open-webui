@@ -1430,6 +1430,11 @@ async def add_file_to_knowledge_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    return await _add_file_to_knowledge(request, id, form_data, user=user, db=db)
+
+
+async def _add_file_to_knowledge(request, id, form_data, user, db, *, before_associate=None):
+    """Normal association pipeline with an optional server-only final authorization hook."""
     knowledge = await Knowledges.get_knowledge_by_id(id=id, db=db)
     if not knowledge:
         raise HTTPException(
@@ -1479,21 +1484,29 @@ async def add_file_to_knowledge_by_id(
 
     # Add content to the vector database
     try:
-        await process_file(
+        processing_result = await process_file(
             request,
             ProcessFileForm(file_id=form_data.file_id, collection_name=id),
             user=user,
             db=db,
         )
 
+        if before_associate is not None:
+            # Release the route's read transaction before the caller opens its
+            # own fresh authorization scope (terminal/KB policy may have changed).
+            await db.commit()
+            await before_associate(processing_result)
+
         # Add file to knowledge base
-        await Knowledges.add_file_to_knowledge_by_id(
+        membership = await Knowledges.add_file_to_knowledge_by_id(
             knowledge_id=id,
             file_id=form_data.file_id,
             user_id=user.id,
             directory_id=form_data.directory_id,
             db=db,
         )
+        if not membership:
+            raise ValueError('Knowledge association did not persist; the file may have changed or been removed')
     except Exception as e:
         log.debug(e)
         raise HTTPException(

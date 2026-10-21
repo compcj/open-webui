@@ -452,6 +452,27 @@ class FilesTable:
             except Exception:
                 return False
 
+    async def delete_owned_orphan_by_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
+        """Atomically remove a new owned upload only while it has no KB memberships."""
+        from open_webui.models.knowledge import KnowledgeFile
+
+        async with get_async_db_context(db) as db:
+            # Serialize with membership creation on PostgreSQL before evaluating
+            # NOT EXISTS in a fresh statement snapshot. SQLite keeps the atomic
+            # predicate below (FOR UPDATE is a no-op there).
+            owned = await db.execute(select(File.id).where(File.id == id, File.user_id == user_id).with_for_update())
+            if owned.scalar_one_or_none() is None:
+                return False
+            result = await db.execute(
+                delete(File).where(
+                    File.id == id,
+                    File.user_id == user_id,
+                    ~select(KnowledgeFile.id).where(KnowledgeFile.file_id == File.id).exists(),
+                )
+            )
+            await db.commit()
+            return result.rowcount == 1
+
     async def delete_all_files(self, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             try:

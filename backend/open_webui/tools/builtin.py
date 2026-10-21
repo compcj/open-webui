@@ -70,6 +70,7 @@ from open_webui.tools.knowledge_write import (
     replace_knowledge_file_content,
     write_knowledge_file,
 )
+from open_webui.tools.knowledge_import import import_knowledge_url, import_knowledge_terminal_file
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.notifications import notify_target

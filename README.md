@@ -84,6 +84,10 @@ also apply, and write access is checked again after the App responds.
 模型设置中的内置工具也须允许读取和写入；首次使用默认不启用写入，显式选择按用户及模型记忆。
 关闭读取会暂停写入并保留选择。可创建 `.md`／`.txt` 文档，或全文替换、局部修改及追加已有文档的检索文本。
 
+也可让模型直接导入网页、文件链接或当前服务器终端内的文件，支持部署已有解析器能够处理的 PDF、Word 等格式。
+来源由后端获取并入库，正文无需经过模型上下文，因此可导入超过模型上下文的文档。一次处理一个来源，
+等待结果；沿用部署的文件大小和格式限制。终端导入限管理员配置的终端，个人直连和目录批量导入暂不支持。
+
 有模型、文件夹或当前聊天挂载的知识库时，只能写入这些库；没有挂载时，可选择有写权限的库。
 挂载不授予写权限，外部知识库不支持写入。编辑保留原始上传文件，关联同一文件的知识库沿用现有索引同步。
 使用示例、文件权限及索引失败恢复见[知识库写入指南](docs/knowledge-write-tools.md)。
@@ -92,6 +96,11 @@ In the chat input's tools menu, enable **Knowledge Base** reading, then opt in t
 The model must allow both builtin categories. Writing defaults off and explicit choices are remembered
 per user and model; disabling reading pauses writing while retaining the choice. Create `.md`/`.txt`
 documents or replace, edit and append to existing retrieval text.
+
+Models can also directly import a web page, document URL or file from the currently selected admin
+terminal. Source contents stay outside model context, allowing documents larger than that context;
+existing upload limits and configured document loaders still apply. Each call waits for one import.
+Personal browser-direct terminals and directory imports are unsupported.
 
 When the model, folder or chat has attached knowledge bases, those collections define the write scope;
 otherwise choose a collection you can write to. Attachments do not grant write permission, and external
