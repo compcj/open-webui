@@ -5,11 +5,13 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import aiohttp
 import pytest
 from fastapi import HTTPException
 from starlette.responses import StreamingResponse
@@ -140,6 +142,8 @@ def runtime():
     def response_for(chunks):
         async def body():
             for chunk in chunks:
+                if isinstance(chunk, BaseException):
+                    raise chunk
                 yield chunk if isinstance(chunk, str) else f'data: {json.dumps(chunk)}\n\n'
 
         return StreamingResponse(body())
@@ -177,6 +181,249 @@ def runtime():
         return ctx
 
     return SimpleNamespace(run=run, ns=ns, events=events, saved=saved)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('done', ['data: [DONE]\n\n', 'data:[DONE]\r\n'])
+async def test_explicit_done_does_not_read_a_late_transport_failure(runtime, done):
+    await runtime.run([chat_chunk('Complete answer', 'stop'), done, aiohttp.ClientPayloadError('synthetic late reset')])
+    assert runtime.saved.get('error') is None
+    assert runtime.saved['done'] is True
+    assert runtime.ns['get_output_text'](runtime.saved['output']) == 'Complete answer'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('after_tool', [False, True])
+@pytest.mark.parametrize('temporary', [False, True])
+@pytest.mark.parametrize('failure_type', [aiohttp.ClientPayloadError, ConnectionResetError])
+async def test_transport_failure_preserves_incomplete_output_and_buffered_deltas(
+    runtime, after_tool, temporary, failure_type
+):
+    failure = failure_type('synthetic truncated response')
+
+    def setup(ctx, ns, response_for):
+        ctx['metadata']['params']['stream_delta_chunk_size'] = 100
+
+    interrupted = [chat_chunk('Partial answer'), failure]
+    await runtime.run(
+        [tool_call_chunk()] if after_tool else interrupted,
+        follow_up=interrupted if after_tool else None,
+        temporary=temporary,
+        setup=setup,
+    )
+    errors = [event for event in runtime.events if event['type'] == 'chat:message:error']
+    assert len(errors) == 1
+    assert errors[0]['data']['error']['content'] == str(failure)
+    deltas = [event['data'].get('delta') for event in runtime.events if event['type'] == 'response:completion']
+    assert 'Partial answer' in deltas
+    snapshots = [event['data']['output'] for event in runtime.events if 'output' in event['data']]
+    partial = snapshots[-1]
+    assert runtime.ns['get_output_text'](partial) == 'Partial answer'
+    assert next(item for item in partial if item['type'] == 'message')['status'] == 'incomplete'
+    if not temporary:
+        assert runtime.saved['output'] == partial
+        assert runtime.saved['done'] is True
+        assert runtime.saved['error']['content'] == str(failure)
+    if after_tool:
+        assert [item['call_id'] for item in partial if item['type'] == 'function_call_output'] == ['call-1']
+    assert runtime.ns['execute_tool_call'].await_count == int(after_tool)
+    assert runtime.ns['generate_chat_completion'].await_count == int(after_tool)
+    runtime.ns['clear_response_stream'].assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_followup_done_closes_active_iterator_without_waiting_for_eof(runtime):
+    closed = []
+    consumed_tail = []
+
+    def setup(ctx, ns, response_for):
+        async def body():
+            try:
+                yield f'data: {json.dumps(chat_chunk("Answer", "stop"))}\n\n'
+                yield 'data: [DONE]\n\n'
+                consumed_tail.append(True)
+                raise aiohttp.ClientPayloadError('synthetic late reset')
+            finally:
+                closed.append(True)
+
+        ns['generate_chat_completion'] = AsyncMock(return_value=StreamingResponse(body()))
+
+    await runtime.run([tool_call_chunk()], setup=setup)
+    assert consumed_tail == []
+    assert closed == [True]
+    assert runtime.saved.get('error') is None
+    runtime.ns['execute_tool_call'].assert_awaited_once()
+    assert runtime.ns['get_output_text'](runtime.saved['output']) == 'Answer'
+
+
+@pytest.mark.asyncio
+async def test_finish_reason_still_reads_usage_before_done(runtime):
+    await runtime.run(
+        [
+            chat_chunk('Literal data: [DONE] in answer', 'stop'),
+            {'choices': [], 'usage': {'prompt_tokens': 12, 'completion_tokens': 4, 'total_tokens': 16}},
+            'data: [DONE]\n\n',
+            ConnectionResetError('late reset'),
+        ]
+    )
+    assert runtime.saved.get('error') is None
+    assert runtime.saved['usage']['total_tokens'] == 16
+    assert runtime.ns['get_output_text'](runtime.saved['output']) == 'Literal data: [DONE] in answer'
+
+
+@pytest.mark.asyncio
+async def test_truncated_tool_arguments_never_execute(runtime):
+    chunk = tool_call_chunk()
+    chunk['choices'][0]['delta']['tool_calls'][0]['function']['arguments'] = '{"unfinished":'
+    chunk['choices'][0]['finish_reason'] = None
+    await runtime.run([chunk, aiohttp.ClientPayloadError('truncated arguments')])
+    runtime.ns['execute_tool_call'].assert_not_awaited()
+    runtime.ns['generate_chat_completion'].assert_not_awaited()
+    assert runtime.saved['error'] == {'content': 'truncated arguments'}
+    assert runtime.saved['output'][0]['status'] == 'incomplete'
+
+
+@pytest.mark.asyncio
+async def test_interrupted_approval_resume_preserves_prefix_without_tool_reexecution(runtime):
+    await runtime.run(
+        [chat_chunk('Partial continuation'), ConnectionResetError('reset during resume')],
+        previous={'output': response_output('Earlier answer')},
+    )
+    assert runtime.ns['get_output_text'](runtime.saved['output']) == 'Earlier answerPartial continuation'
+    assert runtime.saved['output'][0]['status'] == 'incomplete'
+    assert runtime.saved['done'] is True
+    runtime.ns['execute_tool_call'].assert_not_awaited()
+    runtime.ns['generate_chat_completion'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_followup_preserves_cancellation(runtime):
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.run([tool_call_chunk()], follow_up=[chat_chunk('Partial'), asyncio.CancelledError()])
+    assert runtime.saved.get('error') is None
+    assert runtime.saved['done'] is True
+    assert any(event['type'] == 'chat:tasks:cancel' for event in runtime.events)
+    runtime.ns['execute_tool_call'].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('interrupted', [False, True])
+async def test_legacy_code_executes_only_after_an_uninterrupted_followup(runtime, interrupted):
+    execute_code = AsyncMock(return_value={'stdout': 'synthetic result', 'stderr': '', 'result': ''})
+
+    def setup(ctx, ns, response_for):
+        ctx['metadata']['params']['function_calling'] = 'legacy'
+        ctx['metadata']['features'] = {'code_interpreter': True}
+        ctx['event_caller'] = execute_code
+        ns['Config'] = SimpleNamespace(
+            get=AsyncMock(
+                side_effect=lambda key: {'code_interpreter.enable': True, 'code_interpreter.engine': 'pyodide'}[key]
+            )
+        )
+        ns['sanitize_code'] = lambda code: code
+        ns['CODE_INTERPRETER_BLOCKED_MODULES'] = []
+        ns['DEFAULT_CODE_INTERPRETER_TAGS'] = [('<code_interpreter>', '</code_interpreter>')]
+        ns['re'] = re
+        load_functions(ns, 'utils/middleware.py', {'_start_tag_pattern'})
+        code = '<code_interpreter type="code">print("synthetic code")'
+        ns['generate_chat_completion'] = AsyncMock(
+            side_effect=[
+                response_for(
+                    [
+                        chat_chunk(code if interrupted else code + '</code_interpreter>'),
+                        ConnectionResetError('reset before code is complete') if interrupted else 'data: [DONE]\n\n',
+                    ]
+                ),
+                response_for([chat_chunk('Code finished', 'stop'), 'data: [DONE]\n\n']),
+            ]
+        )
+
+    await runtime.run([tool_call_chunk()], setup=setup)
+    if interrupted:
+        execute_code.assert_not_awaited()
+        runtime.ns['generate_chat_completion'].assert_awaited_once()
+        assert runtime.saved['output'][-1]['status'] == 'incomplete'
+        assert runtime.saved['error']['content'] == 'reset before code is complete'
+    else:
+        execute_code.assert_awaited_once()
+        assert runtime.ns['generate_chat_completion'].await_count == 2
+        assert runtime.saved.get('error') is None
+        assert runtime.ns['get_output_text'](runtime.saved['output']).endswith('Code finished')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('completed', [False, True])
+async def test_real_chunked_http_interruption_after_tool_result(runtime, completed):
+    """Use aiohttp's real parser, with no terminating zero-length HTTP chunk."""
+    release_connection = asyncio.Event()
+    server_finished = asyncio.Event()
+
+    async def serve(reader, writer):
+        try:
+            await reader.readuntil(b'\r\n\r\n')
+            body = f'data: {json.dumps(chat_chunk("Wire answer"))}\n\n'.encode()
+            if completed:
+                body += b'data: [DONE]\n\n'
+            writer.write(
+                b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n'
+                + f'{len(body):x}\r\n'.encode()
+                + body
+                + b'\r\n'
+            )
+            await writer.drain()
+            await release_connection.wait()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            server_finished.set()
+
+    transport = {'CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE': None, 'log': logging.getLogger(__name__)}
+    load_functions(transport, 'utils/misc.py', {'stream_chunks_handler'})
+    load_functions(transport, 'utils/session_pool.py', {'stream_wrapper', 'cleanup_response'})
+    server = await asyncio.start_server(serve, '127.0.0.1', 0)
+    upstream_responses = []
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+
+            async def send(*args, **kwargs):
+                response = await session.get(f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}')
+                upstream_responses.append(response)
+
+                async def body():
+                    source = transport['stream_wrapper'](response)
+                    try:
+                        async for line in source:
+                            try:
+                                yield line
+                            finally:
+                                if not completed or line.strip() == b'data: [DONE]':
+                                    release_connection.set()
+                    finally:
+                        await source.aclose()
+
+                return StreamingResponse(body())
+
+            def setup(ctx, ns, response_for):
+                ns['generate_chat_completion'] = AsyncMock(side_effect=send)
+
+            await runtime.run([tool_call_chunk()], setup=setup)
+    finally:
+        release_connection.set()
+        server.close()
+        await server.wait_closed()
+        if upstream_responses:
+            await asyncio.wait_for(server_finished.wait(), timeout=5)
+
+    assert len(upstream_responses) == 1
+    assert upstream_responses[0].closed
+    runtime.ns['execute_tool_call'].assert_awaited_once()
+    assert runtime.ns['get_output_text'](runtime.saved['output']) == 'Wire answer'
+    assert runtime.saved['done'] is True
+    if completed:
+        assert runtime.saved.get('error') is None
+    else:
+        assert 'Response payload is not completed' in runtime.saved['error']['content']
+        assert runtime.saved['output'][-1]['status'] == 'incomplete'
 
 
 @pytest.mark.asyncio

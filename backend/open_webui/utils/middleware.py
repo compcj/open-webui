@@ -5453,6 +5453,7 @@ async def streaming_chat_response_handler(response, ctx):
             finish_reason = None
             last_response_id = None
             stream_error_reported = bool(continuing and (message or {}).get('error'))
+            stream_interrupted = False
 
             def full_output():
                 if (
@@ -5567,6 +5568,7 @@ async def streaming_chat_response_handler(response, ctx):
                     nonlocal output
                     nonlocal prior_output
                     nonlocal last_response_id
+                    nonlocal stream_interrupted
 
                     response_tool_calls = []
                     round_tool_call_ids = {}
@@ -5710,7 +5712,37 @@ async def streaming_chat_response_handler(response, ctx):
 
                     filter_extra_params = {'__body__': form_data, **extra_params} if filter_functions else None
 
-                    async for line in response.body_iterator:
+                    response_iterator = response.body_iterator.__aiter__()
+                    while True:
+                        try:
+                            line = await anext(response_iterator)
+                        except StopAsyncIteration:
+                            break
+                        except Exception:
+                            stream_interrupted = True
+                            log.exception('Provider response stream interrupted')
+                            # A transport failure must not discard buffered text or leave
+                            # the first stream unsaved. Preserve tool results from earlier
+                            # rounds, but never finalize/execute this round's partial calls.
+                            await flush_pending_delta_data()
+                            for item in output:
+                                if item.get('status') == 'in_progress':
+                                    item['status'] = 'incomplete'
+                            interrupted_output = full_output()
+                            if save_to_chat:
+                                await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                    metadata['chat_id'],
+                                    metadata['message_id'],
+                                    {
+                                        'done': True,
+                                        'output': interrupted_output,
+                                        **({'usage': usage} if usage else {}),
+                                    },
+                                )
+                            await event_emitter({'type': 'chat:completion', 'data': {'output': interrupted_output}})
+                            await clear_response_stream(request.app.state.redis, response_stream_task_id)
+                            raise
+
                         line = line.decode('utf-8', 'replace') if isinstance(line, bytes) else line
                         data = line
 
@@ -5735,6 +5767,14 @@ async def streaming_chat_response_handler(response, ctx):
 
                         # Remove the "data:" prefix
                         data = data[5:].strip()
+
+                        if data == '[DONE]':
+                            # SSE completion is independent of HTTP EOF. Some gateways
+                            # leave the connection open or reset it after the final event.
+                            close = getattr(response_iterator, 'aclose', None)
+                            if close is not None:
+                                await close()
+                            break
 
                         try:
                             data = JSONCodec.loads(data)
@@ -7104,7 +7144,7 @@ async def streaming_chat_response_handler(response, ctx):
                     error_content = f'Tool-call limit reached ({max_tool_call_iterations} iterations).'
                     await emit_message_error(error_content)
 
-                if DETECT_CODE_INTERPRETER:
+                if DETECT_CODE_INTERPRETER and not stream_interrupted:
                     MAX_RETRIES = 5
                     retries = 0
 
