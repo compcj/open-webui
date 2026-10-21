@@ -1877,8 +1877,7 @@ async def chat_completion(
 
             # Per-model metadata: own message_id + model
             per_model_metadata = {
-                **metadata,
-                'chat_context': copy.deepcopy(metadata['chat_context']),
+                **copy.deepcopy(metadata),
                 'message_id': assistant_message_id,
                 'task_id': str(uuid4()),
             }
@@ -1890,7 +1889,7 @@ async def chat_completion(
 
             # Per-model form_data: own model
             model_form_data = {
-                **form_data,
+                **copy.deepcopy(form_data),
                 'model': target_model_id,
                 'metadata': per_model_metadata,
             }
@@ -1898,10 +1897,31 @@ async def chat_completion(
             # Resolve the model object for this specific model
             resolved_model = request.app.state.MODELS.get(target_model_id, model)
 
+            # Each reply owns its mutable pipeline state. Sharing the HTTP request
+            # lets concurrent models overwrite V2 branch identity, retries and caches.
+            model_request = Request(
+                {
+                    **request.scope,
+                    'state': {
+                        **(request.scope.get('state') or {}),
+                        'metadata': per_model_metadata,
+                        'model_id': target_model_id,
+                        'chat_context': per_model_metadata['chat_context'],
+                    },
+                },
+                receive=request.receive,
+            )
+            if hasattr(request, '_body'):
+                # Plugins may read the body already consumed by FastAPI. Retain
+                # immutable bytes; let each request parse its own mutable JSON.
+                model_request._body = request._body
+            if getattr(request.state, 'direct', False):
+                model_request.state.model = copy.deepcopy(request.state.model)
+
             # Only the first model runs chat-level background tasks;
             # subsequent models only run follow-ups.
             process = process_chat(
-                request,
+                model_request,
                 model_form_data,
                 user,
                 per_model_metadata,
