@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Stovna úr hesum kjattinum ein terminalførleika, sum kann nýtast aftur.",
 	"Create Account": "Stovna kontu",
 	"Create Admin Account": "Stovna fyrisitarakontu",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Stovna kunngerðir, sum verða vístar brúkarum í appini.",
 	"Create Channel": "Stovna rás",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Vitanarkelda stovnað.",
 	"Knowledge source updated.": "Vitanarkelda dagførd.",
 	"Knowledge updated successfully": "Vitanin varð dagførd",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (kagi)",
 	"Last 24 hours": "Seinastu 24 tímarnar",
 	"Last 30 days": "Seinastu 30 dagarnar",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Myndagerð",
 	"settings.admin.models.builtinTools.knowledge.description": "Kaga í og spyr vitanargrunnar",
 	"settings.admin.models.builtinTools.knowledge.label": "Vitanargrunnur",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Leita í og umsita brúkaraminni",
 	"settings.admin.models.builtinTools.memory.label": "Minni",
 	"settings.admin.models.builtinTools.notes.description": "Leita í, vís og umsita brúkaraviðmerkingar",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube-videospælari",
 	"Zoom in": "Zooma inn",
-	"Zoom out": "Zooma út",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zooma út"
 }

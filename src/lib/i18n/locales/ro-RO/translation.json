@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Creează o abilitate de terminal reutilizabilă din această conversație.",
 	"Create Account": "Creează Cont",
 	"Create Admin Account": "Creează cont de administrator",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Creează anunțuri afișate utilizatorilor în aplicație.",
 	"Create Channel": "Creează canal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Sursa de cunoștințe a fost creată.",
 	"Knowledge source updated.": "Sursa de cunoștințe a fost actualizată.",
 	"Knowledge updated successfully": "Cunoașterea a fost actualizată cu succes",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (browser)",
 	"Last 24 hours": "Ultimele 24 de ore",
 	"Last 30 days": "Ultimele 30 de zile",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generare de imagini",
 	"settings.admin.models.builtinTools.knowledge.description": "Răsfoiește și interoghează bazele de cunoștințe",
 	"settings.admin.models.builtinTools.knowledge.label": "Bază de cunoștințe",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Caută și gestionează memoriile utilizatorului",
 	"settings.admin.models.builtinTools.memory.label": "Memorie",
 	"settings.admin.models.builtinTools.notes.description": "Caută, vizualizează și gestionează notele utilizatorului",
@@ -4210,10 +4215,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Player video YouTube",
 	"Zoom in": "Mărește",
-	"Zoom out": "Micșorează",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Micșorează"
 }

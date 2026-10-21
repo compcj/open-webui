@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Создать переиспользуемый навык для терминала на основе этого чата.",
 	"Create Account": "Создать аккаунт",
 	"Create Admin Account": "Создать аккаунт Администратора",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Создавайте объявления, показываемые пользователям в приложении.",
 	"Create Channel": "Создать канал",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Источник знаний создан.",
 	"Knowledge source updated.": "Источник знаний обновлён.",
 	"Knowledge updated successfully": "Знания успешно обновлены",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Браузер)",
 	"Last 24 hours": "Последние 24 часа",
 	"Last 30 days": "Последние 30 дней",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Генерация изображений",
 	"settings.admin.models.builtinTools.knowledge.description": "Обзор и запрос баз знаний",
 	"settings.admin.models.builtinTools.knowledge.label": "База знаний",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Поиск и управление воспоминаниями пользователя",
 	"settings.admin.models.builtinTools.memory.label": "Воспоминания",
 	"settings.admin.models.builtinTools.notes.description": "Поиск, просмотр и управление заметками пользователя",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Видеоплеер YouTube",
 	"Zoom in": "Увеличить",
-	"Zoom out": "Уменьшить",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Уменьшить"
 }

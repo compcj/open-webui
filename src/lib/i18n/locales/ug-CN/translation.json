@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "بۇ سۆھبەتتىن قايتا ئىشلىتىشكە بولىدىغان تېرمىنال ماھارىتى قۇرۇڭ.",
 	"Create Account": "ھېساب قۇرۇش",
 	"Create Admin Account": "باشقۇرغۇچى ھېساباتى قۇرۇش",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "ئەپتە ئىشلەتكۈچىلەرگە كۆرسىتىلىدىغان ئېلانلارنى قۇرۇڭ.",
 	"Create Channel": "قانال قۇرۇش",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "بىلىم مەنبەسى قۇرۇلدى.",
 	"Knowledge source updated.": "بىلىم مەنبەسى يېڭىلاندى.",
 	"Knowledge updated successfully": "بىلىم مۇۋەپپەقىيەتلىك يېڭىلاندى",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (تور كۆرگۈچ)",
 	"Last 24 hours": "ئاخىرقى 24 سائەت",
 	"Last 30 days": "ئاخىرقى 30 كۈن",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "رەسىم ھاسىل قىلىش",
 	"settings.admin.models.builtinTools.knowledge.description": "بىلىم ئاساسلىرىنى كۆرىدۇ ۋە ئۇلاردىن سۇئال سورايدۇ",
 	"settings.admin.models.builtinTools.knowledge.label": "بىلىم ئاساسى",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "ئىشلەتكۈچى ئەسلەتمىلىرىنى ئىزدەيدۇ ۋە باشقۇرىدۇ",
 	"settings.admin.models.builtinTools.memory.label": "ئەسلەتمە",
 	"settings.admin.models.builtinTools.notes.description": "ئىشلەتكۈچى خاتىرىلىرىنى ئىزدەيدۇ، كۆرىدۇ ۋە باشقۇرىدۇ",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube سىن قويغۇچ",
 	"Zoom in": "چوڭايتىش",
-	"Zoom out": "كىچىكلىتىش",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "كىچىكلىتىش"
 }

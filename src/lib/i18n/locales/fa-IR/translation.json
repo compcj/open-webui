@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "یک مهارت ترمینال قابل استفاده مجدد از این گفتگو ایجاد کنید.",
 	"Create Account": "ساخت حساب کاربری",
 	"Create Admin Account": "ایجاد حساب مدیر",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "اطلاعیه\u200cهایی ایجاد کنید که در برنامه به کاربران نمایش داده می\u200cشوند.",
 	"Create Channel": "ایجاد کانال",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "منبع دانش ایجاد شد.",
 	"Knowledge source updated.": "منبع دانش به\u200cروز شد.",
 	"Knowledge updated successfully": "دانش با موفقیت به\u200cروز شد",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (مرورگر)",
 	"Last 24 hours": "24 ساعت گذشته",
 	"Last 30 days": "30 روز گذشته",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "تولید تصویر",
 	"settings.admin.models.builtinTools.knowledge.description": "مرور و پرس\u200cوجو از پایگاه\u200cهای دانش",
 	"settings.admin.models.builtinTools.knowledge.label": "پایگاه دانش",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "جستجو و مدیریت حافظه\u200cهای کاربر",
 	"settings.admin.models.builtinTools.memory.label": "حافظه",
 	"settings.admin.models.builtinTools.notes.description": "جستجو، مشاهده و مدیریت یادداشت\u200cهای کاربر",
@@ -4191,10 +4196,5 @@
 	"YouTube": "یوتیوب",
 	"YouTube video player": "پخش\u200cکننده ویدیوی YouTube",
 	"Zoom in": "بزرگ\u200cنمایی",
-	"Zoom out": "کوچک\u200cنمایی",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "کوچک\u200cنمایی"
 }

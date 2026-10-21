@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Kreiraj terminalsku vještinu za višekratnu upotrebu iz ovog razgovora.",
 	"Create Account": "Stvori račun",
 	"Create Admin Account": "Kreiraj administratorski račun",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Kreirajte obavještenja koja se prikazuju korisnicima u aplikaciji.",
 	"Create Channel": "Kreiraj kanal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Izvor znanja kreiran.",
 	"Knowledge source updated.": "Izvor znanja ažuriran.",
 	"Knowledge updated successfully": "Znanje uspješno ažurirano",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Preglednik)",
 	"Last 24 hours": "Posljednja 24 sata",
 	"Last 30 days": "Posljednjih 30 dana",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generiranje slika",
 	"settings.admin.models.builtinTools.knowledge.description": "Pregledajte i pretražujte baze znanja",
 	"settings.admin.models.builtinTools.knowledge.label": "Baza znanja",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Pretraži i upravljaj korisničkim memorijama",
 	"settings.admin.models.builtinTools.memory.label": "Memorija",
 	"settings.admin.models.builtinTools.notes.description": "Pretraži, pregledaj i upravljaj korisničkim bilješkama",
@@ -4210,10 +4215,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube video reproduktor",
 	"Zoom in": "Povećaj",
-	"Zoom out": "Smanji",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Smanji"
 }

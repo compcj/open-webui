@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Snulfu-d seg udiwenni-agi tamhart n uterminal i izemren ad tettwaseqdec tikkelt nniḍen.",
 	"Create Account": "Snulfu-d amiḍan",
 	"Create Admin Account": "Snulfu-d amiḍan n unedbal",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Snulfu-d ilɣa ara d-yettwaskanen i yiseqdacen deg usnas.",
 	"Create Channel": "Snulfu-d abadu",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Aɣbalu n tmussni yennulfa-d.",
 	"Knowledge source updated.": "Aɣbalu n tmussni yettwaleqqem.",
 	"Knowledge updated successfully": "Timussniwin ttwaleqqment akken iwata",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Iminig)",
 	"Last 24 hours": "24 n yisragen ineggura",
 	"Last 30 days": "30 n wussan ineggura",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Asirew n tugniwin",
 	"settings.admin.models.builtinTools.knowledge.description": "Snirem tiffa n tmussni u azen-asent tuttriwin",
 	"settings.admin.models.builtinTools.knowledge.label": "Taffa n tmusni",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Nadi u sefrek ismektiyen n useqdac",
 	"settings.admin.models.builtinTools.memory.label": "Takatut",
 	"settings.admin.models.builtinTools.notes.description": "Nadi, sken u sefrek tizmilin n useqdac",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Ameɣri n uvidyu YouTube",
 	"Zoom in": "Semɣer",
-	"Zoom out": "Semẓi",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Semẓi"
 }

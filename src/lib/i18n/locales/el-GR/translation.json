@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Δημιουργία επαναχρησιμοποιήσιμης δεξιότητας τερματικού από αυτή τη συνομιλία.",
 	"Create Account": "Δημιουργία Λογαριασμού",
 	"Create Admin Account": "Δημιουργία Λογαριασμού Διαχειριστή",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Δημιουργήστε ανακοινώσεις που εμφανίζονται στους χρήστες μέσα στην εφαρμογή.",
 	"Create Channel": "Δημιουργία Καναλιού",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Η πηγή γνώσης δημιουργήθηκε.",
 	"Knowledge source updated.": "Η πηγή γνώσης ενημερώθηκε.",
 	"Knowledge updated successfully": "Το Knowledge ενημερώθηκε με επιτυχία",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (περιηγητής)",
 	"Last 24 hours": "Τελευταίες 24 ώρες",
 	"Last 30 days": "Τελευταίες 30 ημέρες",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Δημιουργία Εικόνας",
 	"settings.admin.models.builtinTools.knowledge.description": "Περιήγηση και υποβολή ερωτημάτων σε βάσεις γνώσης",
 	"settings.admin.models.builtinTools.knowledge.label": "Βάση Knowledge",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Αναζήτηση και διαχείριση των μνημών του χρήστη",
 	"settings.admin.models.builtinTools.memory.label": "Μνήμη",
 	"settings.admin.models.builtinTools.notes.description": "Αναζήτηση, προβολή και διαχείριση των σημειώσεων του χρήστη",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Πρόγραμμα αναπαραγωγής βίντεο YouTube",
 	"Zoom in": "Μεγέθυνση",
-	"Zoom out": "Σμίκρυνση",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Σμίκρυνση"
 }

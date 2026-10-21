@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Crear unha habilidade de terminal reutilizable a partir deste chat.",
 	"Create Account": "Xerar unha conta",
 	"Create Admin Account": "Xerar conta administrativa",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Crea anuncios que se mostran aos usuarios na aplicación.",
 	"Create Channel": "Xerar Canal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Fonte de coñecemento creada.",
 	"Knowledge source updated.": "Fonte de coñecemento actualizada.",
 	"Knowledge updated successfully": "coñecemento actualizado exitosamente.",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro .js (Navegador)",
 	"Last 24 hours": "Últimas 24 horas",
 	"Last 30 days": "Últimos 30 días",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "xeneración de imaxes",
 	"settings.admin.models.builtinTools.knowledge.description": "Explorar e consultar bases de coñecementos",
 	"settings.admin.models.builtinTools.knowledge.label": "Base de coñecementos",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Buscar e xestionar as memorias do usuario",
 	"settings.admin.models.builtinTools.memory.label": "Memoria",
 	"settings.admin.models.builtinTools.notes.description": "Buscar, ver e xestionar as notas do usuario",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Reprodutor de vídeo de YouTube",
 	"Zoom in": "Ampliar",
-	"Zoom out": "Reducir",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Reducir"
 }

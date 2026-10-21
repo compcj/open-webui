@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Újrahasználható terminálkészség létrehozása ebből a beszélgetésből.",
 	"Create Account": "Fiók létrehozása",
 	"Create Admin Account": "Admin fiók létrehozása",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Az alkalmazásban a felhasználóknak megjelenő közlemények létrehozása.",
 	"Create Channel": "Csatorna létrehozása",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Tudásforrás létrehozva.",
 	"Knowledge source updated.": "Tudásforrás frissítve.",
 	"Knowledge updated successfully": "Tudásbázis sikeresen frissítve",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Böngésző)",
 	"Last 24 hours": "Elmúlt 24 óra",
 	"Last 30 days": "Elmúlt 30 nap",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Képgenerálás",
 	"settings.admin.models.builtinTools.knowledge.description": "Tudásbázisok böngészése és lekérdezése",
 	"settings.admin.models.builtinTools.knowledge.label": "Tudásbázis",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Felhasználói emlékek keresése és kezelése",
 	"settings.admin.models.builtinTools.memory.label": "Memória",
 	"settings.admin.models.builtinTools.notes.description": "Felhasználói jegyzetek keresése, megtekintése és kezelése",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube-videólejátszó",
 	"Zoom in": "Nagyítás",
-	"Zoom out": "Kicsinyítés",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Kicsinyítés"
 }

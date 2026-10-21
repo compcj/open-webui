@@ -665,6 +665,7 @@
 	"Create a reusable terminal skill from this chat.": "Tạo kỹ năng terminal có thể tái sử dụng từ chat này.",
 	"Create Account": "Tạo Tài khoản",
 	"Create Admin Account": "Tạo Tài khoản Quản trị",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Tạo các thông báo hiển thị cho người dùng trong ứng dụng.",
 	"Create Channel": "Tạo Kênh",
 	"Create copy": "",
@@ -1559,6 +1560,8 @@
 	"Knowledge source created.": "Đã tạo nguồn kiến thức.",
 	"Knowledge source updated.": "Đã cập nhật nguồn kiến thức.",
 	"Knowledge updated successfully": "Đã cập nhật kiến thức thành công",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Trình duyệt)",
 	"Last 24 hours": "24 giờ qua",
 	"Last 30 days": "30 ngày qua",
@@ -3055,6 +3058,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Tạo Ảnh",
 	"settings.admin.models.builtinTools.knowledge.description": "Duyệt và truy vấn các cơ sở kiến thức",
 	"settings.admin.models.builtinTools.knowledge.label": "Cơ sở kiến thức",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Tìm kiếm và quản lý bộ nhớ của người dùng",
 	"settings.admin.models.builtinTools.memory.label": "Memory",
 	"settings.admin.models.builtinTools.notes.description": "Tìm kiếm, xem và quản lý ghi chú của người dùng",
@@ -4172,10 +4177,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Trình phát video YouTube",
 	"Zoom in": "Phóng to",
-	"Zoom out": "Thu nhỏ",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Thu nhỏ"
 }

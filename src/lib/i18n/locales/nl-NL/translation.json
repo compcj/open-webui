@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Maak op basis van deze chat een herbruikbare terminalvaardigheid.",
 	"Create Account": "Maak account",
 	"Create Admin Account": "Maak admin-account",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Maak aankondigingen aan die aan gebruikers in de app worden getoond.",
 	"Create Channel": "Maak kanaal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Kennisbron aangemaakt.",
 	"Knowledge source updated.": "Kennisbron bijgewerkt.",
 	"Knowledge updated successfully": "Kennis succesvol bijgewerkt",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Laatste 24 uur",
 	"Last 30 days": "Laatste 30 dagen",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Afbeeldingsgeneratie",
 	"settings.admin.models.builtinTools.knowledge.description": "Kennisbanken doorzoeken en bevragen",
 	"settings.admin.models.builtinTools.knowledge.label": "Kennisbank",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Gebruikersherinneringen zoeken en beheren",
 	"settings.admin.models.builtinTools.memory.label": "Geheugen",
 	"settings.admin.models.builtinTools.notes.description": "Gebruikersnotities zoeken, bekijken en beheren",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube-videospeler",
 	"Zoom in": "Inzoomen",
-	"Zoom out": "Uitzoomen",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Uitzoomen"
 }

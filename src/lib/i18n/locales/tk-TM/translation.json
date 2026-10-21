@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Bu çatdan gaýtadan ulanyp boljak terminal başarnygy döret.",
 	"Create Account": "Hasap döret",
 	"Create Admin Account": "Admin Hasaby Döret",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Programmada ulanyjylara görkezilýän yglanlary dörediň.",
 	"Create Channel": "Kanal Döret",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Bilim çeşmesi döredildi.",
 	"Knowledge source updated.": "Bilim çeşmesi täzelendi.",
 	"Knowledge updated successfully": "Bilim üstünlikli täzelendi",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Brauzer)",
 	"Last 24 hours": "Soňky 24 sagat",
 	"Last 30 days": "Soňky 30 gün",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Surat Döretme",
 	"settings.admin.models.builtinTools.knowledge.description": "Bilim bazalaryna göz aýlaň we sorag iberiň",
 	"settings.admin.models.builtinTools.knowledge.label": "Bilim Bazasy",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Ulanyjynyň ýatlaryny gözläň we dolandyryň",
 	"settings.admin.models.builtinTools.memory.label": "Ýat",
 	"settings.admin.models.builtinTools.notes.description": "Ulanyjynyň belliklerini gözläň, görüň we dolandyryň",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube wideo pleýer",
 	"Zoom in": "Ulalt",
-	"Zoom out": "Kiçelt",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Kiçelt"
 }

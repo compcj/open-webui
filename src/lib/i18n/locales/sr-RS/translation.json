@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Направите вештину терминала за вишекратну употребу из овог ћаскања.",
 	"Create Account": "Направи налог",
 	"Create Admin Account": "Направи админ налог",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Направите обавештења која се приказују корисницима у апликацији.",
 	"Create Channel": "Направи канал",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Извор знања је направљен.",
 	"Knowledge source updated.": "Извор знања је ажуриран.",
 	"Knowledge updated successfully": "Знање је успешно ажурирано",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (прегледач)",
 	"Last 24 hours": "Последња 24 сата",
 	"Last 30 days": "Последњих 30 дана",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Стварање слике",
 	"settings.admin.models.builtinTools.knowledge.description": "Прегледа и претражује базе знања",
 	"settings.admin.models.builtinTools.knowledge.label": "База знања",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Претражује сећања корисника и управља њима",
 	"settings.admin.models.builtinTools.memory.label": "Сећања",
 	"settings.admin.models.builtinTools.notes.description": "Претражује и приказује белешке корисника и управља њима",
@@ -4210,10 +4215,5 @@
 	"YouTube": "Јутјуб",
 	"YouTube video player": "YouTube видео плејер",
 	"Zoom in": "Увећај",
-	"Zoom out": "Умањи",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Умањи"
 }

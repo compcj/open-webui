@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Créer une compétence de terminal réutilisable à partir de cette conversation.",
 	"Create Account": "Créer un compte",
 	"Create Admin Account": "Créer un compte administrateur",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Créer des annonces affichées aux utilisateurs dans l'application.",
 	"Create Channel": "Créer un canal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Source de connaissances créée.",
 	"Knowledge source updated.": "Source de connaissances mise à jour.",
 	"Knowledge updated successfully": "Connaissance mise à jour avec succès",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Navigateur)",
 	"Last 24 hours": "Dernières 24 heures",
 	"Last 30 days": "30 derniers jours",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Génération d'image",
 	"settings.admin.models.builtinTools.knowledge.description": "Parcourir et interroger les bases de connaissances",
 	"settings.admin.models.builtinTools.knowledge.label": "Base de connaissances",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Rechercher et gérer les éléments mémorisés de l'utilisateur",
 	"settings.admin.models.builtinTools.memory.label": "Mémoire",
 	"settings.admin.models.builtinTools.notes.description": "Rechercher, afficher et gérer les notes de l'utilisateur",
@@ -4210,10 +4215,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Lecteur vidéo YouTube",
 	"Zoom in": "Zoom avant",
-	"Zoom out": "Zoom arrière",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zoom arrière"
 }

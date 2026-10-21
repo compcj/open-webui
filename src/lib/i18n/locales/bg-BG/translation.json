@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Създаване на терминално умение за многократна употреба от този чат.",
 	"Create Account": "Създаване на Акаунт",
 	"Create Admin Account": "Създаване на администраторски акаунт",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Създавайте съобщения, които се показват на потребителите в приложението.",
 	"Create Channel": "Създаване на канал",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Източникът на знания е създаден.",
 	"Knowledge source updated.": "Източникът на знания е актуализиран.",
 	"Knowledge updated successfully": "Знанието е актуализирано успешно",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Браузър)",
 	"Last 24 hours": "Последните 24 часа",
 	"Last 30 days": "Последните 30 дни",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Генериране на изображения",
 	"settings.admin.models.builtinTools.knowledge.description": "Преглеждайте и търсете в бази от знания",
 	"settings.admin.models.builtinTools.knowledge.label": "База знания",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Търсене и управление на потребителските спомени",
 	"settings.admin.models.builtinTools.memory.label": "Памет",
 	"settings.admin.models.builtinTools.notes.description": "Търсене, преглед и управление на потребителските бележки",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Видео плейър на YouTube",
 	"Zoom in": "Увеличаване",
-	"Zoom out": "Намаляване",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Намаляване"
 }

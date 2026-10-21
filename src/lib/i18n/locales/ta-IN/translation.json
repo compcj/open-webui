@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "இந்த அரட்டையிலிருந்து மீண்டும் பயன்படுத்தக்கூடிய டெர்மினல் திறனை உருவாக்கவும்.",
 	"Create Account": "கணக்கை உருவாக்கவும்",
 	"Create Admin Account": "நிர்வாகி கணக்கை உருவாக்கவும்",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "செயலியில் பயனர்களுக்குக் காட்டப்படும் அறிவிப்புகளை உருவாக்கவும்.",
 	"Create Channel": "சேனலை உருவாக்கவும்",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "அறிவு ஆதாரம் உருவாக்கப்பட்டது.",
 	"Knowledge source updated.": "அறிவு ஆதாரம் புதுப்பிக்கப்பட்டது.",
 	"Knowledge updated successfully": "அறிவு வெற்றிகரமாக புதுப்பிக்கப்பட்டது",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (உலாவி)",
 	"Last 24 hours": "கடந்த 24 மணிநேரம்",
 	"Last 30 days": "கடந்த 30 நாட்கள்",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "பட உருவாக்கம்",
 	"settings.admin.models.builtinTools.knowledge.description": "அறிவுத் தளங்களை உலாவவும் மற்றும் வினவவும்",
 	"settings.admin.models.builtinTools.knowledge.label": "அறிவுத் தளம்",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "பயனர் நினைவுகளைத் தேடி நிர்வகிக்கவும்",
 	"settings.admin.models.builtinTools.memory.label": "நினைவகம்",
 	"settings.admin.models.builtinTools.notes.description": "பயனர் குறிப்புகளைத் தேடவும், பார்க்கவும் மற்றும் நிர்வகிக்கவும்",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube வீடியோ பிளேயர்",
 	"Zoom in": "பெரிதாக்கவும்",
-	"Zoom out": "சிறிதாக்கவும்",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "சிறிதாக்கவும்"
 }

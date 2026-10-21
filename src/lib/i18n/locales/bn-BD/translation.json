@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "এই চ্যাট থেকে পুনরায় ব্যবহারযোগ্য একটি টার্মিনাল স্কিল তৈরি করুন।",
 	"Create Account": "একাউন্ট তৈরি করুন",
 	"Create Admin Account": "প্রশাসকের অ্যাকাউন্ট তৈরি করুন",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "অ্যাপে ব্যবহারকারীদের দেখানোর জন্য ঘোষণা তৈরি করুন।",
 	"Create Channel": "চ্যানেল তৈরি করুন",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "জ্ঞানের উৎস তৈরি হয়েছে।",
 	"Knowledge source updated.": "জ্ঞানের উৎস আপডেট হয়েছে।",
 	"Knowledge updated successfully": "জ্ঞান সফলভাবে আপডেট হয়েছে",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (ব্রাউজার)",
 	"Last 24 hours": "গত 24 ঘণ্টা",
 	"Last 30 days": "গত 30 দিন",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "ছবি তৈরি",
 	"settings.admin.models.builtinTools.knowledge.description": "জ্ঞানভান্ডার ব্রাউজ করুন ও প্রশ্ন করুন",
 	"settings.admin.models.builtinTools.knowledge.label": "জ্ঞানভান্ডার",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "ব্যবহারকারীর মেমোরি অনুসন্ধান ও পরিচালনা করুন",
 	"settings.admin.models.builtinTools.memory.label": "মেমোরি",
 	"settings.admin.models.builtinTools.notes.description": "ব্যবহারকারীর নোট অনুসন্ধান, দেখা ও পরিচালনা করুন",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube ভিডিও প্লেয়ার",
 	"Zoom in": "জুম বাড়ান",
-	"Zoom out": "জুম কমান",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "জুম কমান"
 }

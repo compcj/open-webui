@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "",
 	"Create Account": "Hisob yaratish",
 	"Create Admin Account": "Administrator hisobini yarating",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "",
 	"Create Channel": "Kanal yaratish",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "",
 	"Knowledge source updated.": "",
 	"Knowledge updated successfully": "Bilim muvaffaqiyatli yangilandi",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (brauzer)",
 	"Last 24 hours": "",
 	"Last 30 days": "",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Tasvir yaratish",
 	"settings.admin.models.builtinTools.knowledge.description": "",
 	"settings.admin.models.builtinTools.knowledge.label": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "",
 	"settings.admin.models.builtinTools.memory.label": "Xotira",
 	"settings.admin.models.builtinTools.notes.description": "",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "",
 	"Zoom in": "",
-	"Zoom out": "",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": ""
 }

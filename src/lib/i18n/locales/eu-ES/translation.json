@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Sortu terminal-trebetasun berrerabilgarri bat txat honetatik.",
 	"Create Account": "Sortu Kontua",
 	"Create Admin Account": "Sortu Administratzaile Kontua",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Sortu erabiltzaileek aplikazioan ikusiko dituzten iragarkiak.",
 	"Create Channel": "Sortu kanala",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Ezagutza-iturria sortu da.",
 	"Knowledge source updated.": "Ezagutza-iturria eguneratu da.",
 	"Knowledge updated successfully": "Ezagutza ongi eguneratu da.",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (arakatzailea)",
 	"Last 24 hours": "Azken 24 orduak",
 	"Last 30 days": "Azken 30 egunak",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Irudiak sortzea",
 	"settings.admin.models.builtinTools.knowledge.description": "Arakatu eta kontsultatu ezagutza-baseak",
 	"settings.admin.models.builtinTools.knowledge.label": "Ezagutza-basea",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Bilatu eta kudeatu erabiltzaileen memoriak",
 	"settings.admin.models.builtinTools.memory.label": "Memoria",
 	"settings.admin.models.builtinTools.notes.description": "Bilatu, ikusi eta kudeatu erabiltzaileen oharrak",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube bideo-erreproduzitzailea",
 	"Zoom in": "Handitu zooma",
-	"Zoom out": "Txikitu zooma",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Txikitu zooma"
 }

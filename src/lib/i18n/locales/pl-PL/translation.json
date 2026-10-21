@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Utwórz z tego czatu umiejętność terminala wielokrotnego użytku.",
 	"Create Account": "Utwórz konto",
 	"Create Admin Account": "Utwórz konto administratora",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Twórz ogłoszenia wyświetlane użytkownikom w aplikacji.",
 	"Create Channel": "Utwórz kanał",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Źródło wiedzy zostało utworzone.",
 	"Knowledge source updated.": "Źródło wiedzy zostało zaktualizowane.",
 	"Knowledge updated successfully": "Wiedza zaktualizowana pomyślnie",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Przeglądarka)",
 	"Last 24 hours": "Ostatnie 24 godziny",
 	"Last 30 days": "Ostatnie 30 dni",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generowanie obrazu",
 	"settings.admin.models.builtinTools.knowledge.description": "Przeglądaj i przeszukuj bazy wiedzy",
 	"settings.admin.models.builtinTools.knowledge.label": "Baza wiedzy",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Wyszukuj i zarządzaj wspomnieniami użytkowników",
 	"settings.admin.models.builtinTools.memory.label": "Pamięć",
 	"settings.admin.models.builtinTools.notes.description": "Wyszukuj, przeglądaj i zarządzaj notatkami użytkowników",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Odtwarzacz wideo YouTube",
 	"Zoom in": "Powiększ",
-	"Zoom out": "Pomniejsz",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Pomniejsz"
 }

@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Cruthaigh scil teirminéil in-athúsáidte ón gcomhrá seo.",
 	"Create Account": "Cruthaigh Cuntas",
 	"Create Admin Account": "Cruthaigh Cuntas Riaracháin",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Cruthaigh fógraí a thaispeántar d'úsáideoirí san aip.",
 	"Create Channel": "Cruthaigh Cainéal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Foinse eolais cruthaithe.",
 	"Knowledge source updated.": "Foinse eolais nuashonraithe.",
 	"Knowledge updated successfully": "D'éirigh leis an eolas a nuashonrú",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Brabhsálaí)",
 	"Last 24 hours": "24 uair an chloig seo caite",
 	"Last 30 days": "30 lá seo caite",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Giniúint Íomhá",
 	"settings.admin.models.builtinTools.knowledge.description": "Brabhsáil agus fiosraigh bunachair eolais",
 	"settings.admin.models.builtinTools.knowledge.label": "Bunachar Eolais",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Cuardaigh agus bainistigh cuimhní úsáideora",
 	"settings.admin.models.builtinTools.memory.label": "Cuimhne",
 	"settings.admin.models.builtinTools.notes.description": "Cuardaigh, féach ar agus bainistigh nótaí úsáideora",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Seinnteoir físe YouTube",
 	"Zoom in": "Zúmáil isteach",
-	"Zoom out": "Zúmáil amach",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zúmáil amach"
 }

@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Bu sohbetten yeniden kullanılabilir bir terminal becerisi oluştur.",
 	"Create Account": "Hesap Oluştur",
 	"Create Admin Account": "Yönetici Hesabı Oluştur",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Uygulamada kullanıcılara gösterilecek duyurular oluşturun.",
 	"Create Channel": "Kanal Oluştur",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Bilgi kaynağı oluşturuldu.",
 	"Knowledge source updated.": "Bilgi kaynağı güncellendi.",
 	"Knowledge updated successfully": "Bilgi başarıyla güncellendi",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Tarayıcı)",
 	"Last 24 hours": "Son 24 saat",
 	"Last 30 days": "Son 30 gün",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Görüntü Oluşturma",
 	"settings.admin.models.builtinTools.knowledge.description": "Bilgi tabanlarına göz at ve sorgula",
 	"settings.admin.models.builtinTools.knowledge.label": "Bilgi Tabanı",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Kullanıcı anılarını ara ve yönet",
 	"settings.admin.models.builtinTools.memory.label": "Bellek",
 	"settings.admin.models.builtinTools.notes.description": "Kullanıcı notlarını ara, görüntüle ve yönet",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube video oynatıcı",
 	"Zoom in": "Yakınlaştır",
-	"Zoom out": "Uzaklaştır",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Uzaklaştır"
 }

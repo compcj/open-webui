@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "ამ ჩატიდან ქმნის ტერმინალის მრავალჯერადად გამოსაყენებელ უნარს.",
 	"Create Account": "ანგარიშის შექმნა",
 	"Create Admin Account": "ადმინისტრატორის ანგარიშის შექმნა",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "შექმენით განცხადებები, რომლებიც მომხმარებლებს აპლიკაციაში ეჩვენებათ.",
 	"Create Channel": "არხის შექმნა",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "ცოდნის წყარო შეიქმნა.",
 	"Knowledge source updated.": "ცოდნის წყარო განახლდა.",
 	"Knowledge updated successfully": "ცოდნა წარმატებით განახლდა",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (ბრაუზერი)",
 	"Last 24 hours": "ბოლო 24 საათი",
 	"Last 30 days": "ბოლო 30 დღე",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "გამოსახულების გენერაცია",
 	"settings.admin.models.builtinTools.knowledge.description": "ათვალიერებს ცოდნის ბაზებს და მათში ეძებს",
 	"settings.admin.models.builtinTools.knowledge.label": "ცოდნის ბაზა",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "ეძებს და მართავს მომხმარებლის მოგონებებს",
 	"settings.admin.models.builtinTools.memory.label": "მეხსიერება",
 	"settings.admin.models.builtinTools.notes.description": "ეძებს, ათვალიერებს და მართავს მომხმარებლის შენიშვნებს",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube-ის ვიდეოპლეერი",
 	"Zoom in": "გადიდება",
-	"Zoom out": "დაპატარავება",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "დაპატარავება"
 }

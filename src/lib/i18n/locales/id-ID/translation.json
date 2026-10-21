@@ -675,6 +675,7 @@
 	"Create a reusable terminal skill from this chat.": "Buat keahlian terminal yang dapat digunakan kembali dari obrolan ini.",
 	"Create Account": "Buat Akun",
 	"Create Admin Account": "Buat Akun Admin",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Buat pengumuman yang ditampilkan kepada pengguna di aplikasi.",
 	"Create Channel": "Buat Saluran",
 	"Create copy": "",
@@ -1571,6 +1572,8 @@
 	"Knowledge source created.": "Sumber pengetahuan dibuat.",
 	"Knowledge source updated.": "Sumber pengetahuan diperbarui.",
 	"Knowledge updated successfully": "Pengetahuan berhasil diperbarui",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Peramban)",
 	"Last 24 hours": "24 jam terakhir",
 	"Last 30 days": "30 hari terakhir",
@@ -3071,6 +3074,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Pembuatan Gambar",
 	"settings.admin.models.builtinTools.knowledge.description": "Jelajahi dan kueri basis pengetahuan",
 	"settings.admin.models.builtinTools.knowledge.label": "Basis Pengetahuan",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Cari dan kelola memori pengguna",
 	"settings.admin.models.builtinTools.memory.label": "Memori",
 	"settings.admin.models.builtinTools.notes.description": "Cari, lihat, dan kelola catatan pengguna",
@@ -4189,10 +4194,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Pemutar video YouTube",
 	"Zoom in": "Perbesar",
-	"Zoom out": "Perkecil",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Perkecil"
 }

@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Criar uma habilidade de terminal reutilizável a partir desta conversa.",
 	"Create Account": "Criar Conta",
 	"Create Admin Account": "Criar Conta de Administrador",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Criar anúncios mostrados aos utilizadores na aplicação.",
 	"Create Channel": "Criar Canal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Fonte de conhecimento criada.",
 	"Knowledge source updated.": "Fonte de conhecimento atualizada.",
 	"Knowledge updated successfully": "Conhecimento atualizado com sucesso.",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Navegador)",
 	"Last 24 hours": "Últimas 24 horas",
 	"Last 30 days": "Últimos 30 dias",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Geração de Imagem",
 	"settings.admin.models.builtinTools.knowledge.description": "Pesquisar e consultar bases de conhecimento",
 	"settings.admin.models.builtinTools.knowledge.label": "Base de Conhecimento",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Pesquisar e gerir memórias do utilizador",
 	"settings.admin.models.builtinTools.memory.label": "Memória",
 	"settings.admin.models.builtinTools.notes.description": "Pesquisar, visualizar e gerir notas do utilizador",
@@ -4210,10 +4215,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Leitor de vídeo do YouTube",
 	"Zoom in": "Aumentar zoom",
-	"Zoom out": "Diminuir zoom",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Diminuir zoom"
 }

@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Vytvořit z této konverzace opakovaně použitelnou dovednost pro terminál.",
 	"Create Account": "Vytvořit účet",
 	"Create Admin Account": "Vytvořit účet administrátora",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Vytvářejte oznámení zobrazovaná uživatelům v aplikaci.",
 	"Create Channel": "Vytvořit kanál",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Zdroj znalostí byl vytvořen.",
 	"Knowledge source updated.": "Zdroj znalostí byl aktualizován.",
 	"Knowledge updated successfully": "Znalost byla úspěšně aktualizována",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (prohlížeč)",
 	"Last 24 hours": "Posledních 24 hodin",
 	"Last 30 days": "Posledních 30 dní",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generování obrázků",
 	"settings.admin.models.builtinTools.knowledge.description": "Procházejte a prohledávejte znalostní báze",
 	"settings.admin.models.builtinTools.knowledge.label": "Znalostní báze",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Hledat a spravovat vzpomínky uživatelů",
 	"settings.admin.models.builtinTools.memory.label": "Paměť",
 	"settings.admin.models.builtinTools.notes.description": "Hledat, prohlížet a spravovat poznámky uživatelů",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Přehrávač videa YouTube",
 	"Zoom in": "Přiblížit",
-	"Zoom out": "Oddálit",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Oddálit"
 }

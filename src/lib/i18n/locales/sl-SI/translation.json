@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Iz tega pogovora ustvari terminalsko veščino za večkratno uporabo.",
 	"Create Account": "Ustvari račun",
 	"Create Admin Account": "Ustvari skrbniški račun",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Ustvari obvestila, prikazana uporabnikom v aplikaciji.",
 	"Create Channel": "Ustvari kanal",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Vir znanja je ustvarjen.",
 	"Knowledge source updated.": "Vir znanja je posodobljen.",
 	"Knowledge updated successfully": "Baza znanja je uspešno posodobljena",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Zadnjih 24 ur",
 	"Last 30 days": "Zadnjih 30 dni",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Ustvarjanje slik",
 	"settings.admin.models.builtinTools.knowledge.description": "Brskanje in poizvedovanje po bazah znanja",
 	"settings.admin.models.builtinTools.knowledge.label": "Baza znanja",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Search and manage user memories",
 	"settings.admin.models.builtinTools.memory.label": "Pomnilnik",
 	"settings.admin.models.builtinTools.notes.description": "Search, view, and manage user notes",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Predvajalnik videoposnetkov YouTube",
 	"Zoom in": "Povečaj",
-	"Zoom out": "Pomanjšaj",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Pomanjšaj"
 }

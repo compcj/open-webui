@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Opprett en gjenbrukbar terminalferdighet fra denne chatten.",
 	"Create Account": "Opprett konto",
 	"Create Admin Account": "Opprett administratorkonto",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Opprett kunngjøringer som vises for brukerne i appen.",
 	"Create Channel": "Opprett kanal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Kunnskapskilde opprettet.",
 	"Knowledge source updated.": "Kunnskapskilde oppdatert.",
 	"Knowledge updated successfully": "Kunnskap oppdatert",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (nettleser)",
 	"Last 24 hours": "Siste 24 timer",
 	"Last 30 days": "Siste 30 dager",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Bildegenering",
 	"settings.admin.models.builtinTools.knowledge.description": "Bla gjennom og send spørringer til kunnskapsbaser",
 	"settings.admin.models.builtinTools.knowledge.label": "Kunnskapsbase",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Søk i og behandle brukerens minner",
 	"settings.admin.models.builtinTools.memory.label": "Minne",
 	"settings.admin.models.builtinTools.notes.description": "Søk i, vis og behandle brukerens notater",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube-videoavspiller",
 	"Zoom in": "Zoom inn",
-	"Zoom out": "Zoom ut",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zoom ut"
 }

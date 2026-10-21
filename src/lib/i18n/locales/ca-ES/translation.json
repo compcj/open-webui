@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Crea una habilitat de terminal reutilitzable des d'aquest xat.",
 	"Create Account": "Crear un compte",
 	"Create Admin Account": "Crear un compte d'Administrador",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Crear anuncis que es mostren als usuaris a l'aplicació.",
 	"Create Channel": "Crear un canal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Font de coneixement creada.",
 	"Knowledge source updated.": "Font de coneixement actualitzada.",
 	"Knowledge updated successfully": "Coneixement actualitzat correctament.",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Navegador)",
 	"Last 24 hours": "Darreres 24 hores",
 	"Last 30 days": "Darrers 30 dies",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generació d'imatges",
 	"settings.admin.models.builtinTools.knowledge.description": "Cerca i fes preguntes a una base de coneixement",
 	"settings.admin.models.builtinTools.knowledge.label": "Base de coneixement",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Cerca i gestiona les memòries d'usuari",
 	"settings.admin.models.builtinTools.memory.label": "Memòria",
 	"settings.admin.models.builtinTools.notes.description": "Cerca, mostra i gestiona les notes d'usuari",
@@ -4210,10 +4215,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Reproductor de vídeo de YouTube",
 	"Zoom in": "Apropa",
-	"Zoom out": "Allunya",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Allunya"
 }

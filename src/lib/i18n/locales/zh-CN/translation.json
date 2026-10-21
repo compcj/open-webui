@@ -673,6 +673,7 @@
 	"Create a reusable terminal skill from this chat.": "从此对话创建可复用的终端技能。",
 	"Create Account": "创建账号",
 	"Create Admin Account": "创建管理员账号",
+	"Create and edit files in knowledge bases": "创建和编辑知识库中的文件",
 	"Create announcements shown to users in the app.": "创建在应用中向用户展示的公告。",
 	"Create Channel": "创建频道",
 	"Create copy": "",
@@ -1569,6 +1570,8 @@
 	"Knowledge source created.": "知识源已创建。",
 	"Knowledge source updated.": "知识源已更新。",
 	"Knowledge updated successfully": "知识库更新成功",
+	"Knowledge Write": "知识库写入",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "知识库读取已关闭，知识库写入已暂停。",
 	"Kokoro.js (Browser)": "Kokoro.js（运行于用户浏览器）",
 	"Last 24 hours": "最近 24 小时",
 	"Last 30 days": "最近 30 天",
@@ -3068,6 +3071,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "图像生成",
 	"settings.admin.models.builtinTools.knowledge.description": "浏览和查询知识库",
 	"settings.admin.models.builtinTools.knowledge.label": "知识库",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "仅在聊天中明确启用知识库写入且已开启知识库读取时，允许创建和编辑知识库文件。",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "知识库写入",
 	"settings.admin.models.builtinTools.memory.description": "搜索和管理用户记忆",
 	"settings.admin.models.builtinTools.memory.label": "记忆",
 	"settings.admin.models.builtinTools.notes.description": "搜索、查看和管理用户笔记",
@@ -4186,10 +4191,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube 视频播放器",
 	"Zoom in": "放大",
-	"Zoom out": "缩小",
-	"Create and edit files in knowledge bases": "创建和编辑知识库中的文件",
-	"Knowledge Write": "知识库写入",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "知识库读取已关闭，知识库写入已暂停。",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "仅在聊天中明确启用知识库写入且已开启知识库读取时，允许创建和编辑知识库文件。",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": "知识库写入"
+	"Zoom out": "缩小"
 }

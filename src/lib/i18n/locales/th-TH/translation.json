@@ -665,6 +665,7 @@
 	"Create a reusable terminal skill from this chat.": "สร้างทักษะ Terminal ที่นำกลับมาใช้ซ้ำได้จากแชทนี้",
 	"Create Account": "สร้างบัญชี",
 	"Create Admin Account": "สร้างบัญชีผู้ดูแลระบบ",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "สร้างประกาศที่แสดงต่อผู้ใช้ในแอป",
 	"Create Channel": "สร้างช่องทาง",
 	"Create copy": "",
@@ -1559,6 +1560,8 @@
 	"Knowledge source created.": "สร้างแหล่งความรู้แล้ว",
 	"Knowledge source updated.": "อัปเดตแหล่งความรู้แล้ว",
 	"Knowledge updated successfully": "อัปเดตฐานความรู้สำเร็จแล้ว",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (เบราว์เซอร์)",
 	"Last 24 hours": "24 ชั่วโมงที่ผ่านมา",
 	"Last 30 days": "30 วันที่ผ่านมา",
@@ -3055,6 +3058,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "การสร้างภาพ",
 	"settings.admin.models.builtinTools.knowledge.description": "เรียกดูและqueryฐานความรู้",
 	"settings.admin.models.builtinTools.knowledge.label": "ฐานความรู้",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "ค้นหาและจัดการความจำของผู้ใช้",
 	"settings.admin.models.builtinTools.memory.label": "ความจำ",
 	"settings.admin.models.builtinTools.notes.description": "ค้นหา ดู และจัดการบันทึกของผู้ใช้",
@@ -4172,10 +4177,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "เครื่องเล่นวิดีโอ YouTube",
 	"Zoom in": "ซูมเข้า",
-	"Zoom out": "ซูมออก",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "ซูมออก"
 }

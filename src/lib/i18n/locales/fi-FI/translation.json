@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Luo tästä keskustelusta uudelleenkäytettävä päätetaito.",
 	"Create Account": "Luo tili",
 	"Create Admin Account": "Luo ylläpitäjätili",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Luo sovelluksessa käyttäjille näytettäviä ilmoituksia.",
 	"Create Channel": "Luo kanava",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Tietolähde luotu.",
 	"Knowledge source updated.": "Tietolähde päivitetty.",
 	"Knowledge updated successfully": "Tietokanta päivitetty onnistuneesti",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (selain)",
 	"Last 24 hours": "Viimeiset 24 tuntia",
 	"Last 30 days": "Viimeiset 30 päivää",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Kuvagenerointi",
 	"settings.admin.models.builtinTools.knowledge.description": "Selaa ja hae tietokannoista",
 	"settings.admin.models.builtinTools.knowledge.label": "Tietokanta",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Hae ja hallinnoi käyttäjien muistoja",
 	"settings.admin.models.builtinTools.memory.label": "Muisti",
 	"settings.admin.models.builtinTools.notes.description": "Hae, tarkastele ja hallinnoi käyttäjämuistiinpanoja",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube-videosoitin",
 	"Zoom in": "Lähennä",
-	"Zoom out": "Loitonna",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Loitonna"
 }

@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Vytvoriť z tohto chatu opakovane použiteľnú zručnosť terminálu.",
 	"Create Account": "Vytvoriť účet",
 	"Create Admin Account": "Vytvoriť admin účet",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Vytvárajte oznámenia, ktoré sa používateľom zobrazia v aplikácii.",
 	"Create Channel": "Vytvoriť kanál",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Zdroj znalostí bol vytvorený.",
 	"Knowledge source updated.": "Zdroj znalostí bol aktualizovaný.",
 	"Knowledge updated successfully": "Znalosti úspešne aktualizované",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (prehliadač)",
 	"Last 24 hours": "Posledných 24 hodín",
 	"Last 30 days": "Posledných 30 dní",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generovanie obrázkov",
 	"settings.admin.models.builtinTools.knowledge.description": "Prehliadať znalostné databázy a vyhľadávať v nich",
 	"settings.admin.models.builtinTools.knowledge.label": "Znalostná databáza",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Vyhľadávať a spravovať spomienky používateľa",
 	"settings.admin.models.builtinTools.memory.label": "Pamäť",
 	"settings.admin.models.builtinTools.notes.description": "Vyhľadávať, zobrazovať a spravovať poznámky používateľa",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Prehrávač videa YouTube",
 	"Zoom in": "Priblížiť",
-	"Zoom out": "Oddialiť",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Oddialiť"
 }

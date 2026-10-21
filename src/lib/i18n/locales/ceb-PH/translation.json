@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Paghimo og kahanas sa terminal nga magamit pag-usab gikan niini nga panaghisgot.",
 	"Create Account": "Paghimo og account",
 	"Create Admin Account": "Paghimo og account sa administrator",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Paghimo og mga pahibalo nga ipakita sa mga tiggamit sulod sa app.",
 	"Create Channel": "Paghimo og channel",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Nahimo na ang tinubdan sa kahibalo.",
 	"Knowledge source updated.": "Na-update na ang tinubdan sa kahibalo.",
 	"Knowledge updated successfully": "Malampusong na-update ang kahibalo",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Miaging 24 ka oras",
 	"Last 30 days": "Miaging 30 ka adlaw",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Paghimo og hulagway",
 	"settings.admin.models.builtinTools.knowledge.description": "Tan-awa ug pangutan-a ang mga tipiganan sa kahibalo",
 	"settings.admin.models.builtinTools.knowledge.label": "Tipiganan sa kahibalo",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Pangitaa ug dumalaa ang mga handumanan sa tiggamit",
 	"settings.admin.models.builtinTools.memory.label": "Memorya",
 	"settings.admin.models.builtinTools.notes.description": "Pangitaa, tan-awa, ug dumalaa ang mga nota sa tiggamit",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Tigpatukar sa video sa YouTube",
 	"Zoom in": "Padak-a",
-	"Zoom out": "Pagamya",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Pagamya"
 }

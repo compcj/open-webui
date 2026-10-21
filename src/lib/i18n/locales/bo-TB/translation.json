@@ -665,6 +665,7 @@
 	"Create a reusable terminal skill from this chat.": "ཁ་བརྡ་འདི་ནས་བསྐྱར་སྤྱོད་བྱེད་ཐུབ་པའི་མཐའ་སྣེའི་ནུས་རྩལ་ཞིག་གསར་བཟོ་བྱེད་པ།",
 	"Create Account": "རྩིས་ཁྲ་གསར་བཟོ།",
 	"Create Admin Account": "དོ་དམ་པའི་རྩིས་ཁྲ་གསར་བཟོ།",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "ཉེར་སྤྱོད་ནང་བེད་སྤྱོད་མཁན་ལ་སྟོན་པའི་བརྡ་ཁྱབ་གསར་བཟོ་བྱོས།",
 	"Create Channel": "བགྲོ་གླེང་གསར་བཟོ།",
 	"Create copy": "",
@@ -1559,6 +1560,8 @@
 	"Knowledge source created.": "ཤེས་བྱའི་ཁུངས་བཟོས་ཟིན།",
 	"Knowledge source updated.": "ཤེས་བྱའི་ཁུངས་གསར་སྒྱུར་བྱས་ཟིན།",
 	"Knowledge updated successfully": "ཤེས་བྱ་ལེགས་པར་གསར་སྒྱུར་བྱས་ཟིན།",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (བརྡ་འཚོལ་ཆས།)",
 	"Last 24 hours": "འདས་པའི་ཆུ་ཚོད་ 24",
 	"Last 30 days": "འདས་པའི་ཉིན་ 30",
@@ -3055,6 +3058,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "པར་བཟོ།",
 	"settings.admin.models.builtinTools.knowledge.description": "ཤེས་བྱའི་མཛོད་ལ་ལྟ་བཤེར་དང་འདྲི་རྩད་བྱོས།",
 	"settings.admin.models.builtinTools.knowledge.label": "ཤེས་བྱའི་མཛོད།",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "བེད་སྤྱོད་མཁན་གྱི་དྲན་ཤེས་འཚོལ་བཤེར་དང་དོ་དམ།",
 	"settings.admin.models.builtinTools.memory.label": "དྲན་ཤེས།",
 	"settings.admin.models.builtinTools.notes.description": "བེད་སྤྱོད་མཁན་གྱི་མཆན་བུ་འཚོལ་བཤེར། ལྟ་བ་དང་དོ་དམ་བྱེད་པ།",
@@ -4172,10 +4177,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube བརྙན་ཟློས་ཆས།",
 	"Zoom in": "ཆེ་རུ་གཏོང་བ།",
-	"Zoom out": "ཆུང་དུ་གཏོང་བ།",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "ཆུང་དུ་གཏོང་བ།"
 }

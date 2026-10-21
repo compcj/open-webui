@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Sukurti daugkartinio naudojimo terminalo įgūdį iš šio pokalbio.",
 	"Create Account": "Créer un compte",
 	"Create Admin Account": "Sukurti administratoriaus paskyrą",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Sukurkite skelbimus, kurie rodomi naudotojams programoje.",
 	"Create Channel": "Sukurti kanalą",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Žinių šaltinis sukurtas.",
 	"Knowledge source updated.": "Žinių šaltinis atnaujintas.",
 	"Knowledge updated successfully": "Žinių bazė atnaujinta sėkmingai",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (naršyklė)",
 	"Last 24 hours": "Pastarosios 24 valandos",
 	"Last 30 days": "Pastarosios 30 dienų",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Vaizdų generavimas",
 	"settings.admin.models.builtinTools.knowledge.description": "Naršo žinių bazes ir siunčia joms užklausas",
 	"settings.admin.models.builtinTools.knowledge.label": "Žinių bazė",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Ieško naudotojo atminties įrašų ir juos tvarko",
 	"settings.admin.models.builtinTools.memory.label": "Atmintis",
 	"settings.admin.models.builtinTools.notes.description": "Ieško naudotojo užrašų, juos rodo ir tvarko",
@@ -4229,10 +4234,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube vaizdo grotuvas",
 	"Zoom in": "Padidinti",
-	"Zoom out": "Sumažinti",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Sumažinti"
 }

@@ -675,6 +675,7 @@
 	"Create a reusable terminal skill from this chat.": "Cipta kemahiran terminal yang boleh digunakan semula daripada chat ini.",
 	"Create Account": "Cipta Akaun",
 	"Create Admin Account": "Cipta Akaun Pentadbir",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Cipta pengumuman untuk dipaparkan kepada pengguna dalam aplikasi.",
 	"Create Channel": "Cipta Saluran",
 	"Create copy": "",
@@ -1571,6 +1572,8 @@
 	"Knowledge source created.": "Sumber pengetahuan dicipta.",
 	"Knowledge source updated.": "Sumber pengetahuan dikemas kini.",
 	"Knowledge updated successfully": "Pengetahuan telah dikemas kini dengan berjaya",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Penyemak Imbas)",
 	"Last 24 hours": "24 jam terakhir",
 	"Last 30 days": "30 hari terakhir",
@@ -3071,6 +3074,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Penjanaan Imej",
 	"settings.admin.models.builtinTools.knowledge.description": "Semak imbas dan buat pertanyaan pada pangkalan pengetahuan",
 	"settings.admin.models.builtinTools.knowledge.label": "Pangkalan Pengetahuan",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Cari dan urus memori pengguna",
 	"settings.admin.models.builtinTools.memory.label": "Memori",
 	"settings.admin.models.builtinTools.notes.description": "Cari, lihat, dan urus nota pengguna",
@@ -4189,10 +4194,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Pemain video YouTube",
 	"Zoom in": "Zum masuk",
-	"Zoom out": "Zum keluar",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zum keluar"
 }

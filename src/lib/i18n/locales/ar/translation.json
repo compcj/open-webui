@@ -720,6 +720,7 @@
 	"Create a reusable terminal skill from this chat.": "أنشئ مهارة طرفية قابلة لإعادة الاستخدام من هذه المحادثة.",
 	"Create Account": "إنشاء حساب",
 	"Create Admin Account": "إنشاء حساب مسؤول",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "إنشاء إعلانات تُعرض للمستخدمين في التطبيق.",
 	"Create Channel": "إنشاء قناة",
 	"Create copy": "",
@@ -1624,6 +1625,8 @@
 	"Knowledge source created.": "تم إنشاء مصدر المعرفة.",
 	"Knowledge source updated.": "تم تحديث مصدر المعرفة.",
 	"Knowledge updated successfully": "تم تحديث المعرفة بنجاح",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (المتصفح)",
 	"Last 24 hours": "آخر 24 ساعة",
 	"Last 30 days": "آخر 30 يومًا",
@@ -3140,6 +3143,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "توليد الصور",
 	"settings.admin.models.builtinTools.knowledge.description": "تصفح قواعد المعرفة والاستعلام عنها",
 	"settings.admin.models.builtinTools.knowledge.label": "قاعدة المعرفة",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "البحث في ذكريات المستخدم وإدارتها",
 	"settings.admin.models.builtinTools.memory.label": "الذاكرة",
 	"settings.admin.models.builtinTools.notes.description": "البحث في ملاحظات المستخدم وعرضها وإدارتها",
@@ -4267,10 +4272,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "مشغّل فيديو YouTube",
 	"Zoom in": "تكبير",
-	"Zoom out": "تصغير",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "تصغير"
 }

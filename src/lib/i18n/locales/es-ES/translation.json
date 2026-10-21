@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Crea una habilidad de terminal reutilizable a partir de este chat.",
 	"Create Account": "Crear Cuenta",
 	"Create Admin Account": "Crear Cuenta Administrativa",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Crea anuncios que se muestran a los usuarios en la aplicación.",
 	"Create Channel": "Crear Canal",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Fuente de conocimiento creada.",
 	"Knowledge source updated.": "Fuente de conocimiento actualizada.",
 	"Knowledge updated successfully": "Conocimiento actualizado correctamente.",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Navegador)",
 	"Last 24 hours": "Últimas 24 horas",
 	"Last 30 days": "Útimos 30 días",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generación de Imagen",
 	"settings.admin.models.builtinTools.knowledge.description": "Explorar y consultar bases de conocimiento",
 	"settings.admin.models.builtinTools.knowledge.label": "Base de Conocimiento",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Buscar y gestionar memorias del usuario",
 	"settings.admin.models.builtinTools.memory.label": "Memoria",
 	"settings.admin.models.builtinTools.notes.description": "Buscar, ver y gestionar notas del usuario",
@@ -4210,10 +4215,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Reproductor de vídeo de YouTube",
 	"Zoom in": "Acercar",
-	"Zoom out": "Alejar",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Alejar"
 }

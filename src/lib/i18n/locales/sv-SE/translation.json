@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Skapa en återanvändbar terminalfärdighet från den här chatten.",
 	"Create Account": "Skapa konto",
 	"Create Admin Account": "Skapa administratörskonto",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Skapa tillkännagivanden som visas för användare i appen.",
 	"Create Channel": "Skapa kanal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Kunskapskälla skapad.",
 	"Knowledge source updated.": "Kunskapskälla uppdaterad.",
 	"Knowledge updated successfully": "Kunskapen har uppdaterats",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (webbläsare)",
 	"Last 24 hours": "Senaste 24 timmarna",
 	"Last 30 days": "Senaste 30 dagarna",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Bildgenerering",
 	"settings.admin.models.builtinTools.knowledge.description": "Bläddra och fråga i kunskapsbaser",
 	"settings.admin.models.builtinTools.knowledge.label": "Kunskapsbas",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Sök och hantera användarminnen",
 	"settings.admin.models.builtinTools.memory.label": "Minne",
 	"settings.admin.models.builtinTools.notes.description": "Sök, visa och hantera användarnotiser",
@@ -4191,10 +4196,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "YouTube-videospelare",
 	"Zoom in": "Zooma in",
-	"Zoom out": "Zooma ut",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Zooma ut"
 }

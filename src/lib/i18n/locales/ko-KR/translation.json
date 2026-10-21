@@ -666,6 +666,7 @@
 	"Create a reusable terminal skill from this chat.": "이 채팅에서 재사용 가능한 터미널 스킬을 생성합니다.",
 	"Create Account": "계정 생성",
 	"Create Admin Account": "관리자 계정 생성",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "앱에서 사용자에게 표시할 공지 사항을 만듭니다.",
 	"Create Channel": "채널 생성",
 	"Create copy": "",
@@ -1560,6 +1561,8 @@
 	"Knowledge source created.": "지식 소스가 생성되었습니다.",
 	"Knowledge source updated.": "지식 소스가 업데이트되었습니다.",
 	"Knowledge updated successfully": "성공적으로 지식 기반이 업데이트되었습니다",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (브라우저)",
 	"Last 24 hours": "최근 24시간",
 	"Last 30 days": "최근 30일",
@@ -3057,6 +3060,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "이미지 생성",
 	"settings.admin.models.builtinTools.knowledge.description": "지식 기반 탐색 및 쿼리",
 	"settings.admin.models.builtinTools.knowledge.label": "지식 기반",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "사용자 기억 검색 및 관리",
 	"settings.admin.models.builtinTools.memory.label": "메모리",
 	"settings.admin.models.builtinTools.notes.description": "사용자 노트 검색, 보기, 및 관리",
@@ -4175,10 +4180,5 @@
 	"YouTube": "유튜브",
 	"YouTube video player": "YouTube 비디오 플레이어",
 	"Zoom in": "확대",
-	"Zoom out": "축소",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "축소"
 }

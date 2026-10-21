@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Loo sellest vestlusest korduvkasutatav terminali oskus.",
 	"Create Account": "Loo konto",
 	"Create Admin Account": "Loo administraatori konto",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Loo teadaanded, mida kasutajatele rakenduses kuvatakse.",
 	"Create Channel": "Loo kanal",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Teadmiste allikas loodud.",
 	"Knowledge source updated.": "Teadmiste allikas uuendatud.",
 	"Knowledge updated successfully": "Teadmised edukalt uuendatud",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (brauser)",
 	"Last 24 hours": "Viimased 24 tundi",
 	"Last 30 days": "Viimased 30 päeva",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Pildi genereerimine",
 	"settings.admin.models.builtinTools.knowledge.description": "Sirvi ja päri teadmiste baase",
 	"settings.admin.models.builtinTools.knowledge.label": "Teadmiste baas",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Otsi ja halda kasutaja mälestusi",
 	"settings.admin.models.builtinTools.memory.label": "Mälu",
 	"settings.admin.models.builtinTools.notes.description": "Otsi, vaata ja halda kasutaja märkmeid",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube'i videomängija",
 	"Zoom in": "Suurenda",
-	"Zoom out": "Vähenda",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Vähenda"
 }

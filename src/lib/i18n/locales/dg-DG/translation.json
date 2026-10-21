@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "Create a reusable terminal skill from this chat. So handy.",
 	"Create Account": "Create Such Account",
 	"Create Admin Account": "Create Such Admin Account",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Create announcements shown to users in the app. Very bark.",
 	"Create Channel": "Create Such Channel",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "Such knowledge source created.",
 	"Knowledge source updated.": "Such knowledge source updated.",
 	"Knowledge updated successfully": "Such knowledge updated. Very neat",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Last 24 hours",
 	"Last 30 days": "Last 30 days",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Much Image Generation",
 	"settings.admin.models.builtinTools.knowledge.description": "Browse and query knowledge bases, so wise",
 	"settings.admin.models.builtinTools.knowledge.label": "Such Knowledge Base",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Search and manage user memories, very personal",
 	"settings.admin.models.builtinTools.memory.label": "Much Memory",
 	"settings.admin.models.builtinTools.notes.description": "Search, view, and manage user notes, such order",
@@ -4191,10 +4196,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Such YouTube video player",
 	"Zoom in": "Such zoom in",
-	"Zoom out": "Such zoom out",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Such zoom out"
 }

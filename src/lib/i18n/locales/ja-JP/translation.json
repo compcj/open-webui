@@ -675,6 +675,7 @@
 	"Create a reusable terminal skill from this chat.": "このチャットから再利用できるターミナルスキルを作成します。",
 	"Create Account": "アカウントを作成",
 	"Create Admin Account": "管理者アカウントを作成",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "アプリ内でユーザーに表示するお知らせを作成します。",
 	"Create Channel": "チャンネルを作成",
 	"Create copy": "",
@@ -1571,6 +1572,8 @@
 	"Knowledge source created.": "ナレッジソースを作成しました。",
 	"Knowledge source updated.": "ナレッジソースを更新しました。",
 	"Knowledge updated successfully": "ナレッジベースのアップデートに成功しました",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (ブラウザ)",
 	"Last 24 hours": "過去24時間",
 	"Last 30 days": "過去30日間",
@@ -3071,6 +3074,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "画像生成",
 	"settings.admin.models.builtinTools.knowledge.description": "ナレッジベースを閲覧・検索",
 	"settings.admin.models.builtinTools.knowledge.label": "ナレッジベース",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "ユーザーのメモリを検索・管理",
 	"settings.admin.models.builtinTools.memory.label": "メモリ",
 	"settings.admin.models.builtinTools.notes.description": "ユーザーのノートを検索・表示・管理",
@@ -4189,10 +4194,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube動画プレーヤー",
 	"Zoom in": "拡大",
-	"Zoom out": "縮小",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "縮小"
 }

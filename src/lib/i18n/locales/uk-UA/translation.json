@@ -698,6 +698,7 @@
 	"Create a reusable terminal skill from this chat.": "Створити з цього чату навичку термінала для повторного використання.",
 	"Create Account": "Створити обліковий запис",
 	"Create Admin Account": "Створити обліковий запис адміністратора",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Створюйте оголошення, які показуються користувачам у застосунку.",
 	"Create Channel": "Створити канал",
 	"Create copy": "",
@@ -1598,6 +1599,8 @@
 	"Knowledge source created.": "Джерело знань створено.",
 	"Knowledge source updated.": "Джерело знань оновлено.",
 	"Knowledge updated successfully": "Знання успішно оновлено",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Браузер)",
 	"Last 24 hours": "Останні 24 години",
 	"Last 30 days": "Останні 30 днів",
@@ -3106,6 +3109,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Генерація зображень",
 	"settings.admin.models.builtinTools.knowledge.description": "Переглядати бази знань і виконувати запити до них",
 	"settings.admin.models.builtinTools.knowledge.label": "База знань",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Шукати записи пам'яті користувачів і керувати ними",
 	"settings.admin.models.builtinTools.memory.label": "Пам'ять",
 	"settings.admin.models.builtinTools.notes.description": "Шукати, переглядати примітки користувачів і керувати ними",
@@ -4229,10 +4234,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Відеопрогравач YouTube",
 	"Zoom in": "Збільшити",
-	"Zoom out": "Зменшити",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Зменшити"
 }

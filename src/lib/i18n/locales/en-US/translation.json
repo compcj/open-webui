@@ -676,6 +676,7 @@
 	"Create a reusable terminal skill from this chat.": "",
 	"Create Account": "",
 	"Create Admin Account": "",
+	"Create and edit files in knowledge bases": "Create and edit files in knowledge bases",
 	"Create announcements shown to users in the app.": "",
 	"Create Channel": "",
 	"Create copy": "",
@@ -1572,6 +1573,8 @@
 	"Knowledge source created.": "",
 	"Knowledge source updated.": "",
 	"Knowledge updated successfully": "",
+	"Knowledge Write": "Knowledge Write",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "Knowledge Write is paused while Knowledge Base is disabled.",
 	"Kokoro.js (Browser)": "",
 	"Last 24 hours": "",
 	"Last 30 days": "",
@@ -3072,6 +3075,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Image Generation",
 	"settings.admin.models.builtinTools.knowledge.description": "Browse and query knowledge bases",
 	"settings.admin.models.builtinTools.knowledge.label": "Knowledge Base",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "Create and edit knowledge files only when explicitly enabled in the chat and Knowledge Base reading is enabled.",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "Knowledge Write",
 	"settings.admin.models.builtinTools.memory.description": "Search and manage user memories",
 	"settings.admin.models.builtinTools.memory.label": "Memory",
 	"settings.admin.models.builtinTools.notes.description": "Search, view, and manage user notes",
@@ -4191,10 +4196,5 @@
 	"YouTube": "",
 	"YouTube video player": "",
 	"Zoom in": "",
-	"Zoom out": "",
-	"Create and edit files in knowledge bases": "Create and edit files in knowledge bases",
-	"Knowledge Write": "Knowledge Write",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "Knowledge Write is paused while Knowledge Base is disabled.",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "Create and edit knowledge files only when explicitly enabled in the chat and Knowledge Base reading is enabled.",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": "Knowledge Write"
+	"Zoom out": ""
 }

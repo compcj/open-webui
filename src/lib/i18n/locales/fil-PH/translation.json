@@ -677,6 +677,7 @@
 	"Create a reusable terminal skill from this chat.": "Gumawa ng muling magagamit na terminal skill mula sa chat na ito.",
 	"Create Account": "Gumawa ng Account",
 	"Create Admin Account": "Gumawa ng Admin Account",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Gumawa ng mga anunsyong ipinapakita sa mga gumagamit sa app.",
 	"Create Channel": "Gumawa ng Channel",
 	"Create copy": "",
@@ -1573,6 +1574,8 @@
 	"Knowledge source created.": "Nagawa ang pinagmulan ng kaalaman.",
 	"Knowledge source updated.": "Na-update ang pinagmulan ng kaalaman.",
 	"Knowledge updated successfully": "Matagumpay na na-update ang kaalaman",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Nakalipas na 24 na oras",
 	"Last 30 days": "Nakalipas na 30 araw",
@@ -3074,6 +3077,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Pagbuo ng Larawan",
 	"settings.admin.models.builtinTools.knowledge.description": "Mag-browse at mag-query sa mga knowledge base",
 	"settings.admin.models.builtinTools.knowledge.label": "Knowledge Base",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Maghanap at mamahala ng mga alaala ng gumagamit",
 	"settings.admin.models.builtinTools.memory.label": "Alaala",
 	"settings.admin.models.builtinTools.notes.description": "Maghanap, tumingin, at mamahala ng mga tala ng gumagamit",
@@ -4194,10 +4199,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Video player ng YouTube",
 	"Zoom in": "Palakihin",
-	"Zoom out": "Paliitin",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Paliitin"
 }

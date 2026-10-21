@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Crea una skill terminale riutilizzabile da questa chat.",
 	"Create Account": "Crea account",
 	"Create Admin Account": "Crea account amministratore",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Crea annunci mostrati agli utenti nell'app.",
 	"Create Channel": "Crea canale",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Fonte di conoscenza creata.",
 	"Knowledge source updated.": "Fonte di conoscenza aggiornata.",
 	"Knowledge updated successfully": "Conoscenza aggiornata con successo",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (Browser)",
 	"Last 24 hours": "Ultime 24 ore",
 	"Last 30 days": "Ultimi 30 giorni",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Generazione Immagini",
 	"settings.admin.models.builtinTools.knowledge.description": "Sfoglia e interroga le basi di conoscenza",
 	"settings.admin.models.builtinTools.knowledge.label": "Base di conoscenza",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Cerca e gestisci le memorie dell'utente",
 	"settings.admin.models.builtinTools.memory.label": "Memoria",
 	"settings.admin.models.builtinTools.notes.description": "Cerca, visualizza e gestisci le note dell'utente",
@@ -4210,10 +4215,5 @@
 	"YouTube": "Youtube",
 	"YouTube video player": "Lettore video YouTube",
 	"Zoom in": "Ingrandisci",
-	"Zoom out": "Riduci",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Riduci"
 }

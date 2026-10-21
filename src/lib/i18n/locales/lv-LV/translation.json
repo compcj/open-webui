@@ -687,6 +687,7 @@
 	"Create a reusable terminal skill from this chat.": "Izveidot atkārtoti izmantojamu termināļa prasmi no šīs tērzēšanas.",
 	"Create Account": "Izveidot kontu",
 	"Create Admin Account": "Izveidot administratora kontu",
+	"Create and edit files in knowledge bases": "",
 	"Create announcements shown to users in the app.": "Izveidot paziņojumus, kas lietotājiem tiek rādīti lietotnē.",
 	"Create Channel": "Izveidot kanālu",
 	"Create copy": "",
@@ -1585,6 +1586,8 @@
 	"Knowledge source created.": "Zināšanu avots izveidots.",
 	"Knowledge source updated.": "Zināšanu avots atjaunināts.",
 	"Knowledge updated successfully": "Zināšanas veiksmīgi atjauninātas",
+	"Knowledge Write": "",
+	"Knowledge Write is paused while Knowledge Base is disabled.": "",
 	"Kokoro.js (Browser)": "Kokoro.js (pārlūks)",
 	"Last 24 hours": "Pēdējās 24 stundas",
 	"Last 30 days": "Pēdējās 30 dienas",
@@ -3089,6 +3092,8 @@
 	"settings.admin.models.builtinTools.imageGeneration.label": "Attēlu ģenerēšana",
 	"settings.admin.models.builtinTools.knowledge.description": "Pārlūkot zināšanu bāzes un veikt tajās vaicājumus",
 	"settings.admin.models.builtinTools.knowledge.label": "Zināšanu bāze",
+	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
+	"settings.admin.models.builtinTools.knowledgeWrite.label": "",
 	"settings.admin.models.builtinTools.memory.description": "Meklēt un pārvaldīt lietotāja atmiņas",
 	"settings.admin.models.builtinTools.memory.label": "Atmiņa",
 	"settings.admin.models.builtinTools.notes.description": "Meklēt, skatīt un pārvaldīt lietotāja piezīmes",
@@ -4210,10 +4215,5 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "YouTube video atskaņotājs",
 	"Zoom in": "Tuvināt",
-	"Zoom out": "Tālināt",
-	"Create and edit files in knowledge bases": "",
-	"Knowledge Write": "",
-	"Knowledge Write is paused while Knowledge Base is disabled.": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.description": "",
-	"settings.admin.models.builtinTools.knowledgeWrite.label": ""
+	"Zoom out": "Tālināt"
 }
