@@ -11,11 +11,11 @@ and is never sent as a provider inference parameter.
 
 ## 三种模式 / Modes
 
-| 模式 / Mode         | 行为 / Behavior                                                                                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 关闭 / `off`        | 下次请求重新使用完整原始分支历史，不应用任何压缩检查点。Full raw branch history is used on the next request.                                                                                            |
-| 原版压缩 / `legacy` | 采用上游 v0.12.2 历史及工具轮间压缩；保留提示词、保留比例与个人／会话阈值覆盖。Uses upstream v0.12.2 history and tool-round compaction, retaining prompt, retention and threshold overrides.            |
-| V2压缩 / `v2`       | 在发送请求前按 Token 预算检查，合并延续摘要、近期完整原文与预算提醒。Checks the final request budget and combines a continuation summary with complete recent conversation groups and budget reminders. |
+| 模式 / Mode         | 行为 / Behavior                                                                                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 关闭 / `off`        | 下次请求重新使用完整原始分支历史，不应用任何压缩检查点。Full raw branch history is used on the next request.                                                                                                           |
+| 原版压缩 / `legacy` | 采用上游 v0.12.4 历史、临时聊天及工具轮间压缩；保留提示词、保留比例与个人／会话阈值覆盖。Uses upstream v0.12.4 history, temporary-chat and tool-round compaction, retaining prompt, retention and threshold overrides. |
+| V2压缩 / `v2`       | 在发送请求前按 Token 预算检查，合并延续摘要、近期完整原文与预算提醒。Checks the final request budget and combines a continuation summary with complete recent conversation groups and budget reminders.                |
 
 升级时，未设置新模式的安装继续使用旧开关：关闭映射 `off`，开启映射 `legacy`；
 不会自动启用 V2。显式模式优先于 `ENABLE_CONTEXT_COMPACTION`。原版和 V2 的配置及检查点彼此独立，
@@ -57,7 +57,7 @@ defaults when persistent configuration is enabled; editing `.env` does not repla
 | 预算提醒 / Budget reminders              | `CONTEXT_COMPACTION_V2_REMINDER_ENABLED`         | true                                                   |
 | 提醒提示词 / Reminder prompt             | `CONTEXT_COMPACTION_V2_REMINDER_PROMPT`          | 空，使用默认值 / Empty: built-in prompt                |
 | 摘要超时 / Summary timeout               | `CONTEXT_COMPACTION_V2_TIMEOUT_SECONDS`          | 60 秒 / seconds                                        |
-| 工具预算 / Tool budgets                  | `CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED`      | true (V2 saved chats only)                             |
+| 工具预算 / Tool budgets                  | `CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED`      | true (saved and scoped temporary V2 chats)             |
 | 单个工具上限 / Individual tool limit     | `CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT`      | 10% of resolved `C`                                    |
 | 工具批次上限 / Tool batch limit          | `CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT`       | 30% of resolved `C`                                    |
 | 工具摘要提示词 / Tool summary prompt     | `CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT`      | Empty: built-in task-aware prompt                      |
@@ -208,14 +208,14 @@ asks for a model/configuration change. Cancellation stops immediately and preser
 
 ## 工具结果预算 / Tool result budgets
 
-仅在已保存 WebUI 聊天的 V2 模式且工具预算开关开启时生效；关闭、原版压缩以及关闭此开关时保持原行为。
+在已保存 WebUI 聊天或具有服务端身份的当前页面临时聊天中，V2 模式且工具预算开关开启时生效；关闭、原版压缩以及关闭此开关时保持原行为。
 原始结果在下一次发送前完整保存，摘要／摘录用于模型上下文，发送前固定采用版本，不覆盖聊天内容。
 单个结果比例及批次比例必须是整数且满足 `1 <= individual <= batch <= 100`，按解析后的模型窗口 `C`
 计算：`S = floor(C * individual / 100)`，`Q = floor(C * batch / 100)`。
 继承模型窗口和更小的 Ollama `num_ctx` 同样影响 `C`；有效窗口比例和输出额度进一步限制可用输入 `B`。
 `C = 100000`、默认比例时，`S = 10000`，`Q = 30000`。
 
-These limits apply to saved WebUI V2 chats when enabled. Off, legacy and a disabled tool budget
+These limits apply to saved WebUI V2 chats and server-scoped temporary V2 chats when enabled. Off, legacy and a disabled tool budget
 retain their previous behavior. Raw originals are saved before the next send; projections never replace
 them. Integer percentages satisfy `1 <= individual <= batch <= 100`. Individual `S` and batch `Q`
 are percentages of resolved `C`, including base-model inheritance and a smaller Ollama `num_ctx`,
@@ -440,15 +440,16 @@ retries never execute tools again.
 
 ## 范围与设计参考 / Scope and references
 
-适用于 WebUI 已保存聊天（包括通过项目连接调用的模型）；不扩展临时／无状态裸 API 请求，
+适用于 WebUI 已保存聊天及具有服务器身份的当前页面临时聊天（包括通过项目连接调用的模型）；不扩展无状态裸 API 请求，
 也不接管第三方 Pipe 自行管理的内部上下文。浏览器直连模型的手动压缩需要当前用户的活动连接；
-用量查询只读取已保存历史，断线时仍可估算。直连模型使用自身元数据或全局长度，不按同名 ID 读取服务器私有模型参数。
+用量查询只读取对应 SQL 或临时缓存中的已验证历史，模型连接断开时仍可估算；临时缓存必须仍有效。直连模型使用自身元数据或全局长度，不按同名 ID 读取服务器私有模型参数。
 实际生效长度由管理员的模型配置决定，
 并不是对供应商宣称窗口长度的自动发现。
 
-This applies to saved WebUI chats. Temporary/stateless API requests and contexts managed internally
+This applies to saved WebUI chats and scoped page-local temporary chats. Stateless API requests and contexts managed internally
 by third-party Pipes are outside this feature. Manual compaction of browser-direct models requires
-the user's own active connection; stored-history usage queries can run while disconnected. Direct
+the user's own active connection; usage queries read validated SQL or temporary-cache history even when
+the model connection is disconnected, provided the temporary scope remains valid. Direct
 models use their own metadata or the global window and never resolve private server model parameters
 by a matching ID. Administrators configure server model windows; this feature does not automatically
 discover a provider's supported capacity.
@@ -488,3 +489,16 @@ Model windows remain admin configured. Mocked regression coverage and live-check
 [原生 Gemini/Anthropic 连接](native-model-connections.md)保持 off/legacy/V2 语义。预算在采用工具结果
 选择前计入原始签名回放、图片、工具与最终协议封装；不能伪造或修改思考签名，也不能重跑已执行工具。
 Anthropic 缺省输出上限先于预算生效，显式上限优先；上下文窗口仍由管理员配置。
+
+## 临时 V2 / Temporary V2
+
+临时聊天复用完整预算和来源规则，支持历史压缩、工具结果选用、精确原文、状态及 `/compact`。
+页面原文刷新后不恢复；后台缓存不写普通聊天和四张 V2 SQL 表，但服从 Redis 持久化策略。
+同页断线后只协调状态，不重放未确认执行。保存普通聊天之前必须确认回复结束，并投影完整原文。
+详见[接口、生命周期、容量和错误恢复](temporary-context-v2.md)。
+
+Temporary V2 uses the same full-request budgets and source validation. It includes history compaction,
+selected tool results, exact raw reads, status and `/compact`. Refresh does not restore the conversation.
+Its cache does not write chat or V2 SQL tables; Redis persistence remains a deployment choice.
+Reconnection reconciles state without replaying unknown effects. Saving waits for completion and
+preserves original history. See [temporary context contracts](temporary-context-v2.md).

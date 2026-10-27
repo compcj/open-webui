@@ -135,7 +135,7 @@ Terminal AGENTS.md is a synthetic user message. Enrich each user message from it
 attachments by ordinal positions after output expansion or repeat the old async enrichment path.
 Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pipeline stage.
 
-See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and upgrade boundaries.
+See [version decisions](../docs/upstream/v0.12.4-decisions.md) for rationale and upgrade boundaries.
 
 ## v0.12 data and collaboration boundaries
 
@@ -182,7 +182,7 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
 - Persist `provider_function` before resolving builtin `call_tool`. Real target identity governs
   authorization, approval, original Gemini validation, execution and exact-result classification.
   Restore the wrapper for Chat/Responses replay and strip local metadata before transport.
-- Tool-enabled skill bodies over 20000 characters expose 5000 initially; disabled injection caps at 100000. Overview, grep and pages share the pinned prepared body and absolute character offsets.
+- Tool-enabled skill content/preview limits default to 20000/5000 and are configurable; disabled injection caps at 100000. Overview, grep and pages share the pinned prepared body and absolute character offsets.
   Prepared text is request-local, never saved in chat metadata. Pins select snapshots after current
   context and ACL authorization; they are not grants. Preserve terminal fingerprints and soft failure.
 - Trusted builtin `grep_skill_files` uses exact kind `skill_search`: retain whole entries/locations,
@@ -267,13 +267,15 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
   `meta.context_window` through base-model inheritance/global default and cap smaller Ollama num_ctx.
 - V2 budget checks belong after model parameters and all prompt/tool/knowledge/skill/file injections,
   before transport conversion/send. Initial, approved-tool, tool-loop and code continuations share
-  the hook. Only trusted saved-WebUI request state activates it; internal summary/background tasks
+  the hook. Only trusted saved-WebUI state or an authenticated temporary `ContextScope` activates it; internal summary/background tasks
   use the ContextVar guard, never a client bypass flag. Pipes/stateless requests are outside scope.
 - Browser-direct compaction uses request-local model descriptors. Manual summaries require the
   authenticated user's own live socket; stored-history usage queries have no dispatch side effect.
   Never resolve private server model parameters through a direct descriptor's ID or base-model pointer.
-- Persist compaction lifecycle events in message status history, including the normalized
+- Persist saved-chat compaction events in message status history, including the normalized
   `chat_message.status_history` read path, so reloads retain progress/results without altering input.
+  Temporary events stay in the scoped cache and page state; they never create SQL message rows or
+  restore the full temporary conversation after a page reload.
 - Count final input, tools and multimodal allowances with an explicit source. Calibrate only matched
   single-call input usage, never cumulative billing totals. Ordinary chat reserves configured output
   only; internal V2 summaries use their separate percentage/absolute output calculation below.
@@ -399,3 +401,38 @@ or a truncated definition. Validate the original schema before approval, callbac
 freeze each generating round's mode across model switches and approval resumes, and strip internal
 markers before transport. Model arguments cannot override `__` runtime parameters. See the
 [compatibility guide](../docs/gemini-tool-compatibility.md) and its regression commands.
+
+## Temporary V2 and v0.12.4 policies
+
+Use explicit request-local storage ports in `context_scope.py`, `context_store_sql.py` and
+`context_store_temporary.py`. `temporary_context_store.py` owns CAS, quotas, deadlines, fences and
+the execution ledger; `temporary_context_runtime.py` owns authenticated delivery and completion.
+Do not import or write SQL chat/V2 models for temporary history. Server-generated raw admissions
+are required before new result selection; imported or edited outputs replay as untrusted history.
+
+Register all parallel reply reservations atomically and acknowledge every unstarted reservation if
+launch fails. Completion follows coroutine cleanup. Save normalized results before publishing their
+canonical raw output; pending publication prevents new tasks, promotion and reclamation, while
+already admitted parallel models may settle. Late settlement uses the original task/fence and never
+authorizes a new effect. Prepared selection is a send decision, not proof of delivery.
+
+Temporary RPC journal entries carry bounded identity markers, never credentials or payloads.
+Delivery requires a current authenticated socket generation, active task and unchanged fence.
+Raw-result pagination revalidates actor, source and descendant branch. Terminal HTTP/WS operations
+require authenticated context identity; signed delivered files retain their original isolated origin
+and live connection permission after chat promotion. Arbitrary scope-looking chat IDs confer no access.
+
+Personal Integrations is a hard switch including admins. Controls/Params are visibility permissions,
+not inference-value permissions. Skills default eager (`skills.lazy_loading.enable=false`), mentions
+always eager; preserve configured body/preview limits and canonical prepared text. Content updates
+do not change grants; dedicated Access endpoints validate the entire mutation before saving.
+See [decisions](../docs/upstream/v0.12.4-decisions.md) and
+[temporary V2](../docs/temporary-context-v2.md) for product and deployment boundaries.
+
+Temporary task/execution control caps apply to unretired records. Registration may atomically
+retire only worker-confirmed done tasks whose executions are all resolved and fully published.
+Keep server-only retired task-ID digests in byte-charged data, reject ID reuse, and make retired
+completion acknowledgements read-only/idempotent. Other stale actions fail closed. Never retire
+active/uncertain/unpublished work or erase raw data, admissions, checkpoints, selections or batch
+accounting. History sync must not replace the retirement ledger; quota/CAS failures roll back the
+entire retirement-and-registration transition.

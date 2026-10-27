@@ -39,11 +39,11 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 ## Upstream integration decisions
 
 Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
-[active v0.12.2 decisions](docs/upstream/v0.12.2-decisions.md). Verify official commit IDs and actual
+[active v0.12.4 decisions](docs/upstream/v0.12.4-decisions.md). Verify official commit IDs and actual
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
-For a full fork audit, use the [v0.12.2 difference inventory](docs/upstream/v0.12.2-fork-audit.md)
+For a full fork audit, use the [v0.12.4 difference inventory](docs/upstream/v0.12.4-fork-audit.md)
 as the last dated snapshot, then recompute both the complete upstream-to-HEAD tree diff and all
 reachable fork-only commits, including merged side branches and the dirty working-tree diff.
 Record exact SHAs and shallow-history limits; verify missing history through read-only remote commit
@@ -68,7 +68,7 @@ current rules in scoped guides, rationale in the decision record, and commands i
 - Tool dispatch saves the original `provider_function` for provider replay. Resolve the registered
   target before permission, original Gemini schema validation, approval, execution and result classification.
   Retry never repeats execution; failed dispatch results must reach stateful Responses continuations too.
-- Tool-enabled skills longer than 20000 characters initially expose 5000 characters; tool-disabled
+- Tool-enabled skill content/preview limits are configurable, defaulting to 20000/5000 characters; tool-disabled
   injection remains bounded at 100000. Overview/search/pages use the same pinned prepared text and
   absolute character offsets. Search reduction keeps complete entries with explicit omissions.
   Only a server-registered builtin identity receives exact-result processing; snapshot pins do not grant access.
@@ -105,20 +105,22 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to
-  off/legacy. Never auto-enable V2 on upgrade. Legacy uses upstream v0.12.2 tool-round checkpoints and per-round usage, retaining threshold overrides. Never run legacy and V2 on the same request.
+  off/legacy. Never auto-enable V2 on upgrade. Legacy includes upstream v0.12.4 temporary/short-history behavior and tool-round checkpoints, retaining threshold overrides. Never run legacy and V2 on the same request.
 - Shared chats reuse V2 state by chat/model/validated branch, never by participant. Only saved shared branch history enters shared summaries; personal instructions, variables and terminal context remain request-local and counted. Require server `source_scope=saved_history_v1` before reusing compressed records in shared history; unproven older records replay raw without rewriting the stored selection. Manual `/compact` is owner-only; approval and stop operations belong to the reply author. Live updates and raw/status reads recheck current chat access.
 - Keep original chat messages intact. Legacy `contextSummary` and V2 `chat_context_checkpoint`
   storage are independent; off replays full raw history and mode changes apply next request.
 - V2 lives in `backend/open_webui/utils/context_compaction_v2.py`, validated settings in
   `context_compaction_config.py`, final-send/retry hooks in `context_compaction_dispatch.py`, and
-  persistence in `backend/open_webui/models/chat_context_checkpoints.py`. Isolate checkpoints by
+  persistence through explicit SQL/temporary store adapters; saved checkpoints use
+  `backend/open_webui/models/chat_context_checkpoints.py`. Isolate checkpoints by
   model and validated branch ancestry/content; stale or competing writes must never win.
-- V2 tool budgets apply only to server-registered new results in trusted saved chats. Apply valid
+- V2 tool budgets apply only to server-registered new results in trusted saved or scoped temporary chats. Apply valid
   history checkpoints and fixed tool selections first; historical originals/summaries are fixed input,
   not competitors for a new batch's allowance. Reserve capped new demand, compact older history first,
   then allocate fairly and reclaim actual savings after each reduction. Count the complete final request,
   including media, references, repeated injection and JSON framing; only unselected new results can shrink.
-- `backend/open_webui/models/chat_tool_result_selections.py` owns pending/prepared versions. Prepare
+- `backend/open_webui/models/chat_tool_result_selections.py` owns saved pending/prepared versions;
+  the temporary adapter preserves the same states atomically in its cache. Prepare
   atomically after full budget validation and before transport, revalidating sources and concurrent
   winners (including batch caps) before commit. Candidates, approval pauses and manual history compaction
   do not adopt versions. Preparation means selected for send, not confirmed delivery. Preserve raw data,
@@ -253,3 +255,40 @@ replay and output defaults before final budget validation and tool-result adopti
 approvals and off/legacy/V2 behavior aligned across transports. See the
 [user guide](docs/native-model-connections.md), [decision record](docs/upstream/v0.12.2-native-connections-followup.md)
 and [verification](docs/DEVELOPMENT.md#native-model-connection-verification).
+
+## v0.12.4 integration and temporary contexts
+
+- `direct.integrations.enable=false` disables saved personal tool/terminal connections for all
+  users, including admins, while retaining configuration. Model Direct Connections, Direct API
+  Chat and admin server connections remain independent.
+- Controls/Params permissions govern panel visibility. Preserve legal option validation, model
+  access, migration, memory, reset and precedence; do not filter valid values by panel permission.
+- Skills load eagerly by default, including ordinary UI model presets; `skills.lazy_loading.enable`
+  defaults false and mentions remain eager. Admin content/preview limits default to 20000/5000;
+  the tool-disabled cap remains 100000. Discovery never grants access.
+- Shared participants may create branches from others' messages. Preserve each viewer's branch;
+  reply authors own approvals/stops and chat owners own calls and shared manual compaction.
+- Access updates use dedicated endpoints and take effect immediately; reject unauthorized grant
+  changes with 403 without altering grants. Content updates cannot mutate access; creation filters grants.
+- Temporary V2 binds a server-owned `ContextScope` and explicit `ContextStore` to each request.
+  Never select storage with a request-global switch. Saved SQL and temporary cache share source,
+  selection and budget rules. No temporary history/checkpoint/result/selection SQL writes.
+- The page retains id/epoch/revision only in memory. Actor, branch, task, model and original fence
+  are authoritative; socket identity only routes delivery. Client history never grants execution
+  provenance. Temporary approvals cancel on disconnect; direct model RPCs never auto-replay.
+- Persist started before effects. Resolved-but-unpublished results remain blocking until canonical
+  raw publication commits atomically; task completion alone cannot discard them. Recover stored
+  originals without executing again. Quota failures do not truncate raw data or evict active work.
+- Closing fences new effects and waits for executing workers. Never infer completion from Redis
+  Pub/Sub, TTL, missing keys or an expired lease. Redis failures remain retryable 503 without memory
+  fallback; memory mode requires one worker/instance. Promotion reserves an idle scope, saves raw
+  history idempotently and releases only after success. Export strips derived context identities.
+- Encrypted channels default off globally and for ordinary users. Retain migration head
+  `a122d15e0001`; v0.12.4 adds no revision. Use coordinated drained-worker upgrades, not unverified
+  mixed-reader rolling updates. See [temporary contexts](docs/temporary-context-v2.md) and
+  [version decisions](docs/upstream/v0.12.4-decisions.md).
+
+Temporary control records may retire only after executor-confirmed completion and full raw-result
+publication. Preserve a server-only, byte-charged task-ID retirement ledger against reuse, and keep
+all raw history and selected versions. Control count caps must not become a fixed conversation
+turn limit; unsettled work and active-task retry protection remain intact.

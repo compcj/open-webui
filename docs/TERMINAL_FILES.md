@@ -19,8 +19,10 @@ selected terminal does not change a link's destination.
 Files are read from their original terminal path on each request. There are no stored copies,
 database records, or independent link expiry. Replacing a file changes the delivered content;
 deleting the file, losing access, changing the configured runtime context, or rotating
-`WEBUI_SECRET_KEY` makes the link unavailable. Temporary chats follow the terminal's existing
-context policy. Personal direct terminal connections retain their existing download behavior.
+`WEBUI_SECRET_KEY` makes the link unavailable. Temporary chats retain the original terminal context
+as described below. Personal direct terminal connections keep their download behavior, but the
+Direct Integrations switch disables saved personal tools and terminal connections for everyone,
+including admins. Configuration is retained for re-enabling; admin server connections are separate.
 
 ## Content isolation
 
@@ -70,6 +72,34 @@ These operations still require current terminal and chat access. Signed delivery
 resolve their original context, independently of the currently open chat. HTML is source/download
 content and SVG previews remain isolated; the new file actions do not enable same-origin port previews.
 
+## Temporary V2 contexts and saved artifacts
+
+A V2 temporary chat uses its server-issued context ID and epoch, independently of its socket ID.
+File browsing, comparisons, edits, notebook operations and interactive terminal sessions carry
+that identity together with the original admin connection and `temporary:<id>` chat context.
+HTTP requests use `X-Temporary-Context-Id` and `X-Temporary-Context-Epoch`; the WebSocket path
+passes the corresponding authenticated query values. Guessing a chat key or reusing a socket
+does not authorize another temporary workspace. Every operation checks the current actor and
+scope; missing, closed, expired or unavailable context state fails explicitly.
+
+The page captures the actor, connection and context for each operation. Changing accounts,
+connections or chats discards late reads and does not send a stale save to the new workspace.
+Cleanup of an already-created notebook or terminal session uses its original identity; this
+limited cleanup path does not permit new reads or execution after closing the page.
+
+Signed `display_file` links have a different lifetime from live browsing. Their verified
+signature retains the generating user, original connection, path and temporary context. Closing
+the temporary cache or converting the conversation to a saved chat does not redirect those links
+or invalidate them solely because the cache is gone. Requests still require the original actor,
+current terminal access and the signed origin. Another user cannot gain access by receiving an
+export or shared chat. Changing the current connection never changes an existing link's target.
+
+Closing a temporary chat does not delete files on the terminal. Conversion/export preserves raw
+tool calls, results and signed links while removing temporary compaction/selection identities.
+The temporary scope is released only after successful saving and confirmed task completion;
+failed saving keeps the page available. See the [temporary V2 lifecycle and storage guide](temporary-context-v2.md).
+Content isolation and the prohibition on same-origin port previews apply to all these paths.
+
 ## Verification
 
 Run with the development dependencies and Python 3.11/3.12, Node 22:
@@ -87,3 +117,9 @@ external resources, DTD/entity declarations, and masquerading HTML. Check chat i
 images, file-browser source/preview, and direct navigation in Chromium and Firefox. Verify owner
 access, denial for copied/shared links, original-context binding, download bytes, and document
 previews against the deployment's configured terminal/auth modes as well.
+
+For scoped temporary regressions, start with `test_temporary_terminal_context.py`,
+`test_terminal_file_routes.py`, the terminal API context/notebook tests and
+`Chat.temporary-terminal.test.ts`. The [development guide](DEVELOPMENT.md#v0124-integration-and-temporary-v2-verification)
+describes isolated environment setup and the wider acceptance map. Separate real terminal service
+checks from tests that substitute its transport.

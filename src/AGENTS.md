@@ -68,8 +68,8 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   and Chinese descriptions aligned: `/ask` selects sources automatically and returns up to ten
   results. This adds no per-user, conversation or tool-call override. See
   [verification](../docs/DEVELOPMENT.md#search1api-endpoint-verification).
-- Personal direct-integration configuration follows `direct.integrations.enable`; hiding the entry
-  must not disable existing connections or change the independent Direct API Chat policy.
+- Personal `direct.integrations.enable` is a hard switch: hide configuration and omit saved personal
+  tools/terminals when disabled, including admins. Retain settings for re-enable; keep Direct API Chat independent.
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Keep named engine
   generation/edit settings, descriptions, edit disablement, attachment deduplication, and compact
   image context for replay.
@@ -87,7 +87,7 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   in rendered output; preserve their raw replay data. Show Thinking for pending empty output,
   including empty native envelopes, but not while waiting for `ask_user` or after completion.
 
-See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and future merge checks.
+See [version decisions](../docs/upstream/v0.12.4-decisions.md) for rationale and future merge checks.
 
 ## v0.12.2 UI boundaries
 
@@ -139,7 +139,8 @@ See [version decisions](../docs/upstream/v0.12.2-decisions.md) for rationale and
   expandable details. Do not present a prior decision as a new reduction under current settings.
   Surface backend `context_usage.accounting_error` as a statistics warning, not a tool notice.
   Original-result viewing uses authenticated, branch-scoped bounded
-  pages from `/api/v1/chats/{chat_id}/tool-results/{result_id}`; render text without HTML execution,
+  pages from `/api/v1/chats/{chat_id}/tool-results/{result_id}` for saved chats or
+  `/api/v1/temporary-contexts/{id}/tool-results/{result_id}` for temporary scopes; render text without HTML execution,
   handle stale requests/errors and distinguish summaries, incomplete excerpts and exact rereads.
 - Expose `CONTEXT_COMPACTION_V2_SUMMARY_OUTPUT_PERCENT` as an admin-only integer 1–100, default 5.
   Its denominator is the resolved summary-model window. Explain that percentage tokens and the
@@ -195,3 +196,24 @@ native protocols as new personal browser-direct options. Preserve optional nativ
 approvals and reload; display text must not replace exact signed blocks. See the
 [native guide](../docs/native-model-connections.md) and
 [verification](../docs/DEVELOPMENT.md#native-model-connection-verification).
+
+## Temporary V2 and v0.12.4 controls
+
+Own `TemporaryContextController` in the mounted Chat page. Never persist its identity or raw history
+to account/localStorage stores. Sync the full raw parent graph before generation; every model owns
+its reply/task. Validate actor, id, epoch, model, task and sequence before applying events; callbacks
+also require the current socket generation and an unclaimed live RPC. Rebinding cancels old callbacks.
+Manual compact may target a user leaf; its callback identity is local to that request.
+
+State reconciliation may recover buffered raw output, never repeat tools or resume temporary
+approvals. New chat/navigation/account changes invalidate pending results. Close and stop wait for
+executor acknowledgement; keep page history on failure. Promotion and JSON export share the raw
+projection, preserving provider functions, citations and native signatures while stripping derived
+identities. Retry promotion with the same idempotency key; a lost response must not create duplicates.
+
+Controls/Params permissions hide panels but retain valid values. Skills eagerly load selected/model
+preset entries by default; mentions remain eager with lazy enabled. Access saves immediately through
+dedicated endpoints. Shared regeneration creates a branch without taking another viewer's selection.
+Register `knowledge_write` among visible composer controls; hiding it never clears the saved choice.
+See [temporary V2](../docs/temporary-context-v2.md) and
+[current decisions](../docs/upstream/v0.12.4-decisions.md).

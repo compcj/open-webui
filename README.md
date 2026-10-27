@@ -26,16 +26,16 @@ For development in this checkout, see [CONTRIBUTING.md](CONTRIBUTING.md),
 
 ## 与上游的差异 / Differences from upstream
 
-本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支，已完整合入官方 **[v0.12.2](https://github.com/open-webui/open-webui/tree/6a18585ff4c2e5f6805f682222cfbc46dc669ef8)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.12.2-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
+本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支，已完整合入官方 **[v0.12.4](https://github.com/open-webui/open-webui/tree/33c1978d5bad52a31df75ea55143025dfad18d16)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.12.4-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
 
-本轮核对日期为 **2026-10-22**，代码快照为 `c21cfb72b`；覆盖完整树差异和全部 **73 个分支独有提交**，通过远端完整历史补齐本地浅克隆缺失的 2 个提交。新增功能、行为/设计差异、重要修复及已被上游覆盖的能力分开列出，范围与证据见[差异审计](docs/upstream/v0.12.2-fork-audit.md)。
+本轮整合包含 v0.12.3 的累计变化。真实合并提交为 `f98e0230559427611699aa8f7504fe7b27981fab`，临时 V2 在后续提交实现；实际检查与覆盖边界见[本版验证报告](docs/upstream/v0.12.4-validation.md)，完整树差异与可达分支提交见[差异审计](docs/upstream/v0.12.4-fork-audit.md)。
 
-This fork of Open WebUI integrates the official **[v0.12.2](https://github.com/open-webui/open-webui/tree/6a18585ff4c2e5f6805f682222cfbc46dc669ef8)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.12.2-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
+This fork of Open WebUI integrates the official **[v0.12.4](https://github.com/open-webui/open-webui/tree/33c1978d5bad52a31df75ea55143025dfad18d16)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.12.4-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
 
 ### 新增功能与扩展 / Fork additions and extensions
 
-以下是相对官方 v0.12.2 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
-完整源码、测试和提交索引见[差异审计](docs/upstream/v0.12.2-fork-audit.md)。
+以下是相对官方 v0.12.4 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
+完整源码、测试和提交索引见[差异审计](docs/upstream/v0.12.4-fork-audit.md)。
 The inventory covers current additions and extensions to upstream features, with source/test evidence in the audit.
 
 | 功能 / Feature                                 | 本分支新增或扩展的行为 / Added behavior                                                                                                                                                                  |
@@ -71,17 +71,17 @@ The inventory covers current additions and extensions to upstream features, with
 | 压缩与回放           | 升级只保留 off/legacy，不自动开 V2；原文永不删除。V2 只给新结果分配预算，发送前原子固定选用；重试不重复执行工具，旧历史不随新任务或设置重写。                                                                         |
 | 共享聊天隐私         | 共用的 V2 摘要只来自保存的共享历史，个人指令/变量/终端留在当前请求；按回复作者过滤私有元数据、审批和停止，手动 `/compact` 仅所有者使用。                                                                              |
 | 终端内容隔离         | 下载强制附件，SVG/HTML 隔离，拒绝 WebUI 同源端口预览；签名链接不因分享聊天转移授权，文件操作始终携带正确聊天上下文。                                                                                                  |
-| 默认暴露面           | 个人 Integrations（工具/终端直连）配置入口默认隐藏，已有配置仍可用；模型 Direct Connections 是另一独立入口。Cookie 转发默认关闭，Apps/Tool Search/Realtime 等沿用原有默认，不因整合主动开启。                         |
+| 默认暴露面           | 个人 Integrations 默认关闭，关闭时停用已有个人工具/终端连接（含管理员），保留配置；模型 Direct Connections 独立。Cookie 转发默认关闭，Apps/Tool Search/Realtime 等沿用原有默认，不因整合主动开启。                    |
 | 权限失败与 App 写入  | Redis 撤权检查不可用时返回可重试拒绝并保留登录 Cookie。App 私有交互与公开写入分开，App 返回后重新检查写权限，频道/私有群组权限仍适用。                                                                                |
 | 原生协议和工具信任   | 协议、Gemini Schema 模式不按 URL/模型名推测；签名思考绑定协议/连接/模型/原文。仅服务器注册的内置身份可做分发和精确结果处理，外部同名工具不获得特权。                                                                  |
 | 构建、发布与协作     | 保留分支 GHCR 工作流，移除 PyPI、Docker Hub 复制和 Helm 通知；标准镜像为主要支持目标。根/前后端 AGENTS 为统一规则来源，工具适配文件仅引用，发布仍需单独授权。                                                         |
 
 ### 已采用的上游功能及适配 / Adopted upstream features
 
-以下基础能力来自上游，分支适配另行说明。本次累计合入 v0.12.1 与 v0.12.2：修订比较与 Keep both、多模型消息配对、普通通话头像、Azure Realtime、
+以下基础能力来自上游，分支适配另行说明。此前 v0.12.1 与 v0.12.2 已合入：修订比较与 Keep both、多模型消息配对、普通通话头像、Azure Realtime、
 按聊天上下文的终端文件操作、Notebook、批量删除和 ZIP 下载。文件比较读取使用同一聊天上下文。
 
-This integration includes v0.12.1 and v0.12.2: revision comparison and Keep both, paired multi-model
+Previously integrated v0.12.1 and v0.12.2 capabilities include: revision comparison and Keep both, paired multi-model
 messages, Standard call avatars, Azure Realtime, and per-chat terminal file operations including
 notebooks, bulk deletion and ZIP downloads. File comparisons read from the same chat context.
 
@@ -92,11 +92,11 @@ Only the chat owner can start Standard or Realtime calls, including when the par
 Switching to another owner's chat ends the call. Existing transcripts retain author attribution and
 private metadata filtering; ordinary dictation retains its existing permissions.
 
-启用技能工具后，超过 20000 字符的技能首次加载 5000 字符概览，可用搜索及分页继续读取；
+启用技能工具后，正文阈值与概览默认 20000/5000 字符，管理员可配置；较长技能先加载概览，可搜索或分页继续读取；
 未启用技能工具时仍最多注入 100000 字符。概览、搜索和分页使用同一固定版本及运行时准备后的正文，
 中文及 `{baseDir}` 替换后的偏移保持一致。搜索结果按完整条目缩减并标明遗漏，不做语义摘要。
 
-With skill tools enabled, skills longer than 20,000 characters initially load a 5,000-character overview;
+With skill tools enabled, the configurable content/preview limits default to 20,000/5,000 characters;
 search and paging expose the remainder. Without skill tools, injection remains capped at 100,000
 characters. Overview, search and pages share the pinned version and prepared runtime text, preserving
 Unicode offsets and `{baseDir}` substitutions. Search reduction retains whole entries and marks omissions.
@@ -186,7 +186,7 @@ V2 默认启用工具结果预算：单个结果最多占模型窗口的 **10%**
 历史已采用的原文／摘要保持稳定，不因下一轮任务或预算设置变化再次参与工具分配；摘要失败时使用明确标记的不完整摘录。
 原始结果完整保存，已压缩结果可在所属回复的状态中查看原文并分页查找；模型也可用 `read_tool_result` 读取精确片段。
 只有本轮新发生的工具摘要／摘录才显示压缩提示；保留原文、精确回读及缓存复用不额外提示，旧记录留在原回复。
-采用版本与完整批次统计一起保存，刷新后的 `/status` 仍包含这些不产生提示的结果，区分窗口 C、输入预算 B、触发阈值 T
+采用版本与完整批次统计一起保存；普通聊天刷新后的 `/status` 仍包含这些不产生提示的结果，临时聊天仅在当前页面及 scope 有效期间保留。状态区分窗口 C、输入预算 B、触发阈值 T
 以及历史批次的时间、当时上限和缩减原因。旧统计不完整时明确标注。升级／导入后没有采用记录的工具以原文回放。
 V2 设置中的“摘要输出预算比例”默认 **5%**，按摘要模型自身窗口计算，与显式或继承的 token 输出配置取较大值，
 再受模型容量及工具额度约束。摘要请求会分块并检查发送预算，明确超限时缩小片段重试；普通聊天预算规则不变。
@@ -204,8 +204,9 @@ and summaries remain stable across later tasks and settings; failed summaries us
 and are available from the source reply's compaction status and the model's `read_tool_result` tool.
 Only new tool summaries/excerpts for the current reply show compaction notices. Retained originals,
 exact reads and cached projections are silent; previous notices stay on their original reply.
-Selected versions and full batch statistics are saved together. `/status` retains silent results after
-reload and distinguishes window C, input budget B and trigger T, plus historical decision times, limits
+Selected versions and full batch statistics are saved together. Saved chats retain silent results in
+`/status` after reload; temporary chats retain them only while the current page and scope remain valid.
+Status distinguishes window C, input budget B and trigger T, plus historical decision times, limits
 and reduction reasons. Incomplete legacy statistics are labelled; upgraded/imported tools without a
 selection replay raw content.
 The V2 **Summary output budget (%)** defaults to **5%** of the summary model's own window. It takes
@@ -229,11 +230,11 @@ control/model defaults, then global defaults. Reset clears explicit choices and 
 chat participants use their own permissions and credentials; approval and stop actions belong to the
 reply author, and only the owner can run `/compact`.
 
-Legacy 已采用 v0.12.2 轮间检查点和单轮用量；V2 独立处理最终请求和超窗重试，同一请求只走一套算法。
+Legacy 已接入 v0.12.4 的临时聊天和短历史改进，并保留轮间检查点和单轮用量；V2 独立处理最终请求和超窗重试，同一请求只走一套算法。
 共享 V2 状态按聊天、模型、有效分支共用，摘要只取已保存的共享历史；个人指令、变量及终端上下文仅用于当前请求。
 无法证明来自共享历史的旧摘要保留在数据库中，共享时回放原文。Tool Search 定义保留完整条目，技能精确读取按页缩小；连必要条目也放不下时返回可操作错误。
 
-Legacy uses v0.12.2 between-round checkpoints and per-round usage. V2 independently guards final sends and overflow retries.
+Legacy includes v0.12.4 temporary-chat and short-history improvements, retaining between-round checkpoints and per-round usage. V2 independently guards final sends and overflow retries.
 Participants share V2 state for the same chat/model/valid branch. Shared summaries contain saved history;
 private instructions, variables and terminal context stay in the current request. Old summaries without
 shared provenance replay raw content. Tool schemas remain whole entries and skill reads use exact pages;
@@ -299,20 +300,34 @@ Under **Settings → Connections → Edit Connection → Advanced**, admins can 
 
 **Send Session ID** is off by default. When enabled, it sends the chat ID under a selectable/custom header name (default `x-session-id`), stable across turns, retries and tool continuations. Temporary chats use their first root user-message ID instead of the shared browser socket ID. Verification and requests without chat context do not automatically add an ID. Explicit UA/session controls override matching entries in Headers; cache benefits depend on provider support.
 
-### v0.12.2 配置默认值 / Configuration defaults
+### v0.12.4 整合与临时 V2 / Integration and temporary V2
+
+完整合入 v0.12.3/v0.12.4 的模型自定义工具、MCP 2.3.0、流式存储及互动恢复、逐键聊天参数、共享新分支、可见控件、文档批注与选区询问，以及加密频道。加密频道全局与普通用户权限默认关闭；Apps、Tool Search、Realtime、V2 不因升级启用。上游完整发布记录保留在 [CHANGELOG](CHANGELOG.md)。
+
+The merge includes v0.12.3/v0.12.4 custom model tools, MCP 2.3.0, streaming and interaction recovery, chat parameter patches, collaborative branches, visible controls, document comments and selection queries, and encrypted channels. Encrypted channels default off globally and for ordinary users. The upgrade does not enable Apps, Tool Search, Realtime or V2.
+
+Controls／Params 权限控制面板显示；合法选项及已保存个人参数仍可使用，模型访问授权不变。协作者可从他人消息创建新分支，其他查看者保留原分支。Access 独立即时保存；非法修改返回 403，原授权不变。技能正文/概览管理员限额默认 20000/5000 字符，无技能工具时仍限 100000 字符。
+
+Controls/Params permissions govern panel visibility; valid options and saved personal parameters remain usable, subject to model access. Collaborators can create a new branch from another participant's message without changing other viewers' selected branch. Access changes save immediately through dedicated endpoints; denied updates leave existing grants intact. Skill body/preview limits default to 20000/5000 characters, with the 100000-character tool-disabled cap retained.
+
+临时聊天支持完整 V2：历史压缩、新工具结果预算、原文分页、状态和 `/compact`。对话只在当前页面内存保留，刷新、新建或离开不恢复完整历史。后台缓存默认空闲 30 分钟、断线宽限 5 分钟、最长 24 小时；每上下文 64 MiB、每用户 128 MiB/4 个、每 store 512 MiB。配置 Redis 时故障返回可重试 503；未配置 Redis 只支持单实例单 worker。Redis 持久化沿用部署策略，缓存不保证永不落盘。停止与保存普通聊天需执行者完成确认，存储故障不导致工具重执行。详见[临时 V2 指南](docs/temporary-context-v2.md)。
+
+Temporary chats support V2 history compaction, tool-result budgets, exact raw reads, status and `/compact`. Conversation state lives in the current page; refresh, navigation and new chats do not restore it. Cache defaults are 30 minutes idle, 5 minutes disconnected and 24 hours maximum, with 64 MiB per context, 128 MiB/four contexts per user and 512 MiB per store. Configured Redis failures return retryable 503; deployments without Redis require a single instance and worker. Redis persistence follows deployment policy. Saving or closing waits for executor completion, and storage failures never authorize repeating tools. See the [temporary V2 guide](docs/temporary-context-v2.md).
+
+### v0.12.4 配置默认值 / Configuration defaults
 
 Apps 默认关闭；Tool Search、强制 MFA 和 Realtime 通话采用上游默认，升级不主动开启，也不自动启用 V2。新增知识文件浏览、资源版本历史和独立插件开关来自上游。<br>Apps default off. Tool Search, mandatory MFA and Realtime calls retain upstream defaults; the upgrade does not enable them or V2. Knowledge file browsing, resource history and independent plugin switches are upstream capabilities.
 
-- **技能自动发现默认关闭**：管理员在“设置 → 扩展功能（Integrations）”选择工作区技能白名单；白名单仍受原有访问权限约束，管理员也不豁免。终端按管理员连接单独开启，开启后包含现有和以后新增的技能。手动选择和模型预设保持原有行为。<br>**Automatic skill discovery starts disabled**: admins select workspace skills under Settings → Integrations, subject to existing access rights for every role. Terminal connections opt in separately and include present and future terminal skills. Manual selection and model presets retain their behavior.
+- **技能自动发现默认关闭**：管理员在“设置 → 扩展功能（Integrations）”选择工作区技能白名单；白名单仍受原有访问权限约束，管理员也不豁免。终端按管理员连接单独开启，开启后包含现有和以后新增的技能。手动选择和普通 UI 模型预设默认立即加载，懒加载默认关闭，mention 始终立即加载。<br>**Automatic skill discovery starts disabled**: admins select workspace skills under Settings → Integrations, subject to existing access rights for every role. Terminal connections opt in separately and include present and future terminal skills. Manual selection and ordinary UI model presets load immediately by default; lazy loading is opt-in and mentions always load immediately.
 - **终端 AGENTS.md 独立加载**：每轮读取所选终端 home 下的工作说明；读取失败继续聊天。<br>**Terminal AGENTS.md loads independently** each turn from the selected terminal's home directory; failed reads do not stop chat.
-- **个人工具/终端直连的 Integrations 配置入口默认隐藏**，管理员可以开启，已有连接继续可用；与模型 Direct Connections 入口及 Direct API Chat 开关分别控制。Cookie 转发默认关闭。<br>**Personal Integrations configuration for tools/terminals is hidden by default**, can be enabled by an admin, and does not disable existing connections. Model Direct Connections and Direct API Chat have separate controls. Cookie forwarding is opt-in.
+- **个人 Integrations 默认关闭**，关闭时已有个人工具/终端连接也停用，管理员同样受限；配置保留，重新开启恢复。模型 Direct Connections 与 Direct API Chat 分别控制。Cookie 转发默认关闭。<br>**Personal Integrations default off** and disable existing personal tool/terminal connections for every role, including admins. Configuration is retained and restored on re-enable. Model Direct Connections and Direct API Chat have separate controls. Cookie forwarding is opt-in.
 - **Redis 撤销检查失败时拒绝请求**并提示重试，保留登录 Cookie；未配置 Redis 的部署保持原有行为。<br>**Unavailable Redis revocation checks reject requests with a retryable error**, preserving login cookies. Deployments without Redis retain their existing behavior.
 - **标准镜像为主要支持目标**。slim 面向外部 AI 服务、SQLite/PostgreSQL、pgvector、本地或 S3 文件存储，不提供标准镜像的全部本地处理与集成依赖。<br>**The standard image is the primary supported target**. Slim targets external AI services, SQLite/PostgreSQL, pgvector, and local or S3 storage, with fewer local-processing and integration dependencies.
 
 ### 重要 BUG 修复 / Important fixes
 
-以下列出相对官方 v0.12.2 仍有实现差异的重要修复，包括合并时发现的回归。
-源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.12.2-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
+以下列出相对官方 v0.12.4 仍有实现差异的重要修复，包括合并时发现的回归。
+源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.12.4-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
 These are retained fixes against the pinned upstream baseline; the audit links their implementation and tests.
 
 | 场景 / Scenario          | 修复后的行为 / Result                                                                                                                                            |
@@ -347,8 +362,8 @@ Upstream already supplies the base terminal identity forwarding, Tavily depth co
 version history, skill overviews, `.skill`, revision comparison and multi-model pairing. Their retained
 fork adaptations are listed separately; historical fork contributions remain traceable in the commit index.
 
-升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.12.2-decisions.md#升级与回滚)。
-Read the [upgrade and rollback checks](docs/upstream/v0.12.2-decisions.md#升级与回滚) before upgrading.
+升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.12.4-decisions.md#迁移与验收)。
+Read the [upgrade and rollback checks](docs/upstream/v0.12.4-decisions.md#迁移与验收) before upgrading.
 
 > [!NOTE]
 > 下方的 `pip install open-webui` 和 `ghcr.io/open-webui/open-webui` 示例安装上游发行物。使用本分支功能需从本仓库源码构建；参见[开发指南](docs/DEVELOPMENT.md)。

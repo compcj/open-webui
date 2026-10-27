@@ -161,3 +161,14 @@ Commands and test coverage live in the [development guide](DEVELOPMENT.md#native
 Real-provider checks remain pending for this change; no credentials or live-call success are recorded here.
 Mocked tests do not establish live provider/gateway acceptance. Validate the intended model,
 authentication, tools and signed continuations separately against the actual service.
+
+## 临时聊天 / Temporary chats
+
+临时 V2 使用同样的原生协议预算与签名回放校验；保存普通聊天或导出时保留原始签名和调用配对，
+清除临时 scope、checkpoint、selection 和游标。浏览器直连的回调限定当前页面与连接代次，
+断线后不自动重发。Pipe 继续自行管理上下文，不纳入 V2。详见[临时 V2](temporary-context-v2.md)。
+
+Temporary V2 retains native framing budgets, signatures and tool pairing. Promotion and export keep
+the original signed history while removing temporary scope and derived selection/checkpoint IDs.
+Browser-direct callbacks belong to the current page and socket generation, and do not auto-retry
+after disconnect. Pipes remain outside V2. See [temporary context contracts](temporary-context-v2.md).

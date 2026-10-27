@@ -208,3 +208,11 @@ the file. If text is saved but indexing fails, inspect the returned file ID and 
 text again after fixing indexing; do not blindly repeat an append.
 When retrieval bypass is configured, edits save text and report `indexing_skipped: true` with
 `indexed: false`; restore retrieval and save verified full text to rebuild the index.
+
+## 临时聊天中的写入
+
+临时聊天不保存普通聊天历史，但已明确授权的知识写入仍会持久修改知识库；关闭页面不会撤销。
+读取、挂载、临时 scope 和 V2 压缩都不授予写权限。当前用户、附件范围和文件写权限在执行时重查，
+终端导入绑定当前管理员连接和临时 epoch，不能把模型提供的路径当作 WebUI 主机路径。
+存储或网络中断时结果未知会阻止自动重复执行；部分索引失败仍按文件 ID 检查已保存正文。
+参见[临时 V2 的执行与失败合同](temporary-context-v2.md)。

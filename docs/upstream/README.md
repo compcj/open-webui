@@ -7,15 +7,18 @@ AGENTS.md instructions, and the current user request govern implementation.
 
 | Upstream release | Design and upgrade record                                                      |
 | ---------------- | ------------------------------------------------------------------------------ |
-| v0.12.2          | [Current decisions, compatibility and validation](v0.12.2-decisions.md)        |
+| v0.12.4          | [Current decisions, compatibility and validation](v0.12.4-decisions.md)        |
+| v0.12.2          | [Historical decisions, compatibility and validation](v0.12.2-decisions.md)     |
 | v0.12.0          | [Historical decisions, compatibility and validation](v0.12.0-decisions.md)     |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
-The current release decision record is v0.12.2. The [2026-10-22 fork audit](v0.12.2-fork-audit.md)
-extends its coverage through `c21cfb72b`, with feature/fix evidence, all 73 fork-only commits,
-remote verification of two commits missing locally, and a [475-path net difference inventory](v0.12.2-fork-files.md).
-These are dated snapshots; recompute the tree/history comparison for later work.
-Earlier release records and their validation numbers remain historical references.
+The current integrated release is v0.12.4. Read its [decision record](v0.12.4-decisions.md),
+[temporary V2 contracts](../temporary-context-v2.md), [complete audit](v0.12.4-fork-audit.md),
+[file inventory](v0.12.4-fork-files.md) and [actual validation with limits](v0.12.4-validation.md).
+The genuine merge is `f98e0230559427611699aa8f7504fe7b27981fab`; the final runtime code is
+`a09b68687c54aaaef1116bb002eedee004d2ba68`. The integration is local, with no push, release or deployment.
+These records are dated snapshots; recompute tree/history comparisons for later work. Earlier
+release records and validation numbers remain historical evidence.
 
 The v0.11.4 [tool citation cache follow-up](v0.11.4-tool-citation-cache-followup.md) changes source
 placement while retaining D05's evidence and numbering policy. Check it alongside the original
@@ -75,7 +78,7 @@ model. Read it before merging URL ingestion, terminal file access or knowledge p
 
 ## Reply lifecycle follow-up
 
-The [current audit](v0.12.2-fork-audit.md#近期回复生命周期修复) records confirmed cancellation across
+The [v0.12.2 lifecycle audit](v0.12.2-fork-audit.md#近期回复生命周期修复) records confirmed cancellation across
 Redis workers, preservation of interrupted streams/SSE completion, and isolation of concurrent model
 requests. Read it before merging task scheduling, streaming handlers or multi-model fan-out. Current
 user behavior is in [chat access and stopping](../chat-access-controls.md), with checks in

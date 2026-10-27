@@ -31,10 +31,10 @@ Other users may need to reload the page to refresh controls; backend enforcement
 Requests already generating are not cancelled. No database schema migration is required.
 
 The personal **Integrations** entry for tool/terminal connections has a separate administrator setting,
-`direct.integrations.enable`, which defaults to hidden. Hiding that entry does not revoke saved
-connections. Model **Direct Connections** uses the independent `enable_direct_connections` control;
-neither is the same as disabling context-free Direct API Chat. Cookie forwarding also remains a
-separate, default-off connection option.
+`direct.integrations.enable`, which defaults to disabled. Disabling it stops saved personal tool
+and terminal connections for every user, including administrators; configuration is retained for
+re-enabling. Model **Direct Connections**, administrator server connections and context-free Direct
+API Chat remain independent. Cookie forwarding is a separate, default-off connection option.
 
 ## Shared conversations and reply ownership
 
@@ -74,7 +74,8 @@ For example, knowledge text may already have been saved before indexing was inte
 the result before retrying a write. See [knowledge write recovery](knowledge-write-tools.md).
 
 If the provider transport breaks, the backend retains buffered response text and completed earlier
-tool results in saved chats, marks unfinished output incomplete and surfaces the failure. It does not
+tool results in the saved chat or active temporary cache, marks unfinished output incomplete and
+surfaces the failure. Temporary history still lasts only for the current page. It does not
 execute an unfinished tool call or partial generated code from that interrupted round. A protocol SSE
 `[DONE]` event ends the stream without waiting for the HTTP connection to close; the same text inside
 an ordinary answer is not a completion event. A later successful continuation clears an earlier stream
@@ -96,3 +97,14 @@ Apps and terminal file access have additional boundaries: private App interactio
 to read-only members, but public replies and stored message updates recheck write permission after
 the App responds. A [signed terminal file link](TERMINAL_FILES.md) remains bound to its original
 user/terminal/context; sharing a chat does not transfer that file authorization.
+
+## v0.12.4 协作与临时 scope
+
+有写权限的共享参与者可以从他人的消息编辑或重新生成新分支；其他查看者保持当前分支。
+新回复的审批与停止归回复作者，通话和共享 `/compact` 仍归聊天所有者。内容更新不夹带授权，
+Access 通过独立接口立即保存；403 不改变已有授权。
+
+临时聊天的 owner/epoch 与 socket 分离，管理员也不能读取别人的 scope。停止接口需要当前用户的
+临时身份；关闭先隔离新执行，收到执行者完成确认并保存所有已完成结果后才回收。执行状态未知、
+Redis 不可用或停止超时均保持可重试阻塞，不推进排队消息。续租、租约过期和 Pub/Sub 成功不是
+停止完成证明。刷新不恢复临时审批，浏览器直连断线不自动重发。见[临时 V2](temporary-context-v2.md)。

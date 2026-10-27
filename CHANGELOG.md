@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.4] - 2026-10-25
 
+### Fork integration (2026-10-28)
+
+- Integrates official v0.12.4, including all v0.12.3 changes, with genuine merge ancestry and the retained fork features described in the [decision record](docs/upstream/v0.12.4-decisions.md).
+- Adopts the personal Integrations hard switch, display-only Controls/Params permissions, eager skill loading with optional lazy loading, collaborative reply branches, and immediate Access saves. Skill overview/read defaults remain 5000/20000 characters.
+- Adds complete V2 compaction for temporary chats: history and tool-result budgets, exact raw results, usage, manual `/compact`, and lossless conversion/export. The conversation remains local to the current page; a bounded server cache supports authenticated reconnects without creating ordinary chat or V2 SQL records.
+- Preserves execution-confirmed stopping, immutable raw tool output, signed native replay, frozen citations, terminal isolation, knowledge-write opt-in, account isolation and shared-history privacy. Uncertain tool outcomes never authorize automatic execution retries.
+- Uses Python 3.12/Debian 13 for the standard image, preserves fork build/release safeguards, and pins compatible torch/vision/audio versions. Encryption artifacts are verified without requiring a Rust rebuild.
+- Keeps encryption, Apps, Tool Search and Realtime disabled by default; upgrading never enables V2. The database migration head remains `a122d15e0001`.
+- Upgrade by draining old workers and switching together; rollback restores the complete pre-upgrade database, uploads, configuration and image backup. See [validation and remaining limits](docs/upstream/v0.12.4-validation.md).
+
 ### Added
 
 - 🎯 **Load selected skills on demand.** Administrators can turn on "Load selected skills on demand" under Admin Settings > General or set "ENABLE_SKILL_LAZY_LOADING", so skills selected in the chat or attached to a model are only listed for the model to load when it needs them instead of sending their full instructions with every message, while skills mentioned in the message still load right away, and it is off by default and needs the built-in Skills tool. [Commit](https://github.com/open-webui/open-webui/commit/079fb19e75f8be4b44fada0c755cf383b21a625b)

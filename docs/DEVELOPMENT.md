@@ -179,10 +179,10 @@ repository-wide cleanup solely to make an unrelated check green.
 ## Fork regression map
 
 Read [the upstream merge index](upstream/README.md) and the
-[v0.12.2 decisions](upstream/v0.12.2-decisions.md) before comparing or merging upstream.
+[v0.12.4 decisions](upstream/v0.12.4-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
-The [dated fork audit](upstream/v0.12.2-fork-audit.md) inventories current behavior and all
+The [dated fork audit](upstream/v0.12.4-fork-audit.md) inventories current behavior and all
 fork-only commits. Its historical verification numbers do not establish current runtime health.
 
 | Behavior                              | Implementation boundary                                                                | Regression starting point                                                                                                                                                                    |
@@ -233,17 +233,17 @@ git status --short
 git branch --show-current
 git rev-parse HEAD
 git rev-parse --is-shallow-repository
-git ls-remote https://github.com/open-webui/open-webui.git refs/tags/v0.12.2
-git merge-base HEAD 6a18585ff4c2e5f6805f682222cfbc46dc669ef8
-git diff --name-status 6a18585ff4c2e5f6805f682222cfbc46dc669ef8 HEAD
-git log --topo-order --format="%H %s" 6a18585ff4c2e5f6805f682222cfbc46dc669ef8..HEAD
+git ls-remote https://github.com/open-webui/open-webui.git refs/tags/v0.12.4
+git merge-base HEAD 33c1978d5bad52a31df75ea55143025dfad18d16
+git diff --name-status 33c1978d5bad52a31df75ea55143025dfad18d16 HEAD
+git log --topo-order --format="%H %s" 33c1978d5bad52a31df75ea55143025dfad18d16..HEAD
 git diff
 ```
 
 These commands deliberately pin the currently integrated release; update the official SHA when the
 comparison target changes. `ls-remote` needs network access but does not fetch objects or alter local
 tags. A shallow checkout limits historical attribution even when both complete comparison trees are
-present. Verify the complete history using a read-only remote comparison when available. For the
+present. Verify the complete history using a read-only remote comparison when available. For the historical v0.12.2
 recorded snapshot, the following returns 73 commits, while local `rev-list` returns only 71:
 
 ```sh
@@ -806,7 +806,7 @@ cross-round IDs and no repeated execution. Skill tests cover Chinese character o
 prepared OpenClaw roots, pinned versions, disabled discovery and `.skill` round trips. Exercise revision
 comparison with a changed draft/version, model controls, tool drafts, ratings, narrow screens and IME.
 
-`package.json` and the root package entries in `package-lock.json` must report `0.12.2`; Python's Hatch
+`package.json` and the root package entries in `package-lock.json` must report `0.12.4`; Python's Hatch
 metadata reads that same file. Use npm for `@codemirror/merge`, Mermaid and lock resolution, and uv for
 Python lock verification. Check shared standard/slim pins and preserve intentional exclusions.
 `valkey-glide-sync>=2.5.2` is required only when using the optional Valkey vector backend; it is not
@@ -856,3 +856,39 @@ nonstreaming, approved tools, reload/retry of signed thinking, custom gateway/au
 budget rejection with the intended service. Check Chat Completions/Responses, personal direct and
 Ollama regressions. Do not report live verification unless actual calls were performed. See the
 [user guide](native-model-connections.md) and [merge follow-up](upstream/v0.12.2-native-connections-followup.md).
+
+## v0.12.4 integration and temporary V2 verification
+
+Use Node 22 and isolated Python 3.12; also run the declared Python 3.11 environment. The standard
+image uses Python 3.12/Debian 13 and the ABI constraints in `backend/requirements-docker-torch.txt`.
+The slim image retains its separate dependency scope. Application imports require a synthetic
+`WEBUI_SECRET_KEY` and isolated `DATA_DIR`, `STATIC_DIR`, `DATABASE_URL`; never point tests at live data.
+
+| Boundary                                                   | Test map                                                                                                                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Integrations, controls, eager/lazy skills, grants          | `backend/tests/test_v0124_product_decisions.py`, frontend controls/settings/skills tests                                                                  |
+| Cache quota/CAS/expiry/fences/control retirement           | `test_temporary_context_store.py`, `test_temporary_context_concurrency.py`, `test_temporary_context_redis.py`                                             |
+| Graph, shared source rules, raw publication, SQL exclusion | `test_temporary_context_graph.py`, `test_temporary_context_adapters.py`, `test_temporary_context_result_integrity.py`, `test_temporary_tool_execution.py` |
+| HTTP, runtime, completion and save                         | `test_temporary_context_routes.py`, `test_temporary_context_runtime.py`, `test_temporary_task_completion.py`, `test_chat_promotion.py`                    |
+| Page lifecycle, RPC, terminal identity and raw export      | `src/lib/utils/temporary-context.test.ts`, `src/lib/utils/chat-context-copy.test.ts`, `src/lib/components/chat/Chat.temporary-*.test.ts`                  |
+| TLS and terminal/knowledge boundaries                      | `test_redis_sentinel_tls.py`, `test_temporary_terminal_context.py`, existing terminal and knowledge import integration suites                             |
+
+Run focused files with `python -m pytest <explicit paths> -q`, then the combined backend suite and
+`npm run test:frontend -- --run`. Provide an isolated `TEST_POSTGRES_URL` for migration coverage.
+Real temporary Redis tests accept `TEMPORARY_CONTEXT_TEST_SERVICES_JSON` pointing to an ignored JSON
+file with `redis_url`; namespaces are randomized and teardown only deletes owned keys. Missing
+service configuration is a skipped real-service check, not a pass. Keep credentials out of reports.
+
+Run `npm run check`, `npm run crypto:verify`, `npm run build`, `uv lock --check`, script/workflow
+checks, targeted format/link checks and `git diff --check`. Compare existing type diagnostics by
+file against both fork and official baselines; never call an exit-1 check passing. Translation
+extraction writes files; run it twice and verify the second pass is stable. Keep Pyodide's tracked
+lock unchanged unless a reviewed upstream change requires it.
+
+Actual runtime acceptance must cover the new standard image, real Redis workers and reconnection,
+temporary full budgets/raw reads/manual compaction, stop timeout, expiry while tools execute,
+uncertain outcomes, CAS/quota races, stale epoch, account changes and promotion. Check that ordinary
+chat/chat_message and the four V2 SQL tables have no temporary-context rows. Test saved chats and all
+native transports too. A synthetic provider or fake ACL must be identified as such in the report.
+The sole migration head remains `a122d15e0001`; use the existing SQLite/PostgreSQL fixture suite.
+See [current evidence and remaining checks](upstream/v0.12.4-validation.md).
