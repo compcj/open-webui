@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import time
 import uuid
 
 from open_webui.internal.db import Base, get_async_db_context
+from open_webui.utils.context_store_rules import branch_chain, source_digest, source_state
 from open_webui.models.chat_context_checkpoints import read_snapshot_in_session
 from sqlalchemy import BigInteger, Column, ForeignKey, Index, Integer, Text, UniqueConstraint, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -68,84 +67,6 @@ class ChatToolResultContext(Base):
 
 def row_dict(row) -> dict:
     return {column.key: copy.deepcopy(getattr(row, column.key)) for column in row.__table__.columns}
-
-
-def source_digest(value) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), default=str)
-    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
-
-
-def branch_chain(messages: dict, branch_id: str) -> list[dict] | None:
-    """Reject dangling parents and cycles instead of admitting a partial branch."""
-    chain, seen = [], set()
-    current = branch_id
-    while current:
-        if current in seen or current not in messages:
-            return None
-        seen.add(current)
-        message = messages[current]
-        chain.append({**message, 'id': current})
-        current = message.get('parentId') or message.get('parent_id')
-    return list(reversed(chain))
-
-
-def source_state(snapshot: dict | None, descriptor: dict, branch_id: str) -> tuple[str, str] | None:
-    from open_webui.utils.tool_result_sources import source_text
-
-    if not snapshot:
-        return None
-    chain = branch_chain(snapshot['messages_map'], branch_id)
-    if not chain:
-        return None
-    message_id, output_id = descriptor.get('message_id'), descriptor.get('output_id')
-    source_index = next((i for i, message in enumerate(chain) if message['id'] == message_id), None)
-    if source_index is None:
-        return None
-    message = chain[source_index]
-    if message.get('role') != 'assistant':
-        return None
-    text = source_text(message, output_id)
-    if text is None or text != descriptor.get('text'):
-        return None
-    items = [
-        item
-        for index, item in enumerate(message.get('output') or [])
-        if isinstance(item, dict) and (item.get('id') or f'output-{index}') == output_id
-    ]
-    if not items:
-        sidecars = message.get('tool_results') or (message.get('meta') or {}).get('tool_results') or []
-        items = [item for item in sidecars if item.get('id') == output_id]
-    if len(items) != 1:
-        return None
-    item = items[0]
-    if item.get('call_id') and item['call_id'] != descriptor.get('call_id'):
-        return None
-    provenance = item.get('tool_result') or item
-    for key in ('batch_id', 'name', 'kind'):
-        if key in provenance and provenance[key] != descriptor.get(key):
-            return None
-    identity = {key: descriptor[key] for key in ('message_id', 'output_id', 'call_id', 'batch_id', 'name', 'kind')}
-    # Only the selected source is immutable on its originating assistant. Later
-    # output/content appended to that assistant must not invalidate earlier tools.
-    ancestors = [
-        {
-            **{
-                key: message.get(key)
-                for key in ('id', 'parentId', 'parent_id', 'role', 'content', 'output', 'tool_calls', 'files')
-            },
-            'tool_results': message.get('tool_results') or (message.get('meta') or {}).get('tool_results') or [],
-        }
-        for message in chain[:source_index]
-    ]
-    source_hash = source_digest(text)
-    return source_hash, source_digest(
-        {
-            'ancestors': ancestors,
-            'source': identity,
-            'source_hash': source_hash,
-            'parent': message.get('parentId') or message.get('parent_id'),
-        }
-    )
 
 
 async def valid_result(db, result_id: str, branch_id: str, *, lock=False):
