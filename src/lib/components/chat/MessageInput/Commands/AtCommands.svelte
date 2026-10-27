@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import Fuse from 'fuse.js';
 	import { getContext, onDestroy, onMount, tick } from 'svelte';
 
@@ -31,6 +32,7 @@
 	import Youtube from '$lib/components/icons/Youtube.svelte';
 	import { toast } from 'svelte-sonner';
 
+	const temporaryContext: any = getContext('temporary-context');
 	const i18n = getContext<any>('i18n');
 
 	export let query = '';
@@ -137,7 +139,7 @@
 
 	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
 
-	const getSelectedTerminal = (): { url: string; key: string } | null => {
+	const getSelectedTerminal = (): { url: string; key: TerminalCredential } | null => {
 		if (!$selectedTerminalId) return null;
 
 		const systemTerminal = ($terminalServers ?? []).find(
@@ -147,12 +149,19 @@
 		if (systemTerminal) {
 			if (
 				systemChatContext === false ||
-				(isTemporaryChatId($activeChatId) && systemChatContext?.context_id === 'chat_id')
+				(isTemporaryChatId($activeChatId) &&
+					systemChatContext?.context_id === 'chat_id' &&
+					temporaryContext?.chatId !== $activeChatId)
 			) {
 				return null;
 			}
 
-			return { url: systemTerminal.url, key: localStorage.token };
+			return {
+				url: systemTerminal.url,
+				key:
+					temporaryContext?.terminalCredential(localStorage.token, $activeChatId) ??
+					localStorage.token
+			};
 		}
 
 		const directTerminal = (

@@ -20,6 +20,7 @@
 	import Cloud from '$lib/components/icons/Cloud.svelte';
 
 	const i18n = getContext('i18n');
+	const temporaryContext: any = getContext('temporary-context');
 
 	export let show = false;
 	export let disabled = false;
@@ -30,7 +31,11 @@
 		(t) =>
 			t.id &&
 			chatContext(t) !== false &&
-			!(isTemporaryChatId($activeChatId) && chatContext(t)?.context_id === 'chat_id')
+			!(
+				isTemporaryChatId($activeChatId) &&
+				chatContext(t)?.context_id === 'chat_id' &&
+				temporaryContext?.chatId !== $activeChatId
+			)
 	);
 	$: directTerminals = (
 		$config?.features?.enable_direct_integrations ? ($settings?.terminalServers ?? []) : []

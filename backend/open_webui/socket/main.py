@@ -61,6 +61,7 @@ from open_webui.utils.json_codec import SOCKETIO_JSON, JSONCodec, dumps_bytes
 from open_webui.utils.misc import get_output_text
 from open_webui.utils.redis import (
     build_sentinel_kwargs,
+    build_sentinel_tls_kwargs,
     build_sentinel_url,
     get_redis_connection,
     get_sentinels_from_env,
@@ -229,6 +230,7 @@ if WEBSOCKET_MANAGER == 'redis':
         {
             'sentinel_kwargs': build_sentinel_kwargs(WEBSOCKET_REDIS_URL, WEBSOCKET_REDIS_OPTIONS),
             **WEBSOCKET_REDIS_OPTIONS,
+            **build_sentinel_tls_kwargs(WEBSOCKET_REDIS_URL),
         }
         if sentinel_hosts
         else WEBSOCKET_REDIS_OPTIONS
@@ -1564,6 +1566,14 @@ async def _make_channel_emitter(request_info):
 
 
 async def get_event_emitter(request_info, update_db=True):
+    if request_info.get('temporary_context'):
+        from open_webui.utils.temporary_context_runtime import emit_temporary_event
+
+        async def emit_scoped(event):
+            return await emit_temporary_event(request_info, event, update_raw=update_db)
+
+        return emit_scoped
+
     # Channel mode: route pipeline output to channel message updates
     if (request_info.get('chat_id') or '').startswith('channel:'):
         return await _make_channel_emitter(request_info)
@@ -1840,6 +1850,10 @@ async def handle_interaction_auth_event(event: dict) -> bool:
 
 async def get_event_call_session_error(session_id: str, request_info: dict) -> str | None:
     """Only the socket-owning worker can verify its live login; the shared pool is routing data."""
+    if request_info.get('temporary_context'):
+        from open_webui.utils.temporary_context_runtime import validate_scope_socket
+
+        await validate_scope_socket(request_info)
     if session_id in LOCAL_AUTHENTICATED_SIDS:
         try:
             async with asyncio.timeout(INTERACTION_AUTH_TIMEOUT):
@@ -1869,8 +1883,17 @@ async def get_event_call_session_error(session_id: str, request_info: dict) -> s
 
 
 async def get_event_call(request_info):
+    from open_webui.utils.temporary_context_runtime import (
+        temporary_rpc_envelope,
+        validate_temporary_rpc,
+        complete_temporary_rpc,
+        emit_temporary_event,
+    )
+    from open_webui.utils.context_store_errors import ContextStoreError
+
     async def __event_caller__(event_data):
         session_id = request_info['session_id']
+        rpc_id = None
 
         is_input_request = event_data.get('type') in {
             'confirmation',
@@ -1903,28 +1926,34 @@ async def get_event_call(request_info):
                 while True:
                     if error := await get_event_call_session_error(session_id, request_info):
                         return {'error': error}
-                    call_task = asyncio.create_task(
-                        sio.call(
-                            'events',
-                            {
-                                'chat_id': request_info['chat_id'],
-                                'message_id': request_info['message_id'],
-                                'data': event_data,
-                            },
-                            to=session_id,
-                            timeout=None,
-                        )
+                    envelope = (
+                        await temporary_rpc_envelope(request_info, event_data, timeout=timeout)
+                        if request_info.get('temporary_context')
+                        else {
+                            'chat_id': request_info['chat_id'],
+                            'message_id': request_info['message_id'],
+                            'data': event_data,
+                        }
                     )
+                    rpc_id = envelope.get('rpc_id')
+                    call_task = asyncio.create_task(sio.call('events', envelope, to=session_id, timeout=None))
                     try:
-                        while (
-                            not call_task.done()
-                            and await asyncio.to_thread(get_user_id_from_session_pool, session_id)
-                            == request_info['user_id']
-                        ):
+                        while not call_task.done():
+                            if rpc_id:
+                                if error := await get_event_call_session_error(session_id, request_info):
+                                    return {'error': error}
+                                await validate_temporary_rpc(request_info, rpc_id)
+                            if (
+                                await asyncio.to_thread(get_user_id_from_session_pool, session_id)
+                                != request_info['user_id']
+                            ):
+                                break
                             await asyncio.wait({call_task}, timeout=1)
                         if call_task.done():
                             if error := await get_event_call_session_error(session_id, request_info):
                                 return {'error': error}
+                            if rpc_id and not (await validate_temporary_rpc(request_info, rpc_id))['claimed']:
+                                return {'error': 'Temporary interaction was not claimed.'}
                             return call_task.result()
                     finally:
                         call_task.cancel()
@@ -1948,25 +1977,43 @@ async def get_event_call(request_info):
         except (TimeoutError, socketio.exceptions.TimeoutError):
             log.warning(f'Event caller timed out for session {session_id}')
             return {'error': 'Event call timed out. The browser tab may be inactive or closed.'}
+        except ContextStoreError as error:
+            return {'error': error.code, 'detail': error.detail()}
         except RedisError:
             log.warning('Event caller routing store unavailable; interaction cancelled')
             return {'error': 'Session verification unavailable. Please retry.'}
         finally:
+            if rpc_id:
+                try:
+                    await complete_temporary_rpc(request_info, rpc_id)
+                except Exception:
+                    # Expiry/fence invalidation still prevents a stale claim.
+                    log.debug('Temporary RPC marker cleanup will expire safely')
             if interaction_id:
                 try:
                     async with asyncio.timeout(INTERACTION_AUTH_TIMEOUT):
-                        await sio.emit(
-                            'events',
-                            {
-                                'chat_id': request_info.get('chat_id'),
-                                'message_id': request_info.get('message_id'),
-                                'data': {
+                        if request_info.get('temporary_context'):
+                            await emit_temporary_event(
+                                request_info,
+                                {
                                     'type': 'request:interaction:done',
                                     'data': {'interaction_id': interaction_id},
                                 },
-                            },
-                            to=session_id,
-                        )
+                                update_raw=False,
+                            )
+                        else:
+                            await sio.emit(
+                                'events',
+                                {
+                                    'chat_id': request_info.get('chat_id'),
+                                    'message_id': request_info.get('message_id'),
+                                    'data': {
+                                        'type': 'request:interaction:done',
+                                        'data': {'interaction_id': interaction_id},
+                                    },
+                                },
+                                to=session_id,
+                            )
                 except Exception:
                     # Notification failure cannot replace a validated answer or
                     # the original retryable denial; cancellation still propagates.

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	// Keep keys in nested template expressions visible to i18next-parser.
 	// $i18n.t("Terminal unavailable");
 	// $i18n.t("No preview available");
@@ -34,6 +35,7 @@
 	export let chatId = '';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
+	const temporaryContext: any = getContext('temporary-context');
 
 	let expanded = true;
 	let loading = false;
@@ -41,7 +43,7 @@
 	let error = '';
 	let showRaw = false;
 	let objectUrls: string[] = [];
-	let terminal: { url: string; key: string } | null = null;
+	let terminal: { url: string; key: TerminalCredential } | null = null;
 
 	let fileImageUrl: string | null = null;
 	let fileVideoUrl: string | null = null;
@@ -70,13 +72,20 @@
 	$: signedDelivery = typeof item?.download_url === 'string';
 	$: deliveryOwner = typeof item?.owner_id === 'string' && item.owner_id === $user?.id;
 	$: {
-		(selector, signedDelivery, $terminalServers, $selectedTerminalId, $settings, $config);
+		(selector,
+			signedDelivery,
+			$terminalServers,
+			$selectedTerminalId,
+			$settings,
+			$config,
+			$user,
+			chatId);
 		terminal = resolveTerminal();
 	}
 	$: unavailable = !terminal || (signedDelivery && !deliveryOwner);
 	$: previewKey =
 		terminal && !unavailable
-			? `${terminal.url}|${terminal.key}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
+			? `${terminal.url}|${JSON.stringify(terminal.key)}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
 			: '';
 	$: isPerChatTerminal =
 		($terminalServers ?? []).find((server: any) => server.id === selector)?.contexts?.chat
@@ -108,13 +117,16 @@
 
 	const t = (key: string, vars?: Record<string, unknown>) => $i18n?.t?.(key, vars) ?? key;
 
-	function resolveTerminal(): { url: string; key: string } | null {
+	function resolveTerminal(): { url: string; key: TerminalCredential } | null {
 		if (!selector) return null;
 
 		const systemTerminal = ($terminalServers ?? []).find((server: any) => server.id === selector);
 		if (systemTerminal?.url) {
 			if (!signedDelivery && $selectedTerminalId !== selector) return null;
-			return { url: systemTerminal.url, key: localStorage.token };
+			return {
+				url: systemTerminal.url,
+				key: temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token
+			};
 		}
 		if (
 			signedDelivery ||

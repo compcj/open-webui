@@ -8,6 +8,7 @@ import * as contextCompaction from '$lib/utils/context-compaction';
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
 const names = new Set([
 	'chatEventHandler',
+	'applyChatEvent',
 	'handleContextCompactionStatus',
 	'clearContextCompaction'
 ]);
@@ -21,7 +22,9 @@ const createChat = () => {
 	const toast = { loading: vi.fn(() => 'toast'), success: vi.fn(), error: vi.fn() };
 	const body = `
 		const { toast, mergeCompactionStatus, isVisibleToolResultStatus } = dependencies;
-		const console = { log: () => {} };
+		const isTemporaryContextRpc = () => false;
+  const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
+  const console = { log: () => {} };
 		const tick = async () => {};
 		const bridge = null;
 		const $i18n = { t: text => text };

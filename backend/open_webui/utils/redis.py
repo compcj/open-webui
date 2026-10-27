@@ -86,11 +86,48 @@ def build_sentinel_url(
     return f'redis+sentinel://{auth}{nodes}/{cfg["db"]}/{cfg["service"]}'
 
 
+_SENTINEL_TLS_KEYS = frozenset(
+    {
+        'ssl_cert_reqs',
+        'ssl_check_hostname',
+        'ssl_ca_certs',
+        'ssl_ca_path',
+        'ssl_ca_data',
+        'ssl_certfile',
+        'ssl_keyfile',
+        'ssl_password',
+        'ssl_min_version',
+        'ssl_ciphers',
+        'ssl_include_verify_flags',
+        'ssl_exclude_verify_flags',
+    }
+)
+
+
+def build_sentinel_tls_kwargs(base_url: str) -> dict[str, Any]:
+    """Encrypt both Sentinel discovery and discovered master connections."""
+    if urlparse(base_url).scheme != 'rediss':
+        return {}
+    parsed = _redis_sync.connection.parse_url(base_url)
+    if any(key.startswith('ssl_') and key not in _SENTINEL_TLS_KEYS for key in parsed):
+        raise ValueError('Unsupported Redis TLS option')
+    tls = {key: value for key, value in parsed.items() if key in _SENTINEL_TLS_KEYS}
+    tls.setdefault('ssl_cert_reqs', 'required')
+    tls.setdefault('ssl_check_hostname', True)
+    # Sentinel must choose its managed SSL class, not the URL parser's generic one.
+    return {'ssl': True, **tls}
+
+
 def build_sentinel_kwargs(base_url: str, redis_options: dict[str, Any]) -> dict[str, Any]:
     """Kwargs for the Sentinel connections: ``base_url`` credentials plus the ``socket_*`` options."""
     cfg = parse_redis_url(base_url)
     socket_options = {key: value for key, value in redis_options.items() if key.startswith('socket_')}
-    return {'username': cfg['username'], 'password': cfg['password'], **socket_options}
+    return {
+        'username': cfg['username'],
+        'password': cfg['password'],
+        **socket_options,
+        **build_sentinel_tls_kwargs(base_url),
+    }
 
 
 def get_redis_client(async_mode: bool = False) -> Any | None:
@@ -294,6 +331,7 @@ def _build_sentinel(
             url, {'socket_connect_timeout': REDIS_SOCKET_CONNECT_TIMEOUT, **_socket_options()}
         ),
         decode_responses=decode_responses,
+        **build_sentinel_tls_kwargs(url),
         socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
         **{k: v for k, v in _socket_options().items() if k != 'socket_connect_timeout'},
     )

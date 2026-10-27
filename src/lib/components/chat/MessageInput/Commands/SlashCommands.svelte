@@ -26,6 +26,7 @@
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
 
+	const temporaryContext: any = getContext('temporary-context');
 	const i18n: any = getContext('i18n');
 
 	export let query = '';
@@ -123,6 +124,9 @@
 			$settings?.terminalServers ?? [],
 			localStorage.token
 		);
+		if (connection?.system)
+			connection.key =
+				temporaryContext?.terminalCredential(localStorage.token, $chatId) ?? localStorage.token;
 		const items = await loadTerminalSkillItems(() =>
 			listTerminalSkills(connection, $chatId || null).catch(() => [])
 		);

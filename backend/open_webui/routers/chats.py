@@ -934,9 +934,46 @@ async def create_new_chat(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
+    from open_webui.utils.chat_promotion import (
+        creation_identity,
+        same_creation,
+        begin_temporary_promotion,
+        finish_temporary_promotion,
+    )
+    from open_webui.utils.chat_context_copy import copy_chat_without_context_state
+    from open_webui.utils.context_store_errors import ContextStoreError
+    from sqlalchemy.exc import IntegrityError
+
+    reservation = None
     try:
+        if request.headers.get('Idempotency-Key'):
+            form_data.chat = copy_chat_without_context_state(form_data.chat)
         set_message_authors(form_data.chat, user)
-        chat = await Chats.insert_new_chat(str(uuid4()), user.id, form_data, db=db)
+        identity = creation_identity(request, user, form_data)
+        if identity:
+            await Chats.require_chat_creation_permission(user.id, db=db)
+            existing = await Chats.get_chat_by_id(identity[0], db=db)
+            if existing:
+                if not same_creation(existing, user, identity[1]):
+                    raise HTTPException(409, 'This creation key was already used for different content.')
+                return chat_response_for_user(existing, user.id)
+        reservation = await begin_temporary_promotion(request, user, form_data)
+        if reservation:
+            set_message_authors(form_data.chat, user)
+        try:
+            chat = await Chats.insert_new_chat(
+                identity[0] if identity else str(uuid4()),
+                user.id,
+                form_data,
+                db=db,
+                **({'internal_meta': {'creation_fingerprint': identity[1]}} if identity else {}),
+            )
+        except IntegrityError:
+            await db.rollback()
+            existing = await Chats.get_chat_by_id(identity[0], db=db) if identity else None
+            if not identity or not same_creation(existing, user, identity[1]):
+                raise
+            return chat_response_for_user(existing, user.id)
         await publish_event(
             request,
             EVENTS.CHAT_CREATED,
@@ -945,11 +982,14 @@ async def create_new_chat(
             data={'title': chat.title, 'folder_id': chat.folder_id},
         )
         return chat_response_for_user(chat, user.id)
-    except HTTPException:
+    except (HTTPException, ContextStoreError):
         raise
     except Exception as e:
         log.exception(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
+
+    finally:
+        await finish_temporary_promotion(reservation)
 
 
 ############################

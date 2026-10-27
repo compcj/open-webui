@@ -33,6 +33,7 @@
 	import { isSavedChatId } from '$lib/utils/chatId';
 
 	const i18n = getContext('i18n');
+	const temporaryContext: any = getContext('temporary-context');
 
 	export let history;
 	export let models: import('$lib/stores').Model[] = [];
@@ -85,7 +86,11 @@
 	$: selectedSystemTerminalAvailable =
 		selectedSystemTerminal &&
 		chatContextAvailable(selectedSystemTerminal) &&
-		!(chatContextNeedsSavedChat(selectedSystemTerminal) && !isSavedChatId(chatId));
+		!(
+			chatContextNeedsSavedChat(selectedSystemTerminal) &&
+			!isSavedChatId(chatId) &&
+			temporaryContext?.chatId !== chatId
+		);
 	$: terminalFilesAvailable = !!(
 		$config?.features?.enable_tool_servers &&
 		$selectedTerminalId &&

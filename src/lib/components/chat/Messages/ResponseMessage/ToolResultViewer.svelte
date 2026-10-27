@@ -5,6 +5,7 @@
 	import { getChatToolResult, type ToolResultPage } from '$lib/apis/chats';
 
 	const i18n: any = getContext('i18n');
+	const temporaryContext: any = getContext('temporary-context');
 	export let show = false;
 	export let chatId: string;
 	export let branchId: string;
@@ -21,10 +22,16 @@
 		loading = true;
 		error = '';
 		try {
-			const nextPage = await getChatToolResult(localStorage.token, chatId, resultId, branchId, {
-				query: activeQuery,
-				cursor
-			});
+			const nextPage =
+				temporaryContext?.chatId === chatId
+					? await temporaryContext.controller.toolResult(resultId, branchId, {
+							query: activeQuery,
+							cursor
+						})
+					: await getChatToolResult(localStorage.token, chatId, resultId, branchId, {
+							query: activeQuery,
+							cursor
+						});
 			if (version === requestVersion) page = nextPage;
 		} catch (err) {
 			if (version === requestVersion) error = String(err);

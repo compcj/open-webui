@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import type { TerminalContext } from '$lib/types';
 	import { filesystemFile, type FilesystemFile } from '$lib/apis/terminal';
 	import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
@@ -74,6 +75,7 @@
 	import TerminalDock from './TerminalDock.svelte';
 
 	const i18n = getContext<Readable<I18n>>('i18n');
+	const temporaryContext: any = getContext('temporary-context');
 
 	export let overlay = false;
 	export let chatId: string | null = null;
@@ -143,8 +145,12 @@
 	let loadGeneration = 0;
 	let dirty = false;
 	let diskChanged = false;
-	let saveConnection: { url: string; key: string; chatId: string | null; path: string } | null =
-		null;
+	let saveConnection: {
+		url: string;
+		key: TerminalCredential;
+		chatId: string | null;
+		path: string;
+	} | null = null;
 	let dirtyChoice: {
 		sending: boolean;
 		resolve: (choice: 'save' | 'discard' | 'cancel') => void;
@@ -279,7 +285,7 @@
 	let pinnedComparison: ComparisonFile | null = null;
 	let comparison: {
 		files: [ComparisonFile, ComparisonFile];
-		terminal: { url: string; key: string };
+		terminal: { url: string; key: TerminalCredential };
 		chatId: string | null;
 		opener: HTMLElement | null;
 	} | null = null;
@@ -604,7 +610,7 @@
 	let shiftKey = false;
 
 	// ── Terminal resolution ──────────────────────────────────────────────
-	let selectedTerminal: { url: string; key: string; system: boolean } | null = null;
+	let selectedTerminal: { url: string; key: TerminalCredential; system: boolean } | null = null;
 	let terminalChatContextPending = false;
 	let terminalChatContextHidden = false;
 	let isPerChatTerminal = false;
@@ -615,7 +621,7 @@
 
 	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
 
-	const getTerminal = (): { url: string; key: string; system: boolean } | null => {
+	const getTerminal = (): { url: string; key: TerminalCredential; system: boolean } | null => {
 		const systemTerminal = $selectedTerminalId
 			? (($terminalServers ?? []).find((t) => t.id === $selectedTerminalId) ?? null)
 			: ($terminalServers?.[0] ?? null);
@@ -623,9 +629,13 @@
 		isPerChatTerminal = !!systemTerminal && chatConfig?.context_id === 'chat_id';
 		terminalChatContextHidden =
 			!!systemTerminal &&
-			(chatConfig === false || (isPerChatTerminal && isTemporaryChatId(chatId)));
+			(chatConfig === false ||
+				(isPerChatTerminal && isTemporaryChatId(chatId) && temporaryContext?.chatId !== chatId));
 		terminalChatContextPending =
-			isPerChatTerminal && !terminalChatContextHidden && !isSavedChatId(chatId);
+			isPerChatTerminal &&
+			!terminalChatContextHidden &&
+			!isSavedChatId(chatId) &&
+			temporaryContext?.chatId !== chatId;
 		if (terminalChatContextHidden || terminalChatContextPending) return null;
 
 		const settingsValue: any = $settings;
@@ -635,14 +645,16 @@
 
 		const isSystem = !!systemTerminal;
 		const url = systemTerminal?.url ?? userTerminal?.url ?? '';
-		const key = isSystem ? localStorage.token : (userTerminal?.key ?? '');
+		const key = isSystem
+			? (temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token)
+			: (userTerminal?.key ?? '');
 
 		return url ? { url, key, system: isSystem } : null;
 	};
 
 	const downloadFileBlob = async (
 		baseUrl: string,
-		apiKey: string,
+		apiKey: TerminalCredential,
 		path: string,
 		sessionId?: string,
 		signal?: AbortSignal
@@ -658,7 +670,7 @@
 	// Svelte re-runs this block when any of them update.
 	// The `mounted` flag prevents the initial run from racing with onMount.
 	let prevTerminalUrl = '';
-	let prevTerminalKey = '';
+	let prevTerminalKey: TerminalCredential = '';
 	let prevTerminalSystem = false;
 	let prevTerminalId = $selectedTerminalId;
 	let prevChatId = chatId;
@@ -818,7 +830,7 @@
 
 	const queueFileSearch = (
 		query: string,
-		terminal: { url: string; key: string } | null,
+		terminal: { url: string; key: TerminalCredential } | null,
 		path: string,
 		hiddenVisible: boolean,
 		activeFile: string | null,

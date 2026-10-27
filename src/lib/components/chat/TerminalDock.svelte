@@ -20,6 +20,7 @@
 	export let connecting = false;
 	export let running = 0;
 
+	const temporaryContext: any = getContext('temporary-context');
 	const i18n = getContext<Readable<{ t: (key: string) => string }>>('i18n');
 	type Tab = TerminalProcess & {
 		offset: number;
@@ -149,6 +150,9 @@
 			($settings as { terminalServers?: { url: string; key?: string }[] })?.terminalServers ?? [],
 			localStorage.getItem('token') ?? ''
 		);
+		if (connection?.system)
+			connection.key =
+				temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token;
 		poll();
 		const interval = setInterval(poll, 1000);
 		document.addEventListener('visibilitychange', poll);

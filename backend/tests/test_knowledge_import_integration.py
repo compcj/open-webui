@@ -280,7 +280,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
             'terminal_context_id',
         },
     )
-    load_source(terminal_ns, 'routers/terminals.py', {'_http_terminal_context'})
+    load_source(terminal_ns, 'routers/terminals.py', {'_http_terminal_context', '_temporary_terminal_scope'})
     terminal_router = ModuleType('open_webui.routers.terminals')
     terminal_router.__dict__.update(terminal_ns)
     sys.modules[terminal_router.__name__] = terminal_router

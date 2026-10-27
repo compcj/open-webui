@@ -180,7 +180,8 @@ export const createNewChat = async (
 	token: string,
 	chat: object,
 	folderId: string | null,
-	variables: object | null = null
+	variables: object | null = null,
+	creation?: { key: string; temporaryContext?: { id: string; epoch: string; revision: number } }
 ) => {
 	let error = null;
 
@@ -189,7 +190,15 @@ export const createNewChat = async (
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
+			authorization: `Bearer ${token}`,
+			...(creation ? { 'Idempotency-Key': creation.key } : {}),
+			...(creation?.temporaryContext
+				? {
+						'X-Temporary-Context-Id': creation.temporaryContext.id,
+						'X-Temporary-Context-Epoch': creation.temporaryContext.epoch,
+						'X-Temporary-Context-Revision': String(creation.temporaryContext.revision)
+					}
+				: {})
 		},
 		body: JSON.stringify({
 			chat: chat,

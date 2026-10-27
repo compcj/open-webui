@@ -53,10 +53,20 @@ async def database(tmp_path):
 
     db_module = ModuleType('open_webui.internal.db')
     db_module.Base, db_module.get_async_db_context = base, context
-    with patch.dict(sys.modules, {'open_webui': package, 'open_webui.internal.db': db_module}):
+    models = ModuleType('open_webui.models')
+    models.__path__ = [str(ROOT / 'open_webui/models')]
+    with patch.dict(
+        sys.modules,
+        {'open_webui': package, 'open_webui.models': models, 'open_webui.internal.db': db_module},
+    ):
+        # A preceding test may have imported checkpoints with a different Base.
+        # Reload only this fixture's copy and restore the original cache on exit.
+        sys.modules.pop('open_webui.models.chat_context_checkpoints', None)
         sys.path.insert(0, str(ROOT))
         try:
             model = importlib.import_module('open_webui.models.chat_context_checkpoints')
+            assert model.Base is base
+            assert model.get_async_db_context is context
             helpers = importlib.import_module('open_webui.utils.context_compaction_v2')
             async with engine.begin() as connection:
                 await connection.run_sync(base.metadata.create_all)

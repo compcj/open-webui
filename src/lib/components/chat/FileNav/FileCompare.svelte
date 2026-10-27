@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getContext, onMount, onDestroy } from 'svelte';
 	import type { Readable } from 'svelte/store';
 	import type { i18n as I18n } from 'i18next';
@@ -10,7 +11,7 @@
 	import DropdownMenu from '../../common/DropdownMenu.svelte';
 
 	export let baseUrl: string;
-	export let apiKey: string;
+	export let apiKey: TerminalCredential;
 	export let chatId: string | null = null;
 	export let paths: [string, string];
 	export let onClose: () => void;

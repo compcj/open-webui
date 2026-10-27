@@ -74,6 +74,17 @@ from open_webui.config import (
     seed_registered_defaults,
 )
 from open_webui.constants import ERROR_MESSAGES, TASKS
+from open_webui.utils.context_store_errors import ContextStoreError
+from open_webui.utils.context_scope import ContextScope, temporary_request_store
+from open_webui.utils.temporary_context_runtime import (
+    register_temporary_generation,
+    bind_temporary_reply,
+    acknowledge_temporary_task,
+    abort_temporary_reservations,
+    scope_from_headers,
+    stop_temporary_context,
+)
+
 from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_SSL,
     AUDIT_EXCLUDED_PATHS,
@@ -180,6 +191,7 @@ from open_webui.routers import (
     skills,
     tasks,
     terminals,
+    temporary_contexts,
     tools,
     users,
     utils,
@@ -413,6 +425,22 @@ async def lifespan(app: FastAPI):
     await install_tool_and_function_dependencies()
 
     app.state.redis = get_redis_client(async_mode=True)
+    from open_webui.env import REDIS_CLUSTER, REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT, UVICORN_WORKERS
+    from open_webui.utils.redis import get_sentinels_from_env
+    from open_webui.utils.temporary_context_store import create_temporary_context_repository
+    from open_webui.utils.temporary_contexts import configure_temporary_repository
+    from open_webui.utils.temporary_context_runtime import temporary_context_maintenance
+
+    app.state.temporary_contexts = await create_temporary_context_repository(
+        redis_url=REDIS_URL,
+        redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
+        redis_cluster=REDIS_CLUSTER,
+        prefix=REDIS_KEY_PREFIX,
+        workers=UVICORN_WORKERS,
+    )
+    configure_temporary_repository(app.state.temporary_contexts)
+    app.state.temporary_context_maintenance = asyncio.create_task(temporary_context_maintenance(app))
+
     from open_webui.socket.apps import connections as app_connections
 
     await app_connections.start(app.state.redis)
@@ -507,6 +535,9 @@ async def lifespan(app: FastAPI):
     yield
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_STARTED, source='system')
+    app.state.temporary_context_maintenance.cancel()
+    await asyncio.gather(app.state.temporary_context_maintenance, return_exceptions=True)
+    configure_temporary_repository(None)
     await app_connections.close()
 
     # Shutdown: clean up shared resources
@@ -545,6 +576,11 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(ContextStoreError)
+async def temporary_context_error_handler(request: Request, error: ContextStoreError):
+    return JSONResponse({'detail': error.detail()}, status_code=error.status_code)
 
 
 @app.exception_handler(RecurrenceEvaluationTimeout)
@@ -894,6 +930,7 @@ app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 app.include_router(apps.router, prefix='/api/v1/apps', tags=['apps'])
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
 app.include_router(chats.router, prefix='/api/v1/chats', tags=['chats'])
+app.include_router(temporary_contexts.router, prefix='/api/v1/temporary-contexts', tags=['temporary-contexts'])
 app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 app.include_router(search.router, prefix='/api/v1/search', tags=['search'])
 
@@ -1294,6 +1331,8 @@ async def chat_completion(
 
         user_message = form_data.pop('user_message', None) or form_data.pop('parent_message', None)
         chat_id = form_data.pop('chat_id', None) or ''
+        temporary_identity = form_data.pop('temporary_context', None)
+        temporary_reservations = {}
         chat_variables = form_data.pop('chat_variables', None)
         existing_chat = await Chats.get_chat_by_id(chat_id) if is_saved_chat_id(chat_id) else None
         if existing_chat and existing_chat.user_id != user.id:
@@ -1661,10 +1700,24 @@ async def chat_completion(
                             user.id,
                         )
 
+        if is_temporary_chat_id(metadata.get('chat_id')):
+            from open_webui.utils.context_compaction_config import load_compaction_settings
+
+            settings = await load_compaction_settings()
+            request.state.temporary_settings = settings
+            if temporary_identity is not None:
+                temporary_reservations = await register_temporary_generation(
+                    request, user, temporary_identity, metadata, message_ids
+                )
+            elif settings.mode == 'v2' and not model.get('pipe'):
+                raise HTTPException(400, {'code': 'temporary_context_refresh_required', 'retryable': False})
+        elif temporary_identity is not None:
+            raise HTTPException(400, 'Temporary context identity does not match this chat.')
+
         request.state.metadata = metadata
         form_data['metadata'] = metadata
 
-    except HTTPException:
+    except (HTTPException, ContextStoreError):
         raise
     except Exception as e:
         log.warning(f'Error processing chat metadata: {e}')
@@ -1678,10 +1731,18 @@ async def chat_completion(
         try:
             # Freeze mode/settings for this response. Only the authenticated saved
             # WebUI path creates this state; API metadata cannot opt into it.
-            if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('user_message_id'):
+            if (is_saved_chat_id(metadata.get('chat_id')) or temporary_request_store(request)) and metadata.get(
+                'user_message_id'
+            ):
                 from open_webui.utils.context_compaction_config import load_compaction_settings
 
-                settings = await load_compaction_settings()
+                settings = getattr(request.state, 'temporary_settings', None) or await load_compaction_settings()
+                if is_saved_chat_id(metadata.get('chat_id')):
+                    from open_webui.utils.context_store_sql import saved_context_store
+
+                    request.state.context_store = saved_context_store(
+                        ContextScope('saved', metadata['chat_id'], user.id)
+                    )
                 request.state.context_compaction = {
                     'mode': 'off' if settings.mode == 'v2' and model.get('pipe') else settings.mode,
                     'settings': settings,
@@ -1706,7 +1767,11 @@ async def chat_completion(
                     )
                 ctx = None
                 # Saved chats load the message after approved tool calls run, so their results are kept
-                if metadata.get('assistant_message_id') and not is_saved_chat_id(metadata.get('chat_id')):
+                if (
+                    metadata.get('assistant_message_id')
+                    and not is_saved_chat_id(metadata.get('chat_id'))
+                    and not temporary_request_store(request)
+                ):
                     ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, [])
                 form_data, metadata, events, paused = await process_chat_payload(
                     request, form_data, user, metadata, model
@@ -1742,7 +1807,13 @@ async def chat_completion(
                     pass
                 raise  # re-raise to ensure proper task cancellation handling
             except Exception as e:
-                error_detail = e.detail if isinstance(e, HTTPException) else str(e)
+                error_detail = (
+                    e.detail()
+                    if isinstance(e, ContextStoreError)
+                    else e.detail
+                    if isinstance(e, HTTPException)
+                    else str(e)
+                )
                 if not (metadata.get('session_id') and metadata.get('chat_id')):
                     raise
             finally:
@@ -1814,9 +1885,9 @@ async def chat_completion(
                         event_emitter = await get_event_emitter(metadata, update_db=False)
                         if event_emitter:
                             try:
-                                folder_id = metadata.get('folder_id') or await Chats.get_chat_folder_id(
-                                    chat_id, user.id
-                                )
+                                folder_id = metadata.get('folder_id')
+                                if is_saved_chat_id(chat_id) and not folder_id:
+                                    folder_id = await Chats.get_chat_folder_id(chat_id, user.id)
                                 await asyncio.shield(
                                     event_emitter(
                                         {
@@ -1833,7 +1904,7 @@ async def chat_completion(
             try:
                 chat_id = metadata.get('chat_id')
                 if (
-                    chat_id
+                    is_saved_chat_id(chat_id)
                     and getattr(request.state, 'internal', False) is not True
                     and not await has_active_tasks(request.app.state.redis, chat_id)
                 ):
@@ -1865,84 +1936,99 @@ async def chat_completion(
         is_internal = getattr(request.state, 'internal', False) is True
         chat_id = metadata['chat_id']
 
-        for idx, entry in enumerate(message_ids):
-            target_model_id = entry['model_id']
-            assistant_message_id = entry['message_id']
-            if not assistant_message_id:
-                continue
+        try:
+            for idx, entry in enumerate(message_ids):
+                target_model_id = entry['model_id']
+                assistant_message_id = entry['message_id']
+                if not assistant_message_id:
+                    continue
 
-            if fallback_model is not None and target_model_id == model_id:
-                target_model_id = fallback_model['id']
+                if fallback_model is not None and target_model_id == model_id:
+                    target_model_id = fallback_model['id']
 
-            # Per-model metadata: own message_id + model
-            per_model_metadata = {
-                **copy.deepcopy(metadata),
-                'message_id': assistant_message_id,
-                'task_id': str(uuid4()),
-            }
-
-            if is_saved_chat_id(chat_id):
-                await Chats.upsert_message_to_chat_by_id_and_message_id(
-                    chat_id, assistant_message_id, {'meta': {'task_id': per_model_metadata['task_id']}}, touch=False
-                )
-
-            # Per-model form_data: own model
-            model_form_data = {
-                **copy.deepcopy(form_data),
-                'model': target_model_id,
-                'metadata': per_model_metadata,
-            }
-
-            # Resolve the model object for this specific model
-            resolved_model = request.app.state.MODELS.get(target_model_id, model)
-
-            # Each reply owns its mutable pipeline state. Sharing the HTTP request
-            # lets concurrent models overwrite V2 branch identity, retries and caches.
-            model_request = Request(
-                {
-                    **request.scope,
-                    'state': {
-                        **(request.scope.get('state') or {}),
-                        'metadata': per_model_metadata,
-                        'model_id': target_model_id,
-                        'chat_context': per_model_metadata['chat_context'],
-                    },
-                },
-                receive=request.receive,
-            )
-            if hasattr(request, '_body'):
-                # Plugins may read the body already consumed by FastAPI. Retain
-                # immutable bytes; let each request parse its own mutable JSON.
-                model_request._body = request._body
-            if getattr(request.state, 'direct', False):
-                model_request.state.model = copy.deepcopy(request.state.model)
-
-            # Only the first model runs chat-level background tasks;
-            # subsequent models only run follow-ups.
-            process = process_chat(
-                model_request,
-                model_form_data,
-                user,
-                per_model_metadata,
-                resolved_model,
-                tasks
-                if idx == 0
-                else {
-                    k: v for k, v in (tasks or {}).items() if k not in (TASKS.TITLE_GENERATION, TASKS.TAGS_GENERATION)
+                # Per-model metadata: own message_id + model
+                per_model_metadata = {
+                    **copy.deepcopy(metadata),
+                    'message_id': assistant_message_id,
+                    'task_id': temporary_reservations[assistant_message_id]['scope'].task_id
+                    if assistant_message_id in temporary_reservations
+                    else str(uuid4()),
                 }
-                or None,
-            )
-            if is_internal:
-                subagent_results.append(await process)
-                continue
 
-            task_id, task = await create_task(
-                request.app.state.redis,
-                process,
-                id=chat_id,
-                task_id=per_model_metadata['task_id'],
-            )
-            chat_tasks[task_id] = task
+                if is_saved_chat_id(chat_id):
+                    await Chats.upsert_message_to_chat_by_id_and_message_id(
+                        chat_id, assistant_message_id, {'meta': {'task_id': per_model_metadata['task_id']}}, touch=False
+                    )
+
+                # Per-model form_data: own model
+                model_form_data = {
+                    **copy.deepcopy(form_data),
+                    'model': target_model_id,
+                    'metadata': per_model_metadata,
+                }
+
+                # Resolve the model object for this specific model
+                resolved_model = request.app.state.MODELS.get(target_model_id, model)
+
+                # Each reply owns its mutable pipeline state. Sharing the HTTP request
+                # lets concurrent models overwrite V2 branch identity, retries and caches.
+                model_request = Request(
+                    {
+                        **request.scope,
+                        'state': {
+                            **(request.scope.get('state') or {}),
+                            'metadata': per_model_metadata,
+                            'model_id': target_model_id,
+                            'chat_context': per_model_metadata['chat_context'],
+                        },
+                    },
+                    receive=request.receive,
+                )
+                if assistant_message_id in temporary_reservations:
+                    bind_temporary_reply(
+                        model_request, per_model_metadata, temporary_reservations[assistant_message_id]
+                    )
+                if hasattr(request, '_body'):
+                    # Plugins may read the body already consumed by FastAPI. Retain
+                    # immutable bytes; let each request parse its own mutable JSON.
+                    model_request._body = request._body
+                if getattr(request.state, 'direct', False):
+                    model_request.state.model = copy.deepcopy(request.state.model)
+
+                # Only the first model runs chat-level background tasks;
+                # subsequent models only run follow-ups.
+                process = process_chat(
+                    model_request,
+                    model_form_data,
+                    user,
+                    per_model_metadata,
+                    resolved_model,
+                    tasks
+                    if idx == 0
+                    else {
+                        k: v
+                        for k, v in (tasks or {}).items()
+                        if k not in (TASKS.TITLE_GENERATION, TASKS.TAGS_GENERATION)
+                    }
+                    or None,
+                )
+                if is_internal:
+                    subagent_results.append(await process)
+                    continue
+
+                task_id, task = await create_task(
+                    request.app.state.redis,
+                    process,
+                    id=chat_id,
+                    task_id=per_model_metadata['task_id'],
+                    on_complete=(lambda bound=per_model_metadata: acknowledge_temporary_task(bound))
+                    if per_model_metadata.get('temporary_context')
+                    else None,
+                )
+                chat_tasks[task_id] = task
+        except BaseException:
+            await abort_temporary_reservations(request, metadata, temporary_reservations, chat_tasks)
+            raise
 
         if is_internal:
             return {
@@ -1955,11 +2041,15 @@ async def chat_completion(
         # Emit chat:active=true
         if chat_tasks:
             event_emitter = await get_event_emitter(
-                {**metadata, 'message_id': message_ids[0]['message_id']},
+                per_model_metadata
+                if temporary_reservations
+                else {**metadata, 'message_id': message_ids[0]['message_id']},
                 update_db=False,
             )
             if event_emitter:
-                folder_id = metadata.get('folder_id') or await Chats.get_chat_folder_id(chat_id, user.id)
+                folder_id = metadata.get('folder_id')
+                if not folder_id and is_saved_chat_id(chat_id):
+                    folder_id = await Chats.get_chat_folder_id(chat_id, user.id)
                 await event_emitter({'type': 'chat:active', 'data': {'active': True, 'folder_id': folder_id}})
 
         # Automation chat runs must finish before their caller records success.
@@ -2233,7 +2323,13 @@ async def chat_action(request: Request, action_id: str, form_data: dict, user=De
 
 
 @app.post('/api/tasks/stop/{task_id}')
-async def stop_task_endpoint(request: Request, task_id: str, user=Depends(get_admin_user)):
+async def stop_task_endpoint(request: Request, task_id: str, user=Depends(get_verified_user)):
+    if task_id.startswith('temporary.'):
+        doc = await scope_from_headers(request, user, task_id=task_id)
+        _, result = await stop_temporary_context(request, user, doc['id'], doc['epoch'])
+        return result
+    if user.role != 'admin':
+        raise HTTPException(403, ERROR_MESSAGES.ACCESS_PROHIBITED)
     try:
         result = await stop_task(request.app.state.redis, task_id)
         return result
@@ -2248,10 +2344,13 @@ async def list_tasks_endpoint(request: Request, user=Depends(get_admin_user)):
 
 @app.get('/api/tasks/chat/{chat_id:path}')
 async def list_tasks_by_chat_id_endpoint(request: Request, chat_id: str, user=Depends(get_verified_user)):
+    if request.headers.get('X-Temporary-Context-Id'):
+        doc = await scope_from_headers(request, user, chat_id=chat_id)
+        return {'task_ids': [task['task_id'] for task in doc['tasks'].values() if task['status'] != 'done']}
     socket_id = get_temporary_chat_session_id(chat_id)
     if socket_id:
         owner_id = get_user_id_from_session_pool(socket_id)
-        if owner_id != user.id and not (user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS):
+        if owner_id != user.id:
             return {'task_ids': []}
     else:
         chat = await Chats.get_accessible_chat_by_id(chat_id, user, permission='write')
@@ -2269,11 +2368,15 @@ async def list_tasks_by_chat_id_endpoint(request: Request, chat_id: str, user=De
 
 @app.post('/api/tasks/chat/{chat_id:path}/stop')
 async def stop_tasks_by_chat_id_endpoint(request: Request, chat_id: str, user=Depends(get_verified_user)):
+    if request.headers.get('X-Temporary-Context-Id'):
+        doc = await scope_from_headers(request, user, chat_id=chat_id)
+        _, result = await stop_temporary_context(request, user, doc['id'], doc['epoch'])
+        return result
     socket_id = get_temporary_chat_session_id(chat_id)
     chat = None
     if socket_id:
         owner_id = get_user_id_from_session_pool(socket_id)
-        if owner_id != user.id and not (user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS):
+        if owner_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
     else:
         chat = await Chats.get_accessible_chat_by_id(chat_id, user, permission='write')

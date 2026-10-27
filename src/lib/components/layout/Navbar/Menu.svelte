@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { projectRawChat } from '$lib/utils/chat-context-copy';
 	import { toast } from 'svelte-sonner';
 	import { getContext, tick } from 'svelte';
 
@@ -55,6 +56,7 @@
 	export let onClose: Function = () => {};
 	export let scrollToTop: (() => void) | null = null;
 
+	const temporaryContext: any = getContext('temporary-context');
 	let showFullMessages = false;
 
 	const getChatAsText = async () => {
@@ -285,7 +287,21 @@
 			let chatObj = null;
 
 			if ((chat?.id ?? '').startsWith('local') || $temporaryChatEnabled) {
-				chatObj = chat;
+				try {
+					const raw = await temporaryContext?.prepareCopy();
+					if (!raw) return;
+					chatObj = projectRawChat({
+						...chat,
+						chat: {
+							...chat.chat,
+							...raw,
+							messages: createMessagesList(raw.history, raw.history.currentId)
+						}
+					});
+				} catch (error: any) {
+					toast.error(String(error?.message ?? error));
+					return;
+				}
 			} else {
 				chatObj = await getChatById(localStorage.token, chat.id);
 			}

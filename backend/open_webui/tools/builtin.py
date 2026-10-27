@@ -1736,15 +1736,16 @@ async def read_tool_result(
     from open_webui.utils.tool_result_sources import tool_budget_active
 
     if not tool_budget_active(__request__) or not __user__:
-        return JSONCodec.dumps({'error': 'Raw tool-result reading requires an authenticated saved V2 chat.'})
+        return JSONCodec.dumps({'error': 'Raw tool-result reading requires an authenticated V2 chat.'})
     state = __request__.state.context_compaction
     metadata = state.get('metadata') or {}
     branch_id = metadata.get('message_id') or state.get('user_message_id')
     if not branch_id or not isinstance(result_id, str) or not result_id:
-        return JSONCodec.dumps({'error': 'A saved result ID and current chat branch are required.'})
+        return JSONCodec.dumps({'error': 'An original result ID and current chat branch are required.'})
     if type(max_tokens) is not int or not 1 <= max_tokens <= 8192:
         return JSONCodec.dumps({'error': 'max_tokens must be an integer from 1 to 8192.'})
     from open_webui.utils.tool_result_store import read_tool_result_page
+    from open_webui.utils.context_scope import request_context_store
 
     page = await read_tool_result_page(
         UserModel(**__user__),
@@ -1754,6 +1755,7 @@ async def read_tool_result(
         query=query,
         cursor=cursor,
         max_tokens=max_tokens,
+        context_store=request_context_store(__request__),
     )
     return JSONCodec.dumps(page, ensure_ascii=False, separators=(',', ':'))
 

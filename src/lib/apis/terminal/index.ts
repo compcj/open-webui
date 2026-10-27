@@ -107,10 +107,20 @@ export type TerminalSkill = {
 
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
+// Captured once by the page/operation; never resolve a later account or scope at send time.
+export type TerminalCredential =
+	| string
+	| {
+			token: string;
+			temporaryContext: { id: string; epoch: string };
+			isCurrent: () => boolean;
+	  };
+export const terminalCredentialToken = (credential: TerminalCredential) =>
+	typeof credential === 'string' ? credential : credential.token;
 export type TerminalConnection = {
 	selector: string;
 	baseUrl: string;
-	key: string;
+	key: TerminalCredential;
 	system: boolean;
 };
 export type TerminalProcess = {
@@ -155,13 +165,15 @@ export const terminalRequest = async <T>(
 	path: string,
 	options: RequestInit = {}
 ): Promise<T> => {
-	if (!get(config)?.features?.enable_tool_servers) throw new Error('Tool servers are disabled');
-	if (!connection.system && !get(config)?.features?.enable_direct_integrations)
+	const cleanup = options.method === 'DELETE' && /^\/api\/terminals\/[^/]+$/.test(path);
+	if (!cleanup && !get(config)?.features?.enable_tool_servers)
+		throw new Error('Tool servers are disabled');
+	if (!cleanup && !connection.system && !get(config)?.features?.enable_direct_integrations)
 		throw new Error('Direct integrations are disabled');
 	const response = await fetch(`${connection.baseUrl}${path}`, {
 		...options,
 		headers: {
-			Authorization: `Bearer ${connection.key.trim()}`,
+			...bearerHeaders(connection.key, cleanup),
 			...(chatId ? { 'X-Session-Id': chatId } : {}),
 			...options.headers
 		}
@@ -170,9 +182,20 @@ export const terminalRequest = async <T>(
 	return response.json();
 };
 
-const bearerHeaders = (apiKey: string): Record<string, string> => {
-	if (!get(config)?.features?.enable_tool_servers) throw new Error('Tool servers are disabled');
-	return { Authorization: `Bearer ${apiKey.trim()}` };
+const bearerHeaders = (apiKey: TerminalCredential, cleanup = false): Record<string, string> => {
+	if (!cleanup && !get(config)?.features?.enable_tool_servers)
+		throw new Error('Tool servers are disabled');
+	if (!cleanup && typeof apiKey !== 'string' && !apiKey.isCurrent())
+		throw new Error('Terminal context changed. Retry from the current chat.');
+	return {
+		Authorization: `Bearer ${terminalCredentialToken(apiKey).trim()}`,
+		...(typeof apiKey === 'string'
+			? {}
+			: {
+					'X-Temporary-Context-Id': apiKey.temporaryContext.id,
+					'X-Temporary-Context-Epoch': apiKey.temporaryContext.epoch
+				})
+	};
 };
 
 export type TerminalFileDelivery = {
@@ -222,7 +245,7 @@ export const validateDeliveryUrl = (
 
 export const getFileDelivery = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string,
 	signal?: AbortSignal
@@ -266,7 +289,7 @@ const deliveryFilename = (response: Response) => {
 export const downloadDeliveryFile = async (
 	url: string,
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	sessionId?: string,
 	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
@@ -319,7 +342,7 @@ export const getTerminalServers = async (token: string): Promise<TerminalServer[
 
 export const getTerminalConfig = async (
 	baseUrl: string,
-	apiKey: string
+	apiKey: TerminalCredential
 ): Promise<{ features: TerminalFeatures } | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/api/config`;
 	const res = await fetch(url, {
@@ -331,7 +354,7 @@ export const getTerminalConfig = async (
 
 export const getCwd = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	sessionId?: string
 ): Promise<TerminalCwd | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/cwd`;
@@ -350,7 +373,7 @@ export const getCwd = async (
 
 export const listFiles = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string = '/',
 	sessionId?: string,
 	signal?: AbortSignal
@@ -373,7 +396,7 @@ export const listFiles = async (
 
 export const searchFiles = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	query: string,
 	path: string = '.',
 	limit: number = 20,
@@ -432,7 +455,7 @@ export const searchFiles = async (
 
 export const getFileMatches = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	query: string,
 	path: string = '.',
 	showHidden: boolean = false,
@@ -463,7 +486,7 @@ export const getFileMatches = async (
 
 export const readComparisonSource = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	signal: AbortSignal,
 	sessionId?: string,
@@ -484,7 +507,7 @@ export const readComparisonSource = async (
 
 export const readFile = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string,
 	signal?: AbortSignal
@@ -536,7 +559,7 @@ export const listTerminalSkills = async (
 
 export const downloadFileBlob = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string,
 	signal?: AbortSignal
@@ -561,7 +584,7 @@ export const downloadFileBlob = async (
 
 export const downloadFilePreview = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string,
 	signal?: AbortSignal
@@ -584,7 +607,7 @@ export const downloadFilePreview = async (
 
 export const archiveFromTerminal = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	paths: string[],
 	sessionId?: string
 ): Promise<{ blob: Blob; filename: string } | null> => {
@@ -612,7 +635,7 @@ export const archiveFromTerminal = async (
 
 export const uploadToTerminal = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	directory: string,
 	file: File,
 	sessionId?: string
@@ -643,7 +666,7 @@ let newFileUploadQueue: Promise<void> = Promise.resolve();
 
 export const uploadNewFileToTerminal = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	directory: string,
 	file: File,
 	sessionId?: string
@@ -676,7 +699,7 @@ export const uploadNewFileToTerminal = async (
 
 export const createDirectory = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string
 ): Promise<{ path: string } | null> => {
@@ -704,7 +727,7 @@ export const createDirectory = async (
 
 export const deleteEntry = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string
 ): Promise<{ path: string; type: string } | null> => {
@@ -728,7 +751,7 @@ export const deleteEntry = async (
 
 export const setCwd = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	sessionId?: string
 ): Promise<{ cwd: string } | null> => {
@@ -756,7 +779,7 @@ export const setCwd = async (
 
 export const moveEntry = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	source: string,
 	destination: string,
 	sessionId?: string
@@ -785,7 +808,7 @@ export const moveEntry = async (
 
 export const getListeningPorts = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	sessionId?: string | null
 ): Promise<ListeningPort[]> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/ports`;
@@ -811,7 +834,7 @@ export const getPortProxyUrl = (baseUrl: string, port: number, path: string = ''
 
 export const createNotebookSession = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	path: string,
 	chatId?: string
 ): Promise<{ id: string; kernel: string; status: string } | { error: string }> => {
@@ -841,7 +864,7 @@ export const createNotebookSession = async (
 
 export const executeNotebookCell = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	sessionId: string,
 	cellIndex: number,
 	source?: string,
@@ -876,14 +899,14 @@ export const executeNotebookCell = async (
 
 export const stopNotebookSession = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	sessionId: string,
 	chatId?: string
 ): Promise<boolean> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}`;
 	const res = await fetch(url, {
 		method: 'DELETE',
-		headers: { ...bearerHeaders(apiKey), ...(chatId ? { 'X-Session-Id': chatId } : {}) }
+		headers: { ...bearerHeaders(apiKey, true), ...(chatId ? { 'X-Session-Id': chatId } : {}) }
 	}).catch(() => null);
 	return res?.ok ?? false;
 };
@@ -911,7 +934,7 @@ export type TerminalComparison = {
 
 export const compareFiles = async (
 	baseUrl: string,
-	apiKey: string,
+	apiKey: TerminalCredential,
 	request: TerminalComparisonRequest,
 	sessionId?: string,
 	signal?: AbortSignal

@@ -1026,6 +1026,7 @@
 		}
 	};
 
+	const temporaryContext: any = getContext('temporary-context');
 	const getFilesystemUploadTerminal = (
 		selectedId = $selectedTerminalId,
 		servers: any[] | null = $terminalServers,
@@ -1036,7 +1037,11 @@
 		const systemTerminal = (servers ?? []).find(
 			(t: any) => t.id && t.id === selectedId && t.config?.chat_uploads === 'filesystem'
 		);
-		if (systemTerminal) return systemTerminal;
+		if (systemTerminal)
+			return {
+				...systemTerminal,
+				key: temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token
+			};
 
 		return (
 			($config?.features?.enable_direct_integrations
@@ -1084,7 +1089,11 @@
 			if (!terminal) throw new Error($i18n.t('The attached file’s terminal is unavailable.'));
 			if (fileItem.session_id && fileItem.session_id !== sessionId)
 				throw new Error($i18n.t('Attached files must belong to this chat.'));
-			if (terminal.contexts?.chat?.context_id === 'chat_id' && !isSavedChatId(sessionId))
+			if (
+				terminal.contexts?.chat?.context_id === 'chat_id' &&
+				!isSavedChatId(sessionId) &&
+				temporaryContext?.chatId !== sessionId
+			)
 				throw new Error($i18n.t('A saved chat is required for this terminal'));
 
 			const cwd =

@@ -441,11 +441,15 @@ export const generateOpenAIChatCompletion = async (
 		body: JSON.stringify(body)
 	})
 		.then(async (res) => {
-			if (!res.ok) throw await res.json();
+			if (!res.ok) {
+				const error = await res.json();
+				if ((body as any)?.temporary_context) throw { ...error, status: res.status };
+				throw error;
+			}
 			return res.json();
 		})
 		.catch((err) => {
-			error = getErrorMessage(err);
+			error = (body as any)?.temporary_context ? err : getErrorMessage(err);
 			return null;
 		});
 

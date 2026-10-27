@@ -8,7 +8,7 @@ const source = readFileSync(new URL('./ToolResultViewer.svelte', import.meta.url
 const declaration: any = parse(source)
 	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
 	.find((node: any) => node.id?.name === 'loadPage');
-const createViewer = (getChatToolResult: any) => {
+const createViewer = (getChatToolResult: any, temporaryContext: any = null) => {
 	const body = `
 		const localStorage = { token: 'synthetic-token' };
 		const chatId = 'chat', branchId = 'current', resultId = 'raw';
@@ -18,10 +18,11 @@ const createViewer = (getChatToolResult: any) => {
 	`;
 	return new Function(
 		'getChatToolResult',
+		'temporaryContext',
 		transpileModule(body, {
 			compilerOptions: { target: ScriptTarget.ES2022 }
 		}).outputText
-	)(getChatToolResult);
+	)(getChatToolResult, temporaryContext);
 };
 
 describe('original tool result page loader', () => {
@@ -58,4 +59,14 @@ describe('original tool result page loader', () => {
 		await pending;
 		expect(viewer.state().page).toBeNull();
 	});
+});
+
+it('routes temporary originals to the page-owned authenticated source reader', async () => {
+	const saved = vi.fn(),
+		temporary = vi.fn(async () => ({ text: 'raw temporary' }));
+	const viewer = createViewer(saved, { chatId: 'chat', controller: { toolResult: temporary } });
+	await viewer.loadPage('cursor');
+	expect(saved).not.toHaveBeenCalled();
+	expect(temporary).toHaveBeenCalledWith('raw', 'current', { query: 'needle', cursor: 'cursor' });
+	expect(viewer.state().page.text).toBe('raw temporary');
 });

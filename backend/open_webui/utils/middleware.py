@@ -925,10 +925,17 @@ async def persist_injected_tool_results(request, metadata: dict, sources: list, 
     """Persist original nonnative tool text before any context projection/send."""
     from open_webui.utils.tool_result_sources import batch_id, tool_budget_active
 
-    if not tool_budget_active(request, metadata) or not metadata.get('message_id'):
+    from open_webui.utils.context_scope import temporary_request_store
+
+    temporary_store = temporary_request_store(request)
+    if (not temporary_store and not tool_budget_active(request, metadata)) or not metadata.get('message_id'):
         return []
     message_id = metadata['message_id']
-    original = await Chats.get_message_by_id_and_message_id(metadata['chat_id'], message_id)
+    if temporary_store:
+        snapshot = await temporary_store.history.read_snapshot()
+        original = snapshot['messages_map'].get(message_id)
+    else:
+        original = await Chats.get_message_by_id_and_message_id(metadata['chat_id'], message_id)
     if not original:
         return []
     meta = dict(original.get('meta') or {})
@@ -961,11 +968,24 @@ async def persist_injected_tool_results(request, metadata: dict, sources: list, 
             new_descriptors.append({**ref, 'output_id': output_id, 'text': str(document)})
     if sidecars:
         meta['tool_results'] = sidecars
-        await Chats.upsert_message_to_chat_by_id_and_message_id(
-            metadata['chat_id'], message_id, {'tool_results': sidecars, 'meta': meta}, touch=False
-        )
+        if temporary_store:
+            await temporary_store.results.commit_raw_results(message_id, {}, original.get('output') or [], sidecars)
+        else:
+            await Chats.upsert_message_to_chat_by_id_and_message_id(
+                metadata['chat_id'], message_id, {'tool_results': sidecars, 'meta': meta}, touch=False
+            )
     from open_webui.utils.tool_result_sources import register_tool_results
 
+    if temporary_store:
+        # Only effects committed above can enter the V2 candidate set. Other
+        # retrieval sources remain raw input, with no claimed execution proof.
+        doc = await temporary_store.results._read()
+        admissions = doc['data'].get('result_admissions', {})
+        new_descriptors = [
+            {**item, 'message_id': message_id, 'output_id': item['id']}
+            for item in sidecars
+            if JSONCodec.dumps([message_id, item['id']], separators=(',', ':')) in admissions
+        ]
     await register_tool_results(request, metadata, model_id, descriptors=new_descriptors)
     return sidecars
 
@@ -1382,9 +1402,15 @@ async def chat_completion_tools_handler(
 
             result = JSONCodec.loads(content)
             selection_batch_id = str(uuid4())
+            from open_webui.utils.context_scope import temporary_request_store
+
+            temporary_store = temporary_request_store(request)
+            call_ordinal = 0
 
             async def tool_call_handler(tool_call):
-                nonlocal skip_files
+                nonlocal skip_files, call_ordinal
+                ordinal = call_ordinal
+                call_ordinal += 1
 
                 log.debug('tool_call=%r', tool_call)
 
@@ -1394,6 +1420,59 @@ async def chat_completion_tools_handler(
                     return
 
                 tool_function_params = tool_call.get('parameters', {})
+                if temporary_store:
+                    from open_webui.utils.tool_result_sources import registered_tool_kind
+
+                    call_id, result_id = str(uuid4()), str(uuid4())
+                    sidecar = {
+                        'id': result_id,
+                        'call_id': call_id,
+                        'batch_id': selection_batch_id,
+                        'name': tool_function_name,
+                        'kind': registered_tool_kind(tool_function_name, tools, default='injected'),
+                    }
+                    normalized, _ = await execute_temporary_tool_call_for_output(
+                        request,
+                        body,
+                        user,
+                        {**metadata, 'tools': tools},
+                        event_caller,
+                        event_emitter,
+                        {
+                            'id': call_id,
+                            'function': {
+                                'name': tool_function_name,
+                                'arguments': JSONCodec.dumps(tool_function_params),
+                            },
+                        },
+                        round_id=selection_batch_id,
+                        ordinal=ordinal,
+                        sidecar=sidecar,
+                    )
+                    tool = tools[tool_function_name]
+                    tool_id = tool.get('tool_id', '')
+                    tool_name = f'{tool_id}/{tool_function_name}' if tool_id else tool_function_name
+                    sources.append(
+                        {
+                            'source': {'name': tool_name},
+                            'document': [normalized['content']],
+                            'metadata': [{'source': tool_name, 'parameters': tool_function_params}],
+                            'tool_result': True,
+                            '_tool_result_ref': {
+                                **{key: value for key, value in sidecar.items() if key != 'id'},
+                                'output_id': result_id,
+                            },
+                        }
+                    )
+                    if event_emitter:
+                        display_files = [file for file in normalized.get('files', []) if not file.get('context_only')]
+                        if display_files:
+                            await event_emitter({'type': 'files', 'data': {'files': display_files}})
+                        if normalized.get('embeds'):
+                            await event_emitter({'type': 'embeds', 'data': {'embeds': normalized['embeds']}})
+                    if tool.get('metadata', {}).get('file_handler', False):
+                        skip_files = True
+                    return
 
                 tool = None
                 tool_type = ''
@@ -1517,9 +1596,17 @@ async def chat_completion_tools_handler(
                 await tool_call_handler(result)
 
         except Exception as e:
+            from open_webui.utils.context_scope import temporary_request_store
+
+            if temporary_request_store(request):
+                raise
             log.debug('Error: %s', e)
             content = None
     except Exception as e:
+        from open_webui.utils.context_scope import temporary_request_store
+
+        if temporary_request_store(request):
+            raise
         log.debug('Error: %s', e)
         content = None
 
@@ -2476,14 +2563,41 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         chat and chat.user_id == user.id and payload_tools is None and use_builtin_tools
     )
 
-    if is_saved_chat_id(chat_id) and user_message_id:
-        db_messages = await load_messages_from_db(chat_id, user_message_id)
+    from open_webui.utils.context_scope import temporary_request_store
+
+    temporary_store = temporary_request_store(request)
+    temporary_snapshot = await temporary_store.history.read_snapshot() if temporary_store else None
+    if (temporary_store or is_saved_chat_id(chat_id)) and user_message_id:
+        if temporary_snapshot:
+            from open_webui.utils.context_store_errors import ContextConflict
+
+            raw_messages = temporary_snapshot['messages_map']
+            reply = raw_messages.get(temporary_store.scope.reply_id, {})
+            if reply.get('parentId') != user_message_id:
+                raise ContextConflict()
+            db_messages = [
+                {key: copy.deepcopy(value) for key, value in message.items() if key in MESSAGE_REPLAY_KEYS}
+                for message in get_message_list(raw_messages, user_message_id)
+                if message.get('role') != 'assistant' or message.get('content') or message.get('output')
+            ]
+        else:
+            db_messages = await load_messages_from_db(chat_id, user_message_id)
         if db_messages:
             # Continue: frontend sends assistant_message_id when continuing
             # an existing response. Load its content so the LLM sees prior output.
             assistant_message_id = metadata.get('assistant_message_id')
             if assistant_message_id:
-                assistant_message = await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
+                assistant_message = (
+                    copy.deepcopy(temporary_snapshot['messages_map'].get(assistant_message_id))
+                    if temporary_snapshot
+                    else await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
+                )
+                if temporary_snapshot and (
+                    not assistant_message
+                    or assistant_message.get('role') != 'assistant'
+                    or assistant_message.get('parentId') != user_message_id
+                ):
+                    raise ContextConflict()
                 if assistant_message and (assistant_message.get('content') or assistant_message.get('output')):
                     output = assistant_message.get('output') or []
                     if (
@@ -2506,7 +2620,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             # Guided regeneration: show the model the reply it is asked to revise.
             regeneration_message_id = metadata.get('regeneration_message_id')
             if regeneration_message_id:
-                regenerated_message = await Chats.get_message_by_id_and_message_id(chat_id, regeneration_message_id)
+                regenerated_message = (
+                    copy.deepcopy(temporary_snapshot['messages_map'].get(regeneration_message_id))
+                    if temporary_snapshot
+                    else await Chats.get_message_by_id_and_message_id(chat_id, regeneration_message_id)
+                )
+                if temporary_snapshot and (
+                    not regenerated_message
+                    or regenerated_message.get('role') != 'assistant'
+                    or regenerated_message.get('parentId') != user_message_id
+                ):
+                    raise ContextConflict()
                 if regenerated_message and (regenerated_message.get('content') or regenerated_message.get('output')):
                     db_messages.append({k: v for k, v in regenerated_message.items() if k in MESSAGE_REPLAY_KEYS})
 
@@ -3397,6 +3521,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     )
                     sources.extend(flags.get('sources', []))
                 except Exception as e:
+                    if temporary_store:
+                        raise
                     log.exception(e)
 
     # Check if file context extraction is enabled for this model (default True)
@@ -3525,8 +3651,14 @@ async def get_event_emitter_and_caller(metadata):
 
 async def build_chat_response_context(request, form_data, user, model, metadata, tasks, events):
     event_emitter, event_caller = await get_event_emitter_and_caller(metadata)
+    from open_webui.utils.context_scope import temporary_request_store
+
     assistant_message = None
-    if metadata.get('assistant_message_id'):
+    temporary_store = temporary_request_store(request)
+    if temporary_store:
+        snapshot = await temporary_store.history.read_snapshot()
+        assistant_message = snapshot['messages_map'].get(temporary_store.scope.reply_id)
+    elif metadata.get('assistant_message_id'):
         # Preserve the original output before request conversion strips it from temporary chats.
         if is_saved_chat_id(metadata.get('chat_id')):
             assistant_message = await Chats.get_message_by_id_and_message_id(
@@ -3548,7 +3680,7 @@ async def build_chat_response_context(request, form_data, user, model, metadata,
     }
 
 
-async def execute_tool_call(form_data, metadata, event_caller, tool_call):
+async def execute_tool_call(form_data, metadata, event_caller, tool_call, execution=None):
     error = resolve_tool_call(tool_call, metadata.get('tools', {}))
     if error:
         return {}, error, None, None, False
@@ -3598,6 +3730,21 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call):
         allowed_params = tool.get('spec', {}).get('parameters', {}).get('properties', {}).keys()
         params = {key: value for key, value in params.items() if key in allowed_params}
 
+    target = {
+        'name': name,
+        'params': params,
+        'tool_id': tool.get('tool_id'),
+        'type': tool_type,
+        'direct': direct_tool,
+        'provider_function': tool_call.get('provider_function'),
+    }
+    if execution is not None:
+        replay = await execution.lookup(target)
+        if execution.replayed:
+            return params, replay, tool, tool_type, direct_tool
+        if direct_tool and not event_caller:
+            return params, 'Error: Browser session is not connected for this direct tool.', tool, tool_type, direct_tool
+
     try:
         if (
             not is_saved_chat_id(metadata.get('chat_id'))
@@ -3616,6 +3763,20 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call):
         ):
             return params, 'Error: tool call was not approved.', tool, tool_type, direct_tool
 
+        if not direct_tool:
+            function = await get_updated_tool_function(
+                function=tool['callable'],
+                extra_params={
+                    '__messages__': form_data.get('messages', []),
+                    '__files__': metadata.get('files') or [],
+                },
+            )
+
+        if execution is not None:
+            replay = await execution.start(target)
+            if execution.replayed:
+                return params, replay, tool, tool_type, direct_tool
+
         if direct_tool:
             if not event_caller:
                 result = 'Error: Browser session is not connected for this direct tool.'
@@ -3633,15 +3794,12 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call):
                     }
                 )
         else:
-            function = await get_updated_tool_function(
-                function=tool['callable'],
-                extra_params={
-                    '__messages__': form_data.get('messages', []),
-                    '__files__': metadata.get('files') or [],
-                },
-            )
             result = await function(**params)
+        if direct_tool and execution is not None:
+            execution.check_direct_result(result)
     except Exception as e:
+        if execution is not None and execution.store is not None:
+            raise
         result = {'error': str(e)}
     return params, result, tool, tool_type, direct_tool
 
@@ -3667,8 +3825,139 @@ async def execute_tool_call_for_output(request, form_data, user, metadata, event
     }
 
 
+async def execute_temporary_tool_call_for_output(
+    request,
+    form_data,
+    user,
+    metadata,
+    event_caller,
+    event_emitter,
+    tool_call,
+    *,
+    round_id,
+    ordinal,
+    source_ids=None,
+    citations_enabled=True,
+    sidecar=None,
+    call_item=None,
+):
+    """Settle the complete normalized original before emitting or admitting it."""
+    from open_webui.utils.temporary_tool_execution import TemporaryToolExecution, commit_temporary_results
+    from open_webui.utils.images.context import build_tool_result_parts
+    from open_webui.utils.tool_result_sources import result_metadata
+
+    async with TemporaryToolExecution.for_request(
+        request, round_id=round_id, ordinal=ordinal, call_id=tool_call['id']
+    ) as execution:
+        params, raw, tool, tool_type, direct = await execute_tool_call(
+            form_data, metadata, event_caller, tool_call, execution=execution
+        )
+        name = tool_call.get('function', {}).get('name', '')
+        if execution.replayed:
+            result = raw
+        else:
+            files, embeds = [], []
+            if raw is None and tool is None:
+                raw = (
+                    'Error: Tool call arguments could not be parsed. The model generated malformed or incomplete JSON.'
+                )
+            elif tool:
+                raw = build_terminal_file_tool_result(name, params, raw, tool, metadata) or raw
+                raw, files, embeds = await process_tool_result(request, name, raw, tool_type, direct, metadata, user)
+            for file in files:
+                if file.get('type') == 'image' and str(file.get('url', '')).startswith('data:'):
+                    file['url'] = await store_tool_result_image(request, file['url'], metadata, user)
+            result = {
+                'tool_call_id': tool_call['id'],
+                'content': tool_result_content(raw),
+                **({'files': files} if files else {}),
+                **({'embeds': embeds} if embeds else {}),
+            }
+            await attach_tool_citations(
+                result,
+                name,
+                params,
+                tool or {},
+                source_ids if source_ids is not None else {},
+                None,
+                citations_enabled,
+                request=request,
+            )
+            resolved_call = (
+                copy.deepcopy(call_item)
+                if call_item is not None
+                else {
+                    'id': f'fc-{execution.execution_id or uuid4()}',
+                    'type': 'function_call',
+                    'call_id': tool_call['id'],
+                    **(
+                        {'provider_function': copy.deepcopy(tool_call['provider_function'])}
+                        if 'provider_function' in tool_call
+                        else {}
+                    ),
+                }
+            )
+            result_status = 'failed' if _is_tool_result_error(result['content']) else 'completed'
+            resolved_call.update(
+                name=name, arguments=tool_call.get('function', {}).get('arguments', '{}'), status=result_status
+            )
+            result['publication'] = {'call_item': resolved_call, 'sidecar': sidecar is not None, 'ordinal': ordinal}
+            if sidecar is not None:
+                result['output_item'] = {
+                    **sidecar,
+                    'text': result['content'],
+                    **{
+                        key: copy.deepcopy(result[key])
+                        for key in ('files', 'embeds', 'citation_context', 'citation_sources')
+                        if key in result
+                    },
+                }
+            else:
+                parts, display_files = build_tool_result_parts(result)
+                result['output_item'] = {
+                    'type': 'function_call_output',
+                    'id': f'fco-{execution.execution_id or uuid4()}',
+                    'call_id': tool_call['id'],
+                    'output': parts,
+                    'status': result_status,
+                    'tool_result': result_metadata([resolved_call], tool_call['id']),
+                    **{
+                        key: copy.deepcopy(result[key])
+                        for key in ('citation_context', 'citation_sources')
+                        if key in result
+                    },
+                    **({'files': display_files} if display_files else {}),
+                    **({'embeds': copy.deepcopy(result['embeds'])} if result.get('embeds') else {}),
+                }
+            await execution.finish(result)
+        if sidecar is not None:
+            snapshot = await execution.store.history.read_snapshot()
+            message = snapshot['messages_map'][execution.store.scope.reply_id]
+            old = list(message.get('tool_results') or [])
+            item = result['output_item']
+            if not any(value['id'] == item['id'] for value in old):
+                old.append(item)
+            await commit_temporary_results(
+                request,
+                message.get('output') or [],
+                {item['id']: execution.execution_id} if execution.execution_id else {},
+                sidecars=old,
+            )
+        if event_emitter and not execution.replayed:
+            await terminal_event_handler(name, params, result['content'], event_emitter)
+            for source in result.get('citation_sources', []):
+                await event_emitter({'type': 'source', 'data': source})
+        return result, execution.execution_id
+
+
 async def resume_tool_calls(request, form_data, user, model, metadata, message) -> bool:
     """Execute approved calls in the supplied response without rebuilding prepared history."""
+    from open_webui.utils.context_scope import temporary_request_store
+    from open_webui.utils.context_store_errors import ContextConflict
+
+    if temporary_request_store(request):
+        # Temporary approvals stay inside the registered live execution task.
+        raise ContextConflict()
     chat_id = metadata.get('chat_id')
     message_id = metadata.get('message_id') or metadata.get('assistant_message_id')
     output = message.get('output')
@@ -5118,6 +5407,10 @@ async def streaming_chat_response_handler(response, ctx):
 
             async def save_current_response_stream():
                 nonlocal stream_size, snapshot_size
+                from open_webui.utils.context_scope import temporary_request_store
+
+                if temporary_request_store(request):
+                    return
                 stream_size = snapshot_size = await save_response_stream(
                     request.app.state.redis,
                     response_stream_task_id,
@@ -6417,90 +6710,151 @@ async def streaming_chat_response_handler(response, ctx):
 
                     results = []
 
-                    delegate_calls = [
-                        tool_call
-                        for tool_call in response_tool_calls
-                        if tool_call.get('function', {}).get('name') == 'delegate_task'
-                    ]
-                    tool_results = {}
-                    for tool_call in response_tool_calls:
-                        if tool_call.get('function', {}).get('name') != 'delegate_task':
-                            tool_results[id(tool_call)] = await execute_tool_call(
-                                form_data, metadata, event_caller, tool_call
+                    from open_webui.utils.context_scope import temporary_request_store
+                    from open_webui.utils.temporary_tool_execution import commit_temporary_results
+
+                    temporary_store = temporary_request_store(request)
+                    execution_by_call_id = {}
+                    scoped_execution_error = None
+                    if temporary_store:
+                        round_id = str(uuid4())
+                        scoped_results = {}
+
+                        async def execute_scoped_call(ordinal, tool_call):
+                            result, execution_id = await execute_temporary_tool_call_for_output(
+                                request,
+                                form_data,
+                                user,
+                                metadata,
+                                event_caller,
+                                event_emitter,
+                                tool_call,
+                                round_id=round_id,
+                                ordinal=ordinal,
+                                source_ids=citation_source_ids,
+                                citations_enabled=citations_enabled,
+                                call_item=next(
+                                    item
+                                    for item in output
+                                    if item.get('type') == 'function_call' and item.get('call_id') == tool_call['id']
+                                ),
                             )
-                    tool_results.update(
-                        zip(
-                            [id(tool_call) for tool_call in delegate_calls],
-                            await asyncio.gather(
-                                *(
-                                    execute_tool_call(form_data, metadata, event_caller, tool_call)
-                                    for tool_call in delegate_calls
+                            if execution_id:
+                                execution_by_call_id[tool_call['id']] = execution_id
+                            scoped_results[ordinal] = result
+                            return result
+
+                        delegates = []
+                        for ordinal, tool_call in enumerate(response_tool_calls):
+                            if tool_call.get('function', {}).get('name') == 'delegate_task':
+                                delegates.append((ordinal, tool_call))
+                            else:
+                                try:
+                                    await execute_scoped_call(ordinal, tool_call)
+                                except BaseException as error:
+                                    scoped_execution_error = error
+                                    break
+                        # Wait for every executor to settle even when a sibling fails.
+                        if scoped_execution_error is None:
+                            try:
+                                delegated = await asyncio.gather(
+                                    *(execute_scoped_call(ordinal, call) for ordinal, call in delegates),
+                                    return_exceptions=True,
                                 )
-                            ),
-                        )
-                    )
-
-                    for tool_call in response_tool_calls:
-                        tool_call_id = tool_call.get('id', '')
-                        tool_function_name = tool_call.get('function', {}).get('name', '')
-                        tool_function_params, tool_result, tool, tool_type, direct_tool = tool_results[id(tool_call)]
-                        if tool_result is None:
-                            results.append(
-                                {
-                                    'tool_call_id': tool_call_id,
-                                    'content': (
-                                        'Error: Tool call arguments could not be parsed. The model generated '
-                                        f'malformed or incomplete JSON for `{tool_function_name}`. Please try again.'
-                                    ),
-                                }
+                                scoped_execution_error = next(
+                                    (value for value in delegated if isinstance(value, BaseException)), None
+                                )
+                            except BaseException as error:
+                                scoped_execution_error = error
+                        results = [scoped_results[index] for index in sorted(scoped_results)]
+                    else:
+                        delegate_calls = [
+                            tool_call
+                            for tool_call in response_tool_calls
+                            if tool_call.get('function', {}).get('name') == 'delegate_task'
+                        ]
+                        tool_results = {}
+                        for tool_call in response_tool_calls:
+                            if tool_call.get('function', {}).get('name') != 'delegate_task':
+                                tool_results[id(tool_call)] = await execute_tool_call(
+                                    form_data, metadata, event_caller, tool_call
+                                )
+                        tool_results.update(
+                            zip(
+                                [id(tool_call) for tool_call in delegate_calls],
+                                await asyncio.gather(
+                                    *(
+                                        execute_tool_call(form_data, metadata, event_caller, tool_call)
+                                        for tool_call in delegate_calls
+                                    )
+                                ),
                             )
-                            continue
-
-                        terminal_file_result = build_terminal_file_tool_result(
-                            tool_function_name,
-                            tool_function_params,
-                            tool_result,
-                            tool,
-                            metadata,
-                        )
-                        if terminal_file_result:
-                            tool_result = terminal_file_result
-
-                        tool_result, tool_result_files, tool_result_embeds = await process_tool_result(
-                            request,
-                            tool_function_name,
-                            tool_result,
-                            tool_type,
-                            direct_tool,
-                            metadata,
-                            user,
                         )
 
-                        await terminal_event_handler(
-                            tool_function_name,
-                            tool_function_params,
-                            tool_result,
-                            event_emitter,
-                        )
+                        for tool_call in response_tool_calls:
+                            tool_call_id = tool_call.get('id', '')
+                            tool_function_name = tool_call.get('function', {}).get('name', '')
+                            tool_function_params, tool_result, tool, tool_type, direct_tool = tool_results[
+                                id(tool_call)
+                            ]
+                            if tool_result is None:
+                                results.append(
+                                    {
+                                        'tool_call_id': tool_call_id,
+                                        'content': (
+                                            'Error: Tool call arguments could not be parsed. The model generated '
+                                            f'malformed or incomplete JSON for `{tool_function_name}`. Please try again.'
+                                        ),
+                                    }
+                                )
+                                continue
 
-                        result = {
-                            'tool_call_id': tool_call_id,
-                            'content': tool_result_content(tool_result),
-                            **({'files': tool_result_files} if tool_result_files else {}),
-                            **({'embeds': tool_result_embeds} if tool_result_embeds else {}),
-                        }
-                        await attach_tool_citations(
-                            result,
-                            tool_function_name,
-                            tool_function_params,
-                            tool or {},
-                            citation_source_ids,
-                            event_emitter,
-                            citations_enabled,
-                            request=request,
-                        )
-                        results.append(result)
+                            terminal_file_result = build_terminal_file_tool_result(
+                                tool_function_name,
+                                tool_function_params,
+                                tool_result,
+                                tool,
+                                metadata,
+                            )
+                            if terminal_file_result:
+                                tool_result = terminal_file_result
 
+                            tool_result, tool_result_files, tool_result_embeds = await process_tool_result(
+                                request,
+                                tool_function_name,
+                                tool_result,
+                                tool_type,
+                                direct_tool,
+                                metadata,
+                                user,
+                            )
+
+                            await terminal_event_handler(
+                                tool_function_name,
+                                tool_function_params,
+                                tool_result,
+                                event_emitter,
+                            )
+
+                            result = {
+                                'tool_call_id': tool_call_id,
+                                'content': tool_result_content(tool_result),
+                                **({'files': tool_result_files} if tool_result_files else {}),
+                                **({'embeds': tool_result_embeds} if tool_result_embeds else {}),
+                            }
+                            await attach_tool_citations(
+                                result,
+                                tool_function_name,
+                                tool_function_params,
+                                tool or {},
+                                citation_source_ids,
+                                event_emitter,
+                                citations_enabled,
+                                request=request,
+                            )
+                            results.append(result)
+
+                    execution_by_output_id = {}
                     result_status_by_call_id = {}
                     for result in results:
                         from open_webui.utils.tool_result_sources import result_metadata
@@ -6517,7 +6871,9 @@ async def streaming_chat_response_handler(response, ctx):
                         result_status_by_call_id[result.get('tool_call_id', '')] = local_output_status
 
                         output.append(
-                            {
+                            copy.deepcopy(result['output_item'])
+                            if temporary_store and result.get('output_item')
+                            else {
                                 'type': 'function_call_output',
                                 'id': output_id('fco'),
                                 'call_id': result.get('tool_call_id', ''),
@@ -6535,17 +6891,25 @@ async def streaming_chat_response_handler(response, ctx):
                         )
 
                         new_tool_output_ids.append(output[-1]['id'])
+                        if result.get('tool_call_id') in execution_by_call_id:
+                            execution_by_output_id[output[-1]['id']] = execution_by_call_id[result['tool_call_id']]
 
                     # Update function_call statuses and parsed/sanitized arguments.
                     for tc in response_tool_calls:
                         call_id = tc.get('id', '')
                         for item in output:
                             if item.get('type') == 'function_call' and item.get('call_id') == call_id:
-                                item['status'] = result_status_by_call_id.get(call_id, 'completed')
+                                item['status'] = result_status_by_call_id.get(
+                                    call_id, 'incomplete' if scoped_execution_error is not None else 'completed'
+                                )
                                 item['arguments'] = tc.get('function', {}).get('arguments', '{}')
                                 break
 
+                    if temporary_store:
+                        await commit_temporary_results(request, full_output(), execution_by_output_id)
                     await emit_output()
+                    if scoped_execution_error is not None:
+                        raise scoped_execution_error
 
                     try:
                         new_form_data = {
@@ -6736,12 +7100,13 @@ async def streaming_chat_response_handler(response, ctx):
                         if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
                             # Persist completed outputs before summarization can checkpoint them.
                             # This appends to raw history; the summary is stored separately.
-                            await Chats.upsert_message_to_chat_by_id_and_message_id(
-                                metadata['chat_id'],
-                                metadata['message_id'],
-                                {'output': full_output(), 'done': False},
-                                touch=False,
-                            )
+                            if not temporary_store:
+                                await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                    metadata['chat_id'],
+                                    metadata['message_id'],
+                                    {'output': full_output(), 'done': False},
+                                    touch=False,
+                                )
                             from open_webui.utils.tool_result_sources import register_tool_results
 
                             await register_tool_results(
@@ -6749,7 +7114,7 @@ async def streaming_chat_response_handler(response, ctx):
                                 metadata,
                                 form_data['model'],
                                 output=full_output(),
-                                output_ids=new_tool_output_ids,
+                                output_ids=list(execution_by_output_id) if temporary_store else new_tool_output_ids,
                             )
 
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
@@ -6835,117 +7200,181 @@ async def streaming_chat_response_handler(response, ctx):
                         retries += 1
                         log.debug('Attempt count: %s', retries)
 
+                        from open_webui.utils.temporary_tool_execution import (
+                            TemporaryToolExecution,
+                            commit_temporary_results,
+                        )
+                        from open_webui.utils.tool_result_sources import output_text
+
                         ci_item = output[-1]
-                        ci_output = ''
-                        try:
-                            if ci_item.get('attributes', {}).get('type') == 'code':
-                                code = ci_item.get('code', '')
-                                # Sanitize code (strips ANSI codes and markdown fences)
-                                code = sanitize_code(code)
+                        async with TemporaryToolExecution.for_request(
+                            request, round_id=ci_item['id'], ordinal=0, call_id=ci_item['id']
+                        ) as code_execution:
+                            ci_output = ''
+                            try:
+                                if ci_item.get('attributes', {}).get('type') == 'code':
+                                    code = ci_item.get('code', '')
+                                    # Sanitize code (strips ANSI codes and markdown fences)
+                                    code = sanitize_code(code)
 
-                                if CODE_INTERPRETER_BLOCKED_MODULES:
-                                    blocking_code = textwrap.dedent(f"""
-                                        import builtins
+                                    if CODE_INTERPRETER_BLOCKED_MODULES:
+                                        blocking_code = textwrap.dedent(f"""
+                                            import builtins
     
-                                        BLOCKED_MODULES = {CODE_INTERPRETER_BLOCKED_MODULES}
+                                            BLOCKED_MODULES = {CODE_INTERPRETER_BLOCKED_MODULES}
     
-                                        _real_import = builtins.__import__
-                                        def restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
-                                            if name.split('.')[0] in BLOCKED_MODULES:
-                                                importer_name = globals.get('__name__') if globals else None
-                                                if importer_name == '__main__':
-                                                    raise ImportError(
-                                                        f"Direct import of module {{name}} is restricted."
-                                                    )
-                                            return _real_import(name, globals, locals, fromlist, level)
+                                            _real_import = builtins.__import__
+                                            def restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
+                                                if name.split('.')[0] in BLOCKED_MODULES:
+                                                    importer_name = globals.get('__name__') if globals else None
+                                                    if importer_name == '__main__':
+                                                        raise ImportError(
+                                                            f"Direct import of module {{name}} is restricted."
+                                                        )
+                                                return _real_import(name, globals, locals, fromlist, level)
     
-                                        builtins.__import__ = restricted_import
-                                    """)
-                                    code = blocking_code + '\n' + code
+                                            builtins.__import__ = restricted_import
+                                        """)
+                                        code = blocking_code + '\n' + code
 
-                                ci_engine = await Config.get('code_interpreter.engine')
-                                if ci_engine == 'pyodide':
-                                    ci_output = await event_caller(
-                                        {
-                                            'type': 'execute:python',
-                                            'data': {
-                                                'id': str(uuid4()),
-                                                'code': code,
-                                                'session_id': metadata.get('session_id', None),
-                                                'files': metadata.get('files', []),
-                                            },
+                                    ci_engine = await Config.get('code_interpreter.engine')
+                                    target = {'name': 'execute_code', 'code': code, 'engine': ci_engine}
+                                    replay = await code_execution.lookup(target)
+                                    approved = True
+                                    if (
+                                        code_execution.store
+                                        and not code_execution.replayed
+                                        and metadata.get('params', {}).get('tool_approval_mode') == 'ask'
+                                    ):
+                                        approved = (
+                                            bool(event_caller)
+                                            and await event_caller(
+                                                {
+                                                    'type': 'confirmation',
+                                                    'data': {
+                                                        'tool_call': {
+                                                            'id': ci_item['id'],
+                                                            'name': 'execute_code',
+                                                            'arguments': {'code': code},
+                                                        }
+                                                    },
+                                                }
+                                            )
+                                            is True
+                                        )
+                                    can_execute = approved and (
+                                        ci_engine == 'jupyter' or (ci_engine == 'pyodide' and bool(event_caller))
+                                    )
+                                    if can_execute and not code_execution.replayed:
+                                        replay = await code_execution.start(target)
+                                    if not approved:
+                                        ci_output = {'stderr': 'Error: tool call was not approved.'}
+                                    elif code_execution.replayed:
+                                        ci_output = copy.deepcopy(replay['output_item']['output'])
+                                    elif ci_engine == 'pyodide' and not event_caller:
+                                        ci_output = {
+                                            'stderr': 'Error: Browser session is not connected for code execution.'
                                         }
-                                    )
-                                elif ci_engine == 'jupyter':
-                                    ci_output = await execute_code_jupyter(
-                                        await Config.get('code_interpreter.jupyter.url'),
-                                        code,
-                                        (
-                                            await Config.get('code_interpreter.jupyter.auth_token')
-                                            if await Config.get('code_interpreter.jupyter.auth') == 'token'
-                                            else None
-                                        ),
-                                        (
-                                            await Config.get('code_interpreter.jupyter.auth_password')
-                                            if await Config.get('code_interpreter.jupyter.auth') == 'password'
-                                            else None
-                                        ),
-                                        await Config.get('code_interpreter.jupyter.timeout'),
-                                    )
-                                else:
-                                    ci_output = {'stdout': 'Code interpreter engine not configured.'}
+                                    elif ci_engine == 'pyodide':
+                                        ci_output = await event_caller(
+                                            {
+                                                'type': 'execute:python',
+                                                'data': {
+                                                    'id': str(uuid4()),
+                                                    'code': code,
+                                                    'session_id': metadata.get('session_id', None),
+                                                    'files': metadata.get('files', []),
+                                                },
+                                            }
+                                        )
+                                    elif ci_engine == 'jupyter':
+                                        ci_output = await execute_code_jupyter(
+                                            await Config.get('code_interpreter.jupyter.url'),
+                                            code,
+                                            (
+                                                await Config.get('code_interpreter.jupyter.auth_token')
+                                                if await Config.get('code_interpreter.jupyter.auth') == 'token'
+                                                else None
+                                            ),
+                                            (
+                                                await Config.get('code_interpreter.jupyter.auth_password')
+                                                if await Config.get('code_interpreter.jupyter.auth') == 'password'
+                                                else None
+                                            ),
+                                            await Config.get('code_interpreter.jupyter.timeout'),
+                                        )
+                                    else:
+                                        ci_output = {'stdout': 'Code interpreter engine not configured.'}
 
-                                log.debug('Code interpreter output: %s', ci_output)
+                                    log.debug('Code interpreter output: %s', ci_output)
 
-                                # Handle error responses from event_caller
-                                # (e.g. session disconnected, timeout)
-                                if isinstance(ci_output, dict) and ci_output.get('error'):
-                                    ci_output = {'stderr': ci_output['error']}
+                                    if ci_engine == 'pyodide' and approved:
+                                        code_execution.check_direct_result(ci_output)
 
-                                if isinstance(ci_output, dict):
-                                    stdout = ci_output.get('stdout', '')
+                                    # Handle error responses from event_caller
+                                    # (e.g. session disconnected, timeout)
+                                    if isinstance(ci_output, dict) and ci_output.get('error'):
+                                        ci_output = {'stderr': ci_output['error']}
 
-                                    if isinstance(stdout, str):
-                                        stdoutLines = stdout.split('\n')
-                                        for idx, line in enumerate(stdoutLines):
-                                            if re.match(r'data:image/\w+;base64', line):
-                                                image_url = await get_image_url_from_base64(
-                                                    request,
-                                                    line,
-                                                    metadata,
-                                                    user,
-                                                )
-                                                if image_url:
-                                                    stdoutLines[idx] = f'![Output Image]({image_url})'
+                                    if isinstance(ci_output, dict):
+                                        stdout = ci_output.get('stdout', '')
 
-                                        ci_output['stdout'] = '\n'.join(stdoutLines)
+                                        if isinstance(stdout, str):
+                                            stdoutLines = stdout.split('\n')
+                                            for idx, line in enumerate(stdoutLines):
+                                                if re.match(r'data:image/\w+;base64', line):
+                                                    image_url = await get_image_url_from_base64(
+                                                        request,
+                                                        line,
+                                                        metadata,
+                                                        user,
+                                                    )
+                                                    if image_url:
+                                                        stdoutLines[idx] = f'![Output Image]({image_url})'
 
-                                    result = ci_output.get('result', '')
+                                            ci_output['stdout'] = '\n'.join(stdoutLines)
 
-                                    if isinstance(result, str):
-                                        resultLines = result.split('\n')
-                                        for idx, line in enumerate(resultLines):
-                                            if re.match(r'data:image/\w+;base64', line):
-                                                image_url = await get_image_url_from_base64(
-                                                    request,
-                                                    line,
-                                                    metadata,
-                                                    user,
-                                                )
-                                                resultLines[idx] = f'![Output Image]({image_url})'
-                                        ci_output['result'] = '\n'.join(resultLines)
-                        except Exception as e:
-                            ci_output = str(e)
+                                        result = ci_output.get('result', '')
 
-                        from open_webui.utils.tool_result_sources import batch_id
+                                        if isinstance(result, str):
+                                            resultLines = result.split('\n')
+                                            for idx, line in enumerate(resultLines):
+                                                if re.match(r'data:image/\w+;base64', line):
+                                                    image_url = await get_image_url_from_base64(
+                                                        request,
+                                                        line,
+                                                        metadata,
+                                                        user,
+                                                    )
+                                                    resultLines[idx] = f'![Output Image]({image_url})'
+                                            ci_output['result'] = '\n'.join(resultLines)
+                            except Exception as e:
+                                if code_execution.store:
+                                    raise
+                                ci_output = str(e)
 
-                        ci_item['output'] = ci_output
-                        ci_item['status'] = 'completed'
-                        ci_item['tool_result'] = {
-                            'batch_id': batch_id([ci_item['id']]),
-                            'name': 'execute_code',
-                            'kind': 'code',
-                        }
+                            from open_webui.utils.tool_result_sources import batch_id
+
+                            ci_item['output'] = ci_output
+                            ci_item['status'] = 'completed'
+                            ci_item['tool_result'] = {
+                                'batch_id': batch_id([ci_item['id']]),
+                                'name': 'execute_code',
+                                'kind': 'code',
+                            }
+
+                            await code_execution.finish(
+                                {
+                                    'content': output_text(ci_item),
+                                    'output_item': copy.deepcopy(ci_item),
+                                    'publication': {'call_item': None, 'sidecar': False, 'ordinal': 0},
+                                }
+                            )
+                            await commit_temporary_results(
+                                request,
+                                full_output(),
+                                {ci_item['id']: code_execution.execution_id} if code_execution.execution_id else {},
+                            )
 
                         output.append(
                             {
@@ -6997,12 +7426,13 @@ async def streaming_chat_response_handler(response, ctx):
                                         ref['message_id'] = metadata['message_id']
                                 # Persist completed outputs before summarization can checkpoint them.
                                 # This appends to raw history; the summary is stored separately.
-                                await Chats.upsert_message_to_chat_by_id_and_message_id(
-                                    metadata['chat_id'],
-                                    metadata['message_id'],
-                                    {'output': full_output(), 'done': False},
-                                    touch=False,
-                                )
+                                if code_execution.store is None:
+                                    await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                        metadata['chat_id'],
+                                        metadata['message_id'],
+                                        {'output': full_output(), 'done': False},
+                                        touch=False,
+                                    )
                                 from open_webui.utils.tool_result_sources import register_tool_results
 
                                 await register_tool_results(
@@ -7010,7 +7440,9 @@ async def streaming_chat_response_handler(response, ctx):
                                     metadata,
                                     form_data['model'],
                                     output=full_output(),
-                                    output_ids=[ci_item['id']],
+                                    output_ids=[ci_item['id']]
+                                    if code_execution.store is None or code_execution.execution_id
+                                    else [],
                                 )
 
                             new_form_data = await convert_url_images_to_base64(new_form_data, user=user)

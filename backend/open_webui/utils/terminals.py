@@ -96,6 +96,18 @@ def terminal_context_id(
     chat_id = metadata.get('chat_id')
     if context == 'chat' and chat_id and is_saved_chat_id(chat_id):
         return f'chat:{chat_id}'
+    temporary = metadata.get('temporary_context')
+    if context == 'chat' and isinstance(temporary, dict):
+        identity, epoch = temporary.get('id'), temporary.get('epoch')
+        if (
+            isinstance(identity, str)
+            and identity
+            and isinstance(epoch, str)
+            and epoch
+            and chat_id == f'temporary:{identity}'
+        ):
+            return f'temporary:{identity}:{epoch}'
+
     return None
 
 

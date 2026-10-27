@@ -521,6 +521,9 @@ async def test_websocket_saved_chat_uses_current_live_access_api(api, monkeypatc
     monkeypatch.setattr(api.router, '_resolve_terminal_access', AsyncMock(return_value=(user, api.connection)))
     api.chats.get_accessible_chat_by_id.return_value = object() if allowed else None
     socket = SimpleNamespace(
+        headers={},
+        query_params={},
+        state=SimpleNamespace(),
         receive_text=AsyncMock(return_value=json.dumps({'type': 'auth', 'token': 'owner', 'chat_id': 'chat-1'})),
         close=AsyncMock(),
     )
@@ -538,7 +541,7 @@ async def test_websocket_saved_chat_uses_current_live_access_api(api, monkeypatc
 async def test_open_websocket_rechecks_chat_access_after_revocation(api):
     user = SimpleNamespace(id='user-1', role='user')
     api.chats.get_accessible_chat_by_id.side_effect = [object(), None]
-    socket = SimpleNamespace(close=AsyncMock())
+    socket = SimpleNamespace(close=AsyncMock(), headers={}, query_params={})
     source = ast.parse((BACKEND / 'routers/terminals.py').read_text(encoding='utf-8'))
     watcher = next(
         node for node in ast.walk(source) if isinstance(node, ast.AsyncFunctionDef) and node.name == '_watch_access'
@@ -546,6 +549,8 @@ async def test_open_websocket_rechecks_chat_access_after_revocation(api):
     namespace = {
         'asyncio': SimpleNamespace(sleep=AsyncMock()),
         '_resolve_terminal_access': AsyncMock(return_value=(user, api.connection)),
+        '_temporary_terminal_scope': api.router._temporary_terminal_scope,
+        'HTTPException': HTTPException,
         'Chats': api.chats,
         'is_saved_chat_id': api.router.is_saved_chat_id,
         'chat_id': 'chat-1',

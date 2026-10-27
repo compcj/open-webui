@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { toast } from 'svelte-sonner';
 	import { LinkPreview } from 'bits-ui';
 	import { mobile, settings } from '$lib/stores';
@@ -30,7 +31,7 @@
 	export let loadingChildren = false;
 	export let folderContentsVersion = 0;
 	export let terminalUrl: string = '';
-	export let terminalKey: string = '';
+	export let terminalKey: TerminalCredential = '';
 	export let terminalSessionId: string | undefined = undefined;
 
 	export let onOpen: (entry: FileEntry) => void = () => {};
@@ -408,7 +409,7 @@
 									})
 								);
 							}
-							if (entry.type === 'file' && terminalUrl) {
+							if (entry.type === 'file' && terminalUrl && typeof terminalKey === 'string') {
 								e.dataTransfer?.setData(
 									'application/x-terminal-file',
 									JSON.stringify({

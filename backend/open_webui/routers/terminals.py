@@ -154,6 +154,57 @@ def _cross_origin_file_request(request: Request) -> bool:
     )
 
 
+async def _temporary_terminal_scope(request, user, metadata, *, signed_delivery=False):
+    """Authenticate browsing against the live epoch; delivered artifacts keep their signed origin."""
+    from open_webui.utils.context_store_errors import ContextStoreError
+    from open_webui.utils.temporary_contexts import temporary_repository
+
+    chat_id = metadata.get('chat_id') or ''
+    if not chat_id.startswith('temporary:'):
+        return
+    identity = metadata.get('temporary_context') if signed_delivery else None
+    if identity is None:
+        context_id = request.headers.get('X-Temporary-Context-Id') or request.query_params.get('temporary_context_id')
+        epoch = request.headers.get('X-Temporary-Context-Epoch') or request.query_params.get('temporary_context_epoch')
+        if context_id or epoch:
+            identity = {'id': context_id, 'epoch': epoch}
+    if identity is None:
+        if signed_delivery:
+            return  # Legacy delivered artifacts already passed signature/owner checks.
+        session_id = chat_id.removeprefix('temporary:')
+        if len(session_id) == 32 and all(c in '0123456789abcdef' for c in session_id):
+            raise HTTPException(404, 'Temporary context identity is required')
+        from open_webui.socket.main import get_event_call_session_error
+
+        error = await get_event_call_session_error(
+            session_id,
+            {
+                'user_id': user.id,
+                'chat_id': chat_id,
+                'message_id': 'terminal-access',
+            },
+        )
+        if error:
+            unavailable = 'unavailable' in error.lower() or 'retry' in error.lower()
+            raise HTTPException(503 if unavailable else 403, error)
+        return
+    if (
+        not isinstance(identity, dict)
+        or not isinstance(identity.get('id'), str)
+        or not isinstance(identity.get('epoch'), str)
+        or metadata.get('chat_id') != f'temporary:{identity["id"]}'
+    ):
+        raise HTTPException(404, 'Temporary context not found')
+    if not signed_delivery:
+        try:
+            await temporary_repository(request).read(
+                identity['id'], user.id, identity['epoch'], allow_closed=metadata.get('_temporary_cleanup') is True
+            )
+        except ContextStoreError as error:
+            raise HTTPException(error.status_code, error.detail()) from None
+    metadata['temporary_context'] = {key: identity[key] for key in ('id', 'epoch')}
+
+
 async def _http_terminal_context(server_id, request, user, metadata, *, require_context=False):
     if not ENABLE_TOOL_SERVERS:
         raise HTTPException(403, 'Tool servers are disabled')
@@ -170,6 +221,7 @@ async def _http_terminal_context(server_id, request, user, metadata, *, require_
     if not base_url:
         raise HTTPException(503, 'Terminal server URL not configured')
     session_id = metadata.get('chat_id')
+    await _temporary_terminal_scope(request, user, metadata, signed_delivery=metadata.get('_signed_delivery') is True)
     if is_saved_chat_id(session_id) and not await Chats.get_accessible_chat_by_id(session_id, user):
         raise HTTPException(404, 'Chat not found')
     context = 'automation' if metadata.get('automation_id') else 'chat'
@@ -241,6 +293,11 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
     if safe_path.rstrip('/') in {'files/download', 'files/image'}:
         return _terminal_error(405, 'Method not allowed')
     metadata = {'chat_id': request.path_params.get('chat_id') or request.headers.get('x-session-id')}
+    if request.method == 'DELETE':
+        segments = safe_path.strip('/').split('/')
+        metadata['_temporary_cleanup'] = (len(segments) == 3 and segments[:2] == ['api', 'terminals']) or (
+            len(segments) == 2 and segments[0] == 'notebooks'
+        )
     payload = None
     if reference is not None:
         try:
@@ -249,7 +306,7 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
             return _terminal_error(403, 'Invalid file reference')
         if payload['owner_id'] != user.id or payload['server_id'] != server_id:
             return _terminal_error(403, 'Access denied')
-        metadata = payload
+        metadata = {**payload, '_signed_delivery': True}
     try:
         base_url, headers, cookies, context_id = await _http_terminal_context(
             server_id,
@@ -263,7 +320,15 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
     if payload is not None and context_id != payload.get('context_id'):
         return _terminal_error(403, 'Terminal context has changed')
 
-    query = [('path', payload['path'])] if payload else list(request.query_params.multi_items())
+    query = (
+        [('path', payload['path'])]
+        if payload
+        else [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key not in {'temporary_context_id', 'temporary_context_epoch'}
+        ]
+    )
     filename = payload['path'] if payload else request.query_params.get('path', safe_path)
     raw_file = (
         payload is not None
@@ -432,6 +497,13 @@ async def _resolve_authenticated_connection(ws: WebSocket, server_id: str):
     if is_saved_chat_id(chat_id) and not await Chats.get_accessible_chat_by_id(chat_id, user):
         await ws.close(code=4003, reason='Chat access denied')
         return None
+    metadata = {'chat_id': chat_id}
+    try:
+        await _temporary_terminal_scope(ws, user, metadata)
+    except HTTPException as error:
+        await ws.close(code=1013 if error.status_code == 503 else 4003, reason='Temporary context access denied')
+        return None
+    ws.state.temporary_context = metadata.get('temporary_context')
     return user, connection, chat_id, token
 
 
@@ -507,7 +579,9 @@ async def ws_terminal(
     upstream_params = {}
     # For orchestrator-backed servers, pass user_id
     upstream_params['user_id'] = user.id
-    context_id = terminal_context_id(connection, {'chat_id': chat_id}, 'chat')
+    context_id = terminal_context_id(
+        connection, {'chat_id': chat_id, 'temporary_context': getattr(ws.state, 'temporary_context', None)}, 'chat'
+    )
     # Match the ownership headers used to create the session via HTTP. Open
     # Terminal checks both when attaching, independently of first-message auth.
     upstream_headers = {'X-User-Id': user.id}
@@ -597,6 +671,14 @@ async def ws_terminal(
                         await asyncio.sleep(10)
                         current_access = await _resolve_terminal_access(ws, server_id, token)
                         if current_access is None:
+                            return
+                        try:
+                            await _temporary_terminal_scope(ws, current_access[0], {'chat_id': chat_id})
+                        except HTTPException as error:
+                            await ws.close(
+                                code=1013 if error.status_code == 503 else 4003,
+                                reason='Temporary context access denied',
+                            )
                             return
                         if is_saved_chat_id(chat_id) and not await Chats.get_accessible_chat_by_id(
                             chat_id, current_access[0]

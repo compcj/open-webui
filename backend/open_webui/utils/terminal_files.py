@@ -62,6 +62,15 @@ def verify_file_reference(reference: str, secret: str) -> dict:
             )
         ):
             raise ValueError('Invalid file reference')
+        temporary = data.get('temporary_context')
+        if temporary is not None and (
+            not isinstance(temporary, dict)
+            or any(
+                not isinstance(temporary.get(key), str) or not 0 < len(temporary[key]) <= 128 for key in ('id', 'epoch')
+            )
+            or data.get('chat_id') != f'temporary:{temporary.get("id")}'
+        ):
+            raise ValueError('Invalid file reference')
         return data
     except (BadData, TypeError, KeyError) as error:
         raise ValueError('Invalid file reference') from error
@@ -92,6 +101,9 @@ def add_file_delivery_links(
         'automation_id': metadata.get('automation_id'),
         'context_id': context_id,
     }
+    temporary = metadata.get('temporary_context')
+    if isinstance(temporary, dict) and metadata.get('chat_id') == f'temporary:{temporary.get("id")}':
+        payload['temporary_context'] = {key: temporary[key] for key in ('id', 'epoch')}
     reference = _serializer(secret).dumps(payload)
     base = f'/api/v1/terminals/{quote(server_id, safe="")}/files'
     query = urlencode({'ref': reference})

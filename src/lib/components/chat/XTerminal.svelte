@@ -4,7 +4,11 @@
 	import { FitAddon } from '@xterm/addon-fit';
 	import { WebLinksAddon } from '@xterm/addon-web-links';
 	import '@xterm/xterm/css/xterm.css';
-	import { terminalRequest, type TerminalConnection } from '$lib/apis/terminal';
+	import {
+		terminalRequest,
+		terminalCredentialToken,
+		type TerminalConnection
+	} from '$lib/apis/terminal';
 	import { connectedUserTerminals } from '$lib/stores';
 
 	export let connection: TerminalConnection;
@@ -68,12 +72,21 @@
 				location.href
 			);
 			url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+			if (typeof connection.key !== 'string') {
+				if (!connection.key.isCurrent()) throw new Error('Terminal context changed');
+				url.searchParams.set('temporary_context_id', connection.key.temporaryContext.id);
+				url.searchParams.set('temporary_context_epoch', connection.key.temporaryContext.epoch);
+			}
 			ws = new WebSocket(url);
 			ws.binaryType = 'arraybuffer';
 			ws.onopen = () => {
 				if (destroyed) return;
 				ws?.send(
-					JSON.stringify({ type: 'auth', token: connection.key.trim(), chat_id: chatId ?? '' })
+					JSON.stringify({
+						type: 'auth',
+						token: terminalCredentialToken(connection.key).trim(),
+						chat_id: chatId ?? ''
+					})
 				);
 				if (connection.selector && chatId) {
 					const shell = { terminalId: connection.selector, chatId };

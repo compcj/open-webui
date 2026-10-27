@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getContext, onMount, onDestroy } from 'svelte';
 	import { LinkPreview } from 'bits-ui';
 	import { readFile, downloadFileBlob, type FileEntry } from '$lib/apis/terminal';
@@ -12,7 +13,7 @@
 	export let entry: FileEntry;
 	export let path: string;
 	export let terminalUrl: string;
-	export let terminalKey: string;
+	export let terminalKey: TerminalCredential;
 	export let sessionId: string | undefined = undefined;
 
 	let loading = true;

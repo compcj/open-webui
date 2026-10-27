@@ -142,3 +142,82 @@ async def test_memory_compact_and_generation_reservation_are_atomic():
 @pytest.mark.asyncio
 async def test_redis_compact_and_generation_reservation_are_atomic(stores):
     await exclusive_race(*stores)
+
+
+async def stop_fence(repo):
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    await repo.register_tasks(*args, [task('running')], expected_revision=0)
+    stopped = await repo.request_stop(*args)
+    assert stopped['status'] == 'open' and stopped['fence'] == 1
+    assert (await repo.request_stop(*args))['fence'] == 1
+    with pytest.raises(ContextConflict):
+        await repo.register_tasks(*args, [task('queued', 'next')], expected_revision=0)
+    with pytest.raises(ContextConflict):
+        await repo.begin_execution(
+            *args,
+            task_id='running',
+            identity={'round_id': 'round', 'call_id': 'call', 'reply_id': 'reply', 'model_id': 'model', 'ordinal': 0},
+            target_hash='target',
+            expected_fence=0,
+        )
+    await repo.acknowledge_task_done(*args, task_id='running')
+    _, registered = await repo.register_tasks(*args, [task('next', 'next')], expected_revision=0)
+    assert registered[0]['fence'] == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_stop_fences_execution_but_preserves_page():
+    repo, _ = repository()
+    await stop_fence(repo)
+
+
+@pytest.mark.asyncio
+async def test_redis_stop_fences_execution_but_preserves_page(stores):
+    await stop_fence(stores[0])
+
+
+@pytest.mark.asyncio
+async def test_sweep_observes_disconnect_without_treating_expiry_as_completion():
+    repo, clock = repository(lease_seconds=10, disconnected_seconds=30)
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    await repo.lease(*args, socket_id='original')
+    await repo.register_tasks(*args, [task('running')], expected_revision=0)
+    clock[0] += 11
+
+    async def online(current):
+        return True
+
+    outcomes = await repo.sweep(socket_alive=online)
+    assert not any(result['tasks'] for result in outcomes)
+
+    async def offline(current):
+        return False
+
+    clock[0] += 11
+    await repo.sweep(socket_alive=offline)
+    current = await repo.read(*args)
+    assert current['disconnected_deadline'] == clock[0] + 30
+    clock[0] += 31
+    results = await repo.sweep(socket_alive=offline)
+    assert results[0]['status'] == 'closing' and results[0]['tasks'][0]['task_id'] == 'running'
+    assert not (await repo.read(*args, allow_closed=True))['rebuild_allowed']
+
+
+@pytest.mark.asyncio
+async def test_disconnect_probe_cannot_overwrite_a_concurrent_authenticated_rebind():
+    repo, clock = repository(lease_seconds=10)
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    await repo.lease(*args, socket_id='original')
+    clock[0] += 11
+
+    async def race(current):
+        await repo.lease(*args, socket_id='rebound')
+        return False
+
+    await repo.sweep(socket_alive=race)
+    current = await repo.read(*args)
+    assert current['socket']['id'] == 'rebound' and current['socket']['connected']
+    assert current['disconnected_deadline'] is None

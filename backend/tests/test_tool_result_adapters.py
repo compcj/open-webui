@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from test_web_tool_citations import BACKEND, load_functions
+from open_webui.utils.temporary_tool_execution import commit_temporary_results
 
 
 @pytest.fixture
@@ -23,7 +24,14 @@ def runtime(monkeypatch):
     module = ModuleType('open_webui.models.chat_tool_result_selections')
     module.get_tool_selection_store = lambda: selections
     monkeypatch.setitem(sys.modules, module.__name__, module)
-    ns = {'JSONCodec': json, 'log': logging.getLogger(__name__), 'selection_store': selections}
+    ns = {
+        'JSONCodec': json,
+        'log': logging.getLogger(__name__),
+        'selection_store': selections,
+        'temporary_store': None,
+        'commit_temporary_results': commit_temporary_results,
+        'code_execution': SimpleNamespace(store=None, execution_id=None),
+    }
     load_functions(
         ns,
         'utils/misc.py',
@@ -458,7 +466,13 @@ async def test_reader_binds_server_chat_branch_and_user_and_returns_exact_json(r
     assert json.loads(result)['text'] == 'exact <raw> & text'
     args, kwargs = service.read_tool_result_page.await_args
     assert args[1:] == ('trusted-chat', 'r')
-    assert kwargs == {'branch_id': 'trusted-branch', 'query': 'raw', 'cursor': 'cursor', 'max_tokens': 512}
+    assert kwargs == {
+        'branch_id': 'trusted-branch',
+        'query': 'raw',
+        'cursor': 'cursor',
+        'max_tokens': 512,
+        'context_store': None,
+    }
     del request.state.context_compaction
     denied = await ns['read_tool_result']('r', __request__=request, __user__={'id': 'user', 'role': 'user'})
     assert 'error' in json.loads(denied)

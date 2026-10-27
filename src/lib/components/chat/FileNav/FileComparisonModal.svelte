@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { readComparisonSource } from '$lib/apis/terminal';
 	import DiffEditorModal from '$lib/components/common/DiffEditorModal.svelte';
@@ -13,7 +14,7 @@
 		{ name: string; path: string; size?: number }
 	];
 	export let baseUrl: string;
-	export let apiKey: string;
+	export let apiKey: TerminalCredential;
 	export let chatId: string | null;
 	export let onClose: () => void;
 

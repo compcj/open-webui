@@ -1,4 +1,12 @@
 <script lang="ts">
+	import {
+		TemporaryContextController,
+		isTemporaryContextRpc,
+		reconcileTemporaryHistory
+	} from '$lib/utils/temporary-context';
+	import type { TemporaryIdentity, TemporaryRequestIdentity } from '$lib/apis/temporary-contexts';
+	import type { TerminalCredential } from '$lib/apis/terminal';
+	import { projectRawChat } from '$lib/utils/chat-context-copy';
 	import { isVisibleToolResultStatus, mergeCompactionStatus } from '$lib/utils/context-compaction';
 	import type { TerminalContext } from '$lib/types';
 	import { v4 as uuidv4 } from 'uuid';
@@ -246,6 +254,7 @@
 
 	const handleInteractionDisconnect = () => {
 		if (isTemporaryChatId($chatId)) {
+			temporaryController.disconnect();
 			cancelBrowserInteractions();
 		} else {
 			// Saved interactions are replayed by the server after reconnect. Discard only stale callbacks.
@@ -278,6 +287,145 @@
 	}
 	let serverContextUsage = null;
 	let contextUsage = null;
+	let temporaryScope: TemporaryIdentity | null = null;
+	let temporarySaveId: string | null = null;
+	let temporaryTerminalCredential: TerminalCredential | null = null;
+	const temporaryController = new TemporaryContextController({
+		actor: () => ({ id: $user?.id ?? '', token: localStorage.token ?? '' }),
+		session: () => $socket?.id ?? '',
+		cancelInteractions: () => cancelBrowserInteractions(),
+		onError: (error) =>
+			toast.error($i18n.t('Server connection failed') + ': ' + String(error?.message ?? error)),
+		applyEvent: (event, callback) => applyChatEvent(event, callback),
+		applyState: (state) => {
+			history = reconcileTemporaryHistory(history, state.history);
+			temporaryScope = temporaryController.identity;
+			taskIds = (state.tasks ?? [])
+				.filter((task: any) => task.status !== 'done')
+				.map((task: any) => (typeof task === 'string' ? task : (task.id ?? task.task_id)));
+			if (!taskIds?.length) taskIds = null;
+			if (
+				$chatId === temporaryController.chatId &&
+				history.currentId &&
+				contextUsageModelId &&
+				contextCompactionMode === 'v2'
+			)
+				void refreshContextUsage($chatId, contextUsageModelId, history.currentId);
+		}
+	});
+	const resetTemporaryScope = (keepalive = false) => {
+		temporaryController.detach(keepalive);
+		temporaryScope = null;
+		temporarySaveId = null;
+		temporaryTerminalCredential = null;
+	};
+	const reportTemporaryError = (error: any) => {
+		const current = temporaryController.capture();
+		toast.error(
+			$i18n.t('Server connection failed') +
+				': ' +
+				String(error?.message ?? error?.detail?.code ?? error),
+			{
+				...(error?.status === 410 && error?.detail?.rebuild_allowed === true
+					? {
+							action: {
+								label: $i18n.t('Retry'),
+								onClick: async () => {
+									if (!current()) return;
+									try {
+										await temporaryController.rebuild();
+										temporaryScope = temporaryController.identity;
+										const rebuiltId = temporaryController.chatId;
+										const branchId = history.currentId;
+										if (!rebuiltId || !branchId) return;
+										const rebuiltCurrent = temporaryController.capture();
+										await chatId.set(rebuiltId);
+										if (!rebuiltCurrent()) return;
+										await temporaryController.prepare(history, branchId, params, chatFiles);
+										temporaryScope = temporaryController.identity;
+									} catch (next) {
+										reportTemporaryError(next);
+									}
+								}
+							}
+						}
+					: {})
+			}
+		);
+	};
+	const ensureTemporaryScope = async () => {
+		const scope = await temporaryController.ensure();
+		temporaryScope = scope;
+		return `temporary:${scope.id}`;
+	};
+	const prepareTemporaryCopy = async () => {
+		const current = temporaryController.capture();
+		const id = $chatId;
+		let state = temporaryController.identity ? await temporaryController.reconcile() : null;
+		if (!current() || id !== $chatId) throw new Error($i18n.t('Chat not found'));
+		if (state?.uncertain) throw new Error($i18n.t('Server connection failed'));
+		if (generating || taskIds?.length || hasPendingAssistantLeaf()) {
+			if (!(await stopResponse(false)))
+				throw new Error($i18n.t('Wait for the current response to finish before compacting.'));
+			if (temporaryController.identity) state = await temporaryController.reconcile();
+		}
+		if (!current() || id !== $chatId) throw new Error($i18n.t('Chat not found'));
+		if (state?.uncertain || state?.tasks?.some((task: any) => task.status !== 'done'))
+			throw new Error($i18n.t('Wait for the current response to finish before compacting.'));
+		return projectRawChat({ history, params, files: chatFiles });
+	};
+
+	setContext('temporary-context', {
+		controller: temporaryController,
+		get identity() {
+			return temporaryController.identity;
+		},
+		get chatId() {
+			return temporaryController.chatId;
+		},
+		prepareCopy: prepareTemporaryCopy,
+		terminalCredential: (token: string, id: string) => {
+			const identity = temporaryController.identity;
+			if (!identity || temporaryController.chatId !== id) return token;
+			if (
+				!temporaryTerminalCredential ||
+				typeof temporaryTerminalCredential === 'string' ||
+				temporaryTerminalCredential.token !== token ||
+				temporaryTerminalCredential.temporaryContext.epoch !== identity.epoch ||
+				temporaryTerminalCredential.temporaryContext.id !== identity.id
+			) {
+				const actor = $user?.id;
+				const captured = { id: identity.id, epoch: identity.epoch };
+				temporaryTerminalCredential = {
+					token,
+					temporaryContext: captured,
+					isCurrent: () =>
+						$user?.id === actor &&
+						localStorage.token === token &&
+						temporaryController.identity?.id === captured.id &&
+						temporaryController.identity?.epoch === captured.epoch
+				};
+			}
+			return temporaryTerminalCredential;
+		}
+	});
+	let temporaryActorId: string | undefined;
+	$: if ($user?.id !== temporaryActorId) {
+		if (temporaryActorId !== undefined) {
+			const wasTemporary = !!temporaryScope || $temporaryChatEnabled;
+			resetTemporaryScope();
+			if (wasTemporary) {
+				history = { messages: {}, currentId: null };
+				chatId.set('');
+				taskIds = null;
+				chatFiles = [];
+				files = [];
+				prompt = '';
+			}
+		}
+		temporaryActorId = $user?.id;
+	}
+	$: if (!$temporaryChatEnabled && temporaryScope) resetTemporaryScope();
 
 	const normalizeSelectedModels = (modelIds: string[] = []) => {
 		const selected = resolveDefaultModelIds(
@@ -342,19 +490,27 @@
 		const version = ++contextUsageRequestVersion;
 		serverContextUsage = null;
 		try {
-			const usage = await getChatContextUsage(
-				localStorage.token,
-				id,
-				model,
-				branchId,
-				$models.find((item) => item.id === model)
-			);
+			const usage =
+				temporaryController.chatId === id
+					? await temporaryController.usage(
+							branchId,
+							model,
+							$models.find((item) => item.id === model)
+						)
+					: await getChatContextUsage(
+							localStorage.token,
+							id,
+							model,
+							branchId,
+							$models.find((item) => item.id === model)
+						);
 			if (
 				version === contextUsageRequestVersion &&
 				id === $chatId &&
 				branchId === history.currentId
 			) {
-				serverContextUsage = usage;
+				serverContextUsage =
+					temporaryController.chatId === id && usage ? { ...usage, branch_id: branchId } : usage;
 			}
 		} catch (error) {
 			console.debug('Unable to load context usage', error);
@@ -369,7 +525,7 @@
 				history.currentId &&
 				contextUsageModelId &&
 				contextCompactionEnabled &&
-				!$temporaryChatEnabled
+				(!$temporaryChatEnabled || temporaryScope)
 			) {
 				void refreshContextUsage($chatId, contextUsageModelId, history.currentId);
 			} else {
@@ -845,7 +1001,7 @@
 
 	// Chat Input
 	let prompt = '';
-	let chatFiles = [];
+	let chatFiles: any[] = [];
 	let files: any[] = [];
 	let params: Record<string, any> = {};
 	let reasoningEffortByModel: Record<string, string> = {};
@@ -1164,7 +1320,7 @@
 		onToolCallResolved(res);
 	};
 
-	$: pendingAskUser = findPendingAskUser(history);
+	$: pendingAskUser = $temporaryChatEnabled ? null : findPendingAskUser(history);
 	$: savedAskUserPrompt = pendingAskUser
 		? {
 				show: true,
@@ -1466,6 +1622,7 @@
 	};
 
 	const initEmbeddedDraft = async () => {
+		resetTemporaryScope();
 		resetWebSearchConfirmation();
 		terminalContext = null;
 		clearTimeout(saveControlsTimer);
@@ -1992,7 +2149,24 @@
 	};
 	$: syncChatRoom($socket, $chatId, $temporaryChatEnabled);
 
-	const chatEventHandler = async (event, cb) => {
+	const chatEventHandler = async (event: any, cb: any) => {
+		// The root layout delegates browser RPCs through the page-local listener below.
+		if (isTemporaryContextRpc(event)) return;
+		if (
+			temporaryController.identity &&
+			(event?.temporary_context || isTemporaryChatId(event?.chat_id))
+		) {
+			await temporaryController
+				.receive(event, cb)
+				.catch((error) => toast.error(String(error?.message ?? error)));
+			temporaryScope = temporaryController.identity;
+			return;
+		}
+		if (event?.temporary_context) return;
+		await applyChatEvent(event, cb);
+	};
+	const applyChatEvent = async (event: any, cb: any) => {
+		const eventCurrent = temporaryController.capture();
 		if (event?.data?.type === 'chat:presence') {
 			if (!$socket?.connected || event.chat_id !== $chatId || event.chat_id !== joinedChatId)
 				return;
@@ -2068,7 +2242,13 @@
 
 		if (event.chat_id === $chatId) {
 			await tick();
+			if (event.temporary_context && (!eventCurrent() || event.chat_id !== $chatId)) return;
 			const type = event?.data?.type ?? null;
+			if (type === 'temporary:task-done') {
+				await temporaryController.reconcile();
+				if (eventCurrent() && event.chat_id === $chatId) await processNextInQueue(event.chat_id);
+				return;
+			}
 			if (type === 'typing') {
 				const sender = event.user;
 				if (
@@ -2114,7 +2294,8 @@
 				}
 			}
 			if (type === 'chat:reload') {
-				await loadChat();
+				if (temporaryController.chatId === $chatId) await temporaryController.reconcile();
+				else await loadChat();
 				return;
 			}
 			if (type === 'chat:list') {
@@ -2146,7 +2327,11 @@
 					}
 				} else if (type === 'chat:active') {
 					if (!data?.active) {
-						taskIds = null;
+						if (event.temporary_context) {
+							await temporaryController.reconcile();
+							if (eventCurrent() && event.chat_id === $chatId)
+								await processNextInQueue(event.chat_id);
+						} else taskIds = null;
 						if (
 							$chatId &&
 							!$temporaryChatEnabled &&
@@ -2177,7 +2362,13 @@
 					if (data?.output) {
 						message.output = data.output;
 					}
-					if (!event.shared && event.message_id === history.currentId) {
+					if (event.temporary_context) {
+						message.done = true;
+						history.messages[message.id] = message;
+						await temporaryController.reconcile();
+						if (eventCurrent() && event.chat_id === $chatId)
+							await processNextInQueue(event.chat_id);
+					} else if (!event.shared && event.message_id === history.currentId) {
 						taskIds = null;
 						// Set all response messages to done
 						for (const messageId of history.messages[message.parentId].childrenIds) {
@@ -2447,6 +2638,13 @@
 
 	const handleSocketConnect = async () => {
 		clearTyping();
+		if (temporaryController.identity) {
+			await temporaryController
+				.rebind()
+				.catch((error) => toast.error(String(error?.message ?? error)));
+			temporaryScope = temporaryController.identity;
+			return;
+		}
 		if (!$chatId || $temporaryChatEnabled) return;
 		joinedChatId = '';
 		syncChatRoom($socket, $chatId, $temporaryChatEnabled);
@@ -2462,6 +2660,15 @@
 	};
 
 	onMount(() => {
+		const temporaryRpc = (message: CustomEvent) => {
+			const { event, callback, run } = message.detail;
+			void temporaryController
+				.receive(event, callback, (_event, _callback, current) => run(current))
+				.catch(reportTemporaryError);
+		};
+		window.addEventListener('temporary-context:rpc', temporaryRpc as EventListener);
+		const unloadTemporary = () => resetTemporaryScope(true);
+		window.addEventListener('pagehide', unloadTemporary);
 		loading = true;
 		console.log('mounted');
 		window.addEventListener('message', onMessageHandler);
@@ -2579,6 +2786,9 @@
 				chatTitle.set('');
 
 				window.removeEventListener('message', onMessageHandler);
+				window.removeEventListener('pagehide', unloadTemporary);
+				window.removeEventListener('temporary-context:rpc', temporaryRpc as EventListener);
+				resetTemporaryScope(true);
 				$socket?.off('events', chatEventHandler);
 				$socket?.off('connect', handleSocketConnect);
 				$socket?.off('disconnect', clearTyping);
@@ -2818,7 +3028,7 @@
 		await processNextInQueue($chatId);
 	};
 
-	const onUpload = async (event) => {
+	const onUpload = async (event: any) => {
 		const { type, data } = event;
 
 		if (type === 'google-drive') {
@@ -3075,6 +3285,7 @@
 		return () => bridge?.end();
 	});
 	beforeNavigate(() => {
+		resetTemporaryScope();
 		bridge?.end();
 		pendingUrlActions = null;
 	});
@@ -3214,6 +3425,7 @@
 	};
 
 	const initNewChat = async () => {
+		resetTemporaryScope();
 		if ($chatId) terminalContext = null;
 		cancelBrowserInteractions();
 		bridge?.end();
@@ -3804,6 +4016,20 @@
 
 		const queue = $chatRequestQueues[targetChatId];
 		if (!queue || queue.length === 0 || queue[0].error) return;
+		if (temporaryController.chatId === targetChatId) {
+			try {
+				if (!(await temporaryController.waitForSettled()) || targetChatId !== $chatId) return;
+			} catch (error) {
+				reportTemporaryError(error);
+				return;
+			}
+			if (
+				processingQueueChats.has(targetChatId) ||
+				stoppingChats.has(targetChatId) ||
+				queue !== $chatRequestQueues[targetChatId]
+			)
+				return;
+		}
 		const lastMessage = history.currentId ? history.messages[history.currentId] : null;
 		if (
 			(lastMessage && lastMessage.role === 'assistant' && !lastMessage.done) ||
@@ -4328,7 +4554,11 @@
 	};
 
 	const handleManualCompact = async () => {
-		if (isShared || $temporaryChatEnabled || isTemporaryChatId($chatId)) return;
+		if (
+			isShared ||
+			(($temporaryChatEnabled || isTemporaryChatId($chatId)) && !temporaryController.identity)
+		)
+			return;
 		if (!contextCompactionEnabled) {
 			toast.message($i18n.t('Context compaction is disabled'));
 			return;
@@ -4350,6 +4580,7 @@
 		}
 
 		const model = atSelectedModel?.id ?? selectedModels.find((modelId) => modelId);
+		if (!model) return;
 		// Preserve the former toast translation for i18n extraction.
 		// const toastId = toast.loading($i18n.t('Compacting context...'));
 		const compactChatId = $chatId;
@@ -4358,15 +4589,28 @@
 		$contextCompactions = { ...$contextCompactions, [compactMessageId]: 'in_progress' };
 
 		try {
-			const result = await compactChatById(
-				localStorage.token,
-				compactChatId,
-				model,
-				$models.find((item) => item.id === model),
-				$socket?.id
-			);
+			if (temporaryController.chatId === compactChatId) {
+				await temporaryController.prepare(history, compactMessageId, params, chatFiles);
+				temporaryScope = temporaryController.identity;
+			}
+			const result =
+				temporaryController.chatId === compactChatId
+					? await temporaryController.compact(
+							compactMessageId,
+							model,
+							$models.find((item) => item.id === model)
+						)
+					: await compactChatById(
+							localStorage.token,
+							compactChatId,
+							model,
+							$models.find((item) => item.id === model),
+							$socket?.id
+						);
 			if ($chatId !== compactChatId) return;
-			serverContextUsage = result?.context_usage ?? serverContextUsage;
+			serverContextUsage = result?.usage ?? result?.context_usage ?? serverContextUsage;
+			if (temporaryController.chatId === compactChatId && serverContextUsage)
+				serverContextUsage = { ...serverContextUsage, branch_id: compactMessageId };
 
 			if (!result?.compacted) {
 				const skippedReason =
@@ -4380,7 +4624,8 @@
 				toast.message(skippedReason);
 			}
 
-			await loadChat();
+			if (temporaryController.chatId === compactChatId) await temporaryController.reconcile();
+			else await loadChat();
 			clearContextCompaction(compactMessageId);
 		} catch (error) {
 			if ($chatId === compactChatId) {
@@ -4508,7 +4753,10 @@
 				chatFiles = mergeFiles(chatFiles, createdChat?.chat?.files ?? []);
 				await onSelectEmbeddedChat?.(_chatId);
 			} else if ($temporaryChatEnabled) {
-				_chatId = createTemporaryChatId($socket?.id);
+				_chatId =
+					contextCompactionMode === 'v2'
+						? await ensureTemporaryScope()
+						: createTemporaryChatId($socket?.id);
 				await chatId.set(_chatId);
 			}
 			await tick();
@@ -4877,6 +5125,7 @@
 						regenerationMessageId
 					}
 				);
+				if (!completion) return { status: 'rejected' as const };
 				submittedTaskIds =
 					completion?.task_ids ?? (completion?.task_id ? [completion.task_id] : []);
 			} finally {
@@ -4956,6 +5205,36 @@
 	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
+		const requestToken = localStorage.token;
+		const requestCurrent = temporaryController.capture();
+		let temporaryContext: TemporaryRequestIdentity | undefined;
+		if ($temporaryChatEnabled && (contextCompactionMode === 'v2' || temporaryController.identity)) {
+			try {
+				temporaryContext = await temporaryController.prepare(
+					_history,
+					userMessage.id,
+					params,
+					chatFiles
+				);
+				temporaryScope = temporaryController.identity;
+				_chatId = temporaryController.chatId;
+				await chatId.set(_chatId);
+			} catch (error: any) {
+				if (requestCurrent()) {
+					reportTemporaryError(error);
+					for (const { message_id } of messageIdsList ?? [{ message_id: responseMessageId }]) {
+						if (history.messages[message_id])
+							history.messages[message_id] = {
+								...history.messages[message_id],
+								done: true,
+								error: { content: String(error?.message ?? error?.detail?.code ?? error) }
+							};
+					}
+					history = history;
+				}
+				return null;
+			}
+		}
 		// Retain the first identity even when the original message is deleted.
 		// Capture it before awaiting so switching chats cannot change this send.
 		const connectionSessionId =
@@ -5110,8 +5389,9 @@
 		const useChatVariablesFallback =
 			!_chatId || $temporaryChatEnabled || isTemporaryChatId(_chatId);
 
+		if (temporaryContext && (!requestCurrent() || requestToken !== localStorage.token)) return null;
 		const res = await generateOpenAIChatCompletion(
-			localStorage.token,
+			requestToken,
 			{
 				stream: stream,
 				model: model.id,
@@ -5170,6 +5450,7 @@
 
 				session_id: $socket?.id,
 				chat_id: _chatId || undefined,
+				...(temporaryContext ? { temporary_context: temporaryContext } : {}),
 				connection_session_id: connectionSessionId,
 				folder_id: $selectedFolder?.id ?? undefined,
 
@@ -5196,6 +5477,11 @@
 			},
 			`${WEBUI_BASE_URL}/api`
 		).catch(async (error) => {
+			if (temporaryContext && (!requestCurrent() || _chatId !== $chatId)) return null;
+			if (temporaryContext) {
+				await temporaryController.handleError(error);
+				reportTemporaryError(error);
+			}
 			console.log(error);
 
 			let errorMessage = error;
@@ -5209,7 +5495,7 @@
 				errorMessage = $i18n.t(`Uh-oh! There was an issue with the response.`);
 			}
 
-			toast.error(`${errorMessage}`);
+			if (!temporaryContext) toast.error(`${errorMessage}`);
 			responseMessage.error = {
 				content: error
 			};
@@ -5222,6 +5508,7 @@
 			return null;
 		});
 
+		if (temporaryContext && (!requestCurrent() || _chatId !== $chatId)) return null;
 		if (filesystemAttachment && (!res || res.error))
 			throw new Error($i18n.t('File request failed. Retry from the message or queue.'));
 		if (res) {
@@ -5316,6 +5603,10 @@
 	const stopResponse = async (processQueue = true, messageId = history.currentId) => {
 		const targetChatId = $chatId;
 		const currentId = history.currentId;
+		const stopScope =
+			temporaryController.chatId === targetChatId ? temporaryController.identity : null;
+		const stopCurrent = temporaryController.capture();
+		const stopToken = localStorage.token;
 		const responseMessage = messageId ? history.messages[messageId] : null;
 		if (responseMessage && (responseMessage.user_id ?? chat?.user_id ?? $user?.id) !== $user?.id)
 			return false;
@@ -5331,9 +5622,9 @@
 			stoppingChats.set(targetChatId, (stoppingChats.get(targetChatId) ?? 0) + 1);
 			try {
 				const results = $chatId
-					? [await stopTasksByChatId(localStorage.token, $chatId)]
+					? [await stopTasksByChatId(stopToken, targetChatId, stopScope)]
 					: await Promise.all(
-							(taskIds ?? []).map((taskId) => stopTask(localStorage.token, taskId))
+							(taskIds ?? []).map((taskId) => stopTask(stopToken, taskId, stopScope))
 						);
 				const failed = results.find((result) => result?.status === false);
 				if (failed) throw failed.message;
@@ -5349,7 +5640,8 @@
 
 			// Cancellation events or navigation may have selected a newer reply while
 			// the backend was confirming this stop. Its state belongs to that reply.
-			if ($chatId !== targetChatId || history.currentId !== currentId) return false;
+			if (!stopCurrent() || $chatId !== targetChatId || history.currentId !== currentId)
+				return false;
 			taskIds = null;
 
 			// Set all response messages to done
@@ -5570,7 +5862,10 @@
 
 			selectedFolder.set(null);
 		} else {
-			_chatId = createTemporaryChatId($socket?.id);
+			_chatId =
+				contextCompactionMode === 'v2'
+					? await ensureTemporaryScope()
+					: createTemporaryChatId($socket?.id);
 			await chatId.set(_chatId);
 		}
 		await tick();
@@ -5601,6 +5896,19 @@
 					savedBranchId
 				) {
 					void refreshContextUsage(_chatId, contextUsageModelId, savedBranchId);
+				}
+			} else if (
+				temporaryController.chatId === _chatId &&
+				!taskIds?.length &&
+				!hasPendingAssistantLeaf()
+			) {
+				try {
+					await temporaryController.prepare(historyToSave, savedBranchId ?? '', params, chatFiles);
+					temporaryScope = temporaryController.identity;
+					if ($chatId === _chatId && savedBranchId)
+						await refreshContextUsage(_chatId, contextUsageModelId, savedBranchId);
+				} catch (error) {
+					reportTemporaryError(error);
 				}
 			}
 		}
@@ -6060,27 +6368,36 @@
 										toast.error($i18n.t('No conversation to save'));
 										return;
 									}
-									const messages = createMessagesList(history, history.currentId);
+									const raw = await prepareTemporaryCopy();
+									const savingCurrent = temporaryController.capture();
+									const savingToken = localStorage.token;
+									const messages = createMessagesList(raw.history, raw.history.currentId);
 									const title =
 										messages.find((m) => m.role === 'user')?.content ?? $i18n.t('New Chat');
 
 									const savedChat = await createNewChat(
-										localStorage.token,
+										savingToken,
 										{
-											id: uuidv4(),
+											id: (temporarySaveId ??= uuidv4()),
 											title: title.length > 50 ? `${title.slice(0, 50)}...` : title,
 											models: selectedModels,
 											params: params,
 											reasoning_effort_by_model: getReasoningEffortByModelForSave(),
-											history: history,
+											history: raw.history,
+											files: raw.files,
 											messages: messages,
 											timestamp: Date.now()
 										},
 										null,
-										chatVariables
+										chatVariables,
+										{
+											key: temporarySaveId!,
+											temporaryContext: temporaryController.identity ?? undefined
+										}
 									);
 
-									if (savedChat) {
+									if (savedChat && savingCurrent() && savingToken === localStorage.token) {
+										resetTemporaryScope();
 										temporaryChatEnabled.set(false);
 										chatId.set(savedChat.id);
 										await refreshChatList(localStorage.token);
@@ -6205,7 +6522,7 @@
 										{contextUsage}
 										contextCompactionEnabled={contextCompactionEnabled &&
 											!isShared &&
-											!$temporaryChatEnabled}
+											(!$temporaryChatEnabled || !!temporaryScope)}
 										{contextCompactionMode}
 										{embedded}
 										compactHandler={handleManualCompact}
@@ -6320,7 +6637,7 @@
 										{contextUsage}
 										contextCompactionEnabled={contextCompactionEnabled &&
 											!isShared &&
-											!$temporaryChatEnabled}
+											(!$temporaryChatEnabled || !!temporaryScope)}
 										{contextCompactionMode}
 										{embedded}
 										compactHandler={handleManualCompact}

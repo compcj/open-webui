@@ -1,6 +1,6 @@
 """V2 context budgets and durable, non-destructive conversation compaction.
 
-Only a trusted saved-chat request state activates this module. Imports of DB,
+Only trusted saved-chat state or an explicit temporary scope activates this module. Imports of DB,
 provider, and socket modules are lazy so pure budget/history helpers stay usable
 without initializing the application. Checkpoints contain historical data, never
 system instructions, and never modify chat messages.
@@ -23,6 +23,8 @@ from functools import lru_cache
 from typing import Any
 
 from open_webui.utils.context_compaction_config import CompactionSettings, load_compaction_settings
+from open_webui.utils.context_scope import request_context_store
+from open_webui.utils.context_store_errors import ContextStoreError, ContextGone
 
 log = logging.getLogger(__name__)
 _INTERNAL = ContextVar('context_compaction_v2_internal', default=False)
@@ -1287,11 +1289,16 @@ async def prepare_v2_request(
     from open_webui.utils.chat_id import is_saved_chat_id
 
     state = getattr(request.state, 'context_compaction', None)
+    context_store = request_context_store(request)
+    scoped_temporary = context_store is not None and context_store.scope.kind == 'temporary'
     if (
         is_internal_compaction()
         or not isinstance(state, dict)
         or state.get('mode') != 'v2'
-        or not is_saved_chat_id(state.get('chat_id'))
+        or not (
+            is_saved_chat_id(state.get('chat_id'))
+            or (scoped_temporary and state.get('chat_id') == context_store.scope.store_key)
+        )
     ):
         return payload
     settings = state.get('settings')
@@ -1308,9 +1315,13 @@ async def prepare_v2_request(
     if previous_reminder:
         messages = [m for m in messages if wire_message(m) != previous_reminder]
         original['messages'] = messages
-    store = get_checkpoint_store()
+    store = context_store.checkpoints if context_store is not None else get_checkpoint_store()
+    if scoped_temporary:
+        await context_store.history.ensure_active()
     snapshot = await store.read_snapshot(state['chat_id'])
     if not snapshot:
+        if scoped_temporary:
+            raise ContextGone()
         return payload
     state['shared_history'] = bool(snapshot.get('shared_history'))
     raw_map = snapshot['messages_map']
@@ -1359,6 +1370,7 @@ async def prepare_v2_request(
             state,
             branch_id=current_id,
             stored_summary_models=summary_stored,
+            stores=context_store,
         )
         original = await tool_plan.load(original)
         messages = original.get('messages') or []
@@ -1520,6 +1532,9 @@ async def prepare_v2_request(
                 },
             )
             raise
+        except ContextStoreError:
+            # Storage loss/fencing cannot degrade into an unchecked raw send.
+            raise
         except Exception as exc:
             description = (
                 str(exc)
@@ -1609,6 +1624,8 @@ async def prepare_v2_request(
         state['last_usage']['tool_budget_accounting'] = compat_accounting
     state['last_compacted'] = did_compact
     await emit_event(metadata, 'context_usage', state['last_usage'])
+    if scoped_temporary:
+        await context_store.history.ensure_active()
     return original
 
 
@@ -1662,11 +1679,13 @@ async def _history_payload(snapshot: dict, model_id: str, models: dict | None = 
     return payload, raw
 
 
-async def compact_v2_chat_branch(request, user, chat, model_id: str, models: dict) -> dict:
+async def compact_v2_chat_branch(request, user, chat, model_id: str, models: dict, *, context_store=None) -> dict:
     settings = await load_compaction_settings()
     if settings.mode != 'v2':
         return {'ok': True, 'compacted': False, 'reason': 'disabled'}
-    snapshot = await get_checkpoint_store().read_snapshot(chat.id)
+    context_store = context_store or request_context_store(request)
+    store = context_store.checkpoints if context_store is not None else get_checkpoint_store()
+    snapshot = await store.read_snapshot(chat.id)
     if not snapshot or not snapshot.get('current_id'):
         return {'ok': True, 'compacted': False, 'reason': 'empty'}
     payload, raw = await _history_payload(snapshot, model_id, models)
@@ -1677,7 +1696,15 @@ async def compact_v2_chat_branch(request, user, chat, model_id: str, models: dic
         'settings': settings,
         'chat_id': chat.id,
         'user_message_id': latest_user,
-        'metadata': {'chat_id': chat.id, 'message_id': snapshot['current_id']},
+        'metadata': {
+            **(
+                copy.deepcopy(getattr(request.state, 'metadata', {}))
+                if context_store is not None and context_store.scope.kind == 'temporary'
+                else {}
+            ),
+            'chat_id': chat.id,
+            'message_id': snapshot['current_id'],
+        },
     }
     request.state.context_compaction = state
     try:
@@ -1689,11 +1716,14 @@ async def compact_v2_chat_branch(request, user, chat, model_id: str, models: dic
         request.state.context_compaction = old_state
 
 
-async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, current_id: str | None = None) -> dict | None:
+async def get_v2_chat_context_usage(
+    chat, model_id: str, models: dict, *, current_id: str | None = None, context_store=None
+) -> dict | None:
     settings = await load_compaction_settings()
     if settings.mode != 'v2':
         return None
-    snapshot = await get_checkpoint_store().read_snapshot(chat.id)
+    store = context_store.checkpoints if context_store is not None else get_checkpoint_store()
+    snapshot = await store.read_snapshot(chat.id)
     if not snapshot:
         return None
     if current_id is not None:
@@ -1702,7 +1732,7 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
         snapshot = {**snapshot, 'current_id': current_id}
     payload, raw = await _history_payload(snapshot, model_id, models)
     branch_ids = {m['id'] for m in raw}
-    for checkpoint in await get_checkpoint_store().list_checkpoints(chat.id, model_id):
+    for checkpoint in await store.list_checkpoints(chat.id, model_id):
         if not checkpoint_usable(checkpoint, snapshot):
             continue
         if checkpoint['branch_anchor_id'] in branch_ids and source_refs_match(
@@ -1738,6 +1768,7 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
             {'chat_id': chat.id},
             branch_id=branch_id,
             stored_summary_models=summary_stored,
+            stores=context_store,
         )
         payload = await plan.load_cached_only(payload)
         accounting = [
@@ -1791,7 +1822,8 @@ async def get_v2_chat_context_usage(chat, model_id: str, models: dict, *, curren
     if settings.tool_budget_enabled:
         from open_webui.utils.tool_result_budget import get_tool_selection_store
 
-        committed = await get_tool_selection_store().latest_accounting(chat.id, model_id, branch_id)
+        selection_store = context_store.selections if context_store is not None else get_tool_selection_store()
+        committed = await selection_store.latest_accounting(chat.id, model_id, branch_id)
         if committed:
             last_batch = copy.deepcopy(committed['last_tool_batch'])
         elif last_batch:

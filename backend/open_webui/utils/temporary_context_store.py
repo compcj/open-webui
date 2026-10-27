@@ -173,9 +173,13 @@ def _deadline(doc):
     return min(doc['idle_deadline'], doc['maximum_deadline'], doc['disconnected_deadline'] or math.inf)
 
 
+def _sweep_due(doc):
+    return min(_deadline(doc), doc['next_sweep_at']) if doc['status'] == 'open' else _deadline(doc)
+
+
 def _settled(doc):
     return all(t['status'] == 'done' for t in doc['tasks'].values()) and all(
-        e['status'] == 'resolved' for e in doc['executions'].values()
+        e['status'] == 'resolved' and not e.get('publication_pending') for e in doc['executions'].values()
     )
 
 
@@ -280,7 +284,7 @@ class MemoryTemporaryBackend:
                 if self._deferred.get(key, 0) > now:
                     continue
                 try:
-                    deadline = _deadline(json.loads(value[0]))
+                    deadline = _sweep_due(json.loads(value[0]))
                 except (ValueError, TypeError, KeyError):
                     deadline = 0
                 if deadline <= now:
@@ -504,7 +508,7 @@ class RedisTemporaryBackend:
             config.user_bytes,
             config.store_bytes,
             config.max_contexts_per_user,
-            _deadline(doc),
+            _sweep_due(doc),
         ]
         try:
             result = await self._eval(_REDIS_COMMIT, self.keys(doc['id'], doc['actor_id']), args)
@@ -595,7 +599,7 @@ class TemporaryContextRepository:
             'data': {},
             'rebuild_allowed': False,
             'stop_requested_at': None,
-            'next_sweep_at': now + self.config.idle_seconds,
+            'next_sweep_at': now + self.config.lease_seconds,
             'last_operation': self._id(),
         }
         await self.backend.commit(doc, expected_version=None, operation_id=doc['last_operation'])
@@ -748,12 +752,17 @@ class TemporaryContextRepository:
             self._require_open(doc, now)
             active = [task for task in doc['tasks'].values() if task['status'] != 'done']
             unsettled_tasks = {
-                entry['task_id'] for entry in doc['executions'].values() if entry['status'] != 'resolved'
+                entry['task_id']
+                for entry in doc['executions'].values()
+                if entry['status'] != 'resolved' or entry.get('publication_pending')
             }
             if (
-                any(task.get('exclusive', False) for task in active)
+                any(task.get('exclusive', False) or task.get('stop_requested_at') is not None for task in active)
                 or (exclusive and (active or unsettled_tasks))
-                or any(entry['status'] == 'uncertain' for entry in doc['executions'].values())
+                or any(
+                    entry['status'] == 'uncertain' or entry.get('publication_pending')
+                    for entry in doc['executions'].values()
+                )
             ):
                 raise ContextConflict()
             occupied = {
@@ -850,7 +859,9 @@ class TemporaryContextRepository:
         _, result = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
         return result
 
-    async def resolve_execution(self, context_id, actor_id, epoch, *, task_id, execution_id, raw_transition):
+    async def resolve_execution(
+        self, context_id, actor_id, epoch, *, task_id, execution_id, raw_transition, requires_publication=False
+    ):
         def transition(doc, now):
             self._task(doc, task_id, allow_done=True)
             entry = doc['executions'].get(execution_id)
@@ -876,6 +887,7 @@ class TemporaryContextRepository:
                 raise ContextConflict()
             entry['status'] = 'resolved'
             entry['resolved_at'] = now
+            entry['publication_pending'] = bool(requires_publication)
             entry['reason_code'] = None
             _finish_close(doc)
             return entry
@@ -895,6 +907,48 @@ class TemporaryContextRepository:
             except ContextStoreError:
                 pass
             raise
+
+    async def publish_execution_results(
+        self,
+        context_id,
+        actor_id,
+        epoch,
+        *,
+        task_id,
+        execution_ids,
+        raw_transition,
+        expected_fence,
+    ):
+        """Publish already resolved originals, including after executor completion.
+
+        This is a settlement-only port. The callback cannot change control state,
+        and the original task/fence owns every result being released.
+        """
+
+        def transition(doc, now):
+            task = self._task(doc, task_id, allow_done=True)
+            if task['fence'] != expected_fence:
+                raise ContextConflict()
+            entries = [doc['executions'].get(key) for key in execution_ids]
+            if any(not entry or entry['status'] != 'resolved' or entry['task_id'] != task_id for entry in entries):
+                raise ContextConflict()
+            if task['status'] == 'done' and not any(entry.get('publication_pending') for entry in entries):
+                raise ContextConflict()
+            mutable = {'data', 'events', 'event_seq', 'events_dropped_through'}
+            before = {k: copy.deepcopy(v) for k, v in doc.items() if k not in mutable}
+            result = raw_transition(doc, now)
+            if inspect.isawaitable(result):
+                if inspect.iscoroutine(result):
+                    result.close()
+                raise TypeError('Storage transitions must be synchronous')
+            if before != {k: v for k, v in doc.items() if k not in mutable}:
+                raise ContextConflict()
+            for entry in entries:
+                entry['publication_pending'] = False
+            _finish_close(doc)
+            return result
+
+        return await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, source_changed=True)
 
     async def mark_uncertain(
         self, context_id, actor_id, epoch, *, task_id, execution_id, reason_code='outcome_unknown'
@@ -927,6 +981,14 @@ class TemporaryContextRepository:
             if task['status'] != 'done':
                 task['status'] = 'done'
                 task['done_at'] = now
+                append_event_to_document(
+                    doc,
+                    {'type': 'temporary:task-done', 'data': {'task_id': task_id}},
+                    self.config,
+                    task_id=task_id,
+                    reply_id=task['reply_id'],
+                    model_id=task['model_id'],
+                )
             for entry in doc['executions'].values():
                 if entry['task_id'] == task_id and entry['status'] == 'started':
                     entry['status'] = 'uncertain'
@@ -936,13 +998,13 @@ class TemporaryContextRepository:
         doc, _ = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
         return doc
 
-    async def lease(self, context_id, actor_id, epoch, *, socket_id=None, connected=True):
+    async def lease(self, context_id, actor_id, epoch, *, socket_id=None, connected=True, rebind=False):
         if socket_id is not None:
             _identifier(socket_id)
 
         def transition(doc, now):
             self._require_open(doc, now)
-            if socket_id is not None and (doc['socket']['id'] != socket_id or not doc['socket']['connected']):
+            if socket_id is not None and (rebind or doc['socket']['id'] != socket_id or not doc['socket']['connected']):
                 doc['socket']['generation'] += 1
                 doc['socket']['id'] = socket_id
             doc['socket']['connected'] = bool(connected)
@@ -951,6 +1013,23 @@ class TemporaryContextRepository:
                 doc['disconnected_deadline'] = None
             elif doc['disconnected_deadline'] is None:
                 doc['disconnected_deadline'] = min(now + self.config.disconnected_seconds, doc['maximum_deadline'])
+
+        doc, _ = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
+        return doc
+
+    async def request_stop(self, context_id, actor_id, epoch):
+        """Persist stop intent and fence new effects without closing the page.
+
+        Already running effects may only settle under their original task. The
+        executor's acknowledgement, never a lease or Pub/Sub, releases admission.
+        """
+
+        def transition(doc, now):
+            active = [task for task in doc['tasks'].values() if task['status'] != 'done']
+            if any(task.get('stop_requested_at') is None for task in active):
+                doc['fence'] += 1
+                for task in active:
+                    task.setdefault('stop_requested_at', now)
 
         doc, _ = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
         return doc
@@ -976,7 +1055,7 @@ class TemporaryContextRepository:
             context_id, actor_id, epoch, transition, settlement_task_id=task_id, include_data=False
         )
 
-    async def sweep(self, *, limit=100):
+    async def sweep(self, *, limit=100, socket_alive=None):
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError('sweep limit must be between 1 and 1000')
         outcomes = []
@@ -988,7 +1067,20 @@ class TemporaryContextRepository:
                     outcomes.append({'id': context_id, 'status': 'retired', 'tasks': []})
                     continue
 
+                observed_socket = copy.deepcopy(doc['socket'])
+                alive = None
+                if socket_alive is not None and doc['status'] == 'open':
+                    alive = await socket_alive(copy.deepcopy(doc))
+
                 def transition(current, stamp):
+                    if current['status'] == 'open':
+                        current['next_sweep_at'] = stamp + self.config.lease_seconds
+                        if alive is False and current['socket'] == observed_socket:
+                            current['socket']['connected'] = False
+                            if current['disconnected_deadline'] is None:
+                                current['disconnected_deadline'] = min(
+                                    stamp + self.config.disconnected_seconds, current['maximum_deadline']
+                                )
                     if current['status'] == 'open' and _deadline(current) <= stamp:
                         _fence(current, stamp, self.config)
                     if current['status'] == 'closed_confirmed':
@@ -1015,7 +1107,21 @@ class TemporaryContextRepository:
                         'epoch': doc['epoch'],
                         'actor_id': doc['actor_id'],
                         'status': updated['status'],
-                        'tasks': [copy.deepcopy(t) for t in updated['tasks'].values() if t['status'] != 'done'],
+                        'publications': [
+                            copy.deepcopy(t)
+                            for t in updated['tasks'].values()
+                            if t['status'] == 'done'
+                            and any(
+                                e['task_id'] == t['task_id'] and e.get('publication_pending')
+                                for e in updated['executions'].values()
+                            )
+                        ],
+                        'tasks': [
+                            copy.deepcopy(t)
+                            for t in updated['tasks'].values()
+                            if t['status'] != 'done'
+                            and (updated['status'] == 'closing' or t.get('stop_requested_at') is not None)
+                        ],
                     }
                 )
             except (ContextGone, ContextUnavailable):
@@ -1033,10 +1139,6 @@ async def create_temporary_context_repository(
 ):
     """Pass explicit deployment settings; rediss:// retains existing TLS handling."""
     config = config or TemporaryContextConfig.from_env()
-    if redis_sentinels and str(redis_url).lower().startswith('rediss:'):
-        # The shared Sentinel builder currently does not forward TLS options.
-        # Reject explicitly until that factory supports TLS; never downgrade.
-        raise ContextUnavailable()
     if redis_url or redis_sentinels or redis_cluster:
         try:
             from open_webui.utils.redis import get_redis_connection
@@ -1050,7 +1152,6 @@ async def create_temporary_context_repository(
             )
             if client is None:
                 raise ContextUnavailable()
-            await client.ping()
         except Exception:
             raise ContextUnavailable() from None
         backend = RedisTemporaryBackend(client, config, prefix=prefix)

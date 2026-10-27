@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { onDestroy, getContext, createEventDispatcher } from 'svelte';
 	import type { ListeningPort } from '$lib/apis/terminal';
 	import { getListeningPorts, getPortProxyUrl } from '$lib/apis/terminal';
@@ -10,7 +11,7 @@
 
 	export let baseUrl: string;
 	export let previewBaseUrl: string | null = null;
-	export let apiKey: string;
+	export let apiKey: TerminalCredential;
 	export let chatId: string | null = null;
 
 	let ports: ListeningPort[] = [];

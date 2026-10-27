@@ -85,3 +85,26 @@ describe('terminal file chat context at the HTTP boundary', () => {
 		});
 	});
 });
+
+it('binds temporary terminal operations to captured epoch and rejects stale credentials', async () => {
+	const fetcher: any = vi.fn(async () => Response.json({ entries: [] }));
+	vi.stubGlobal('fetch', fetcher);
+	let active = true;
+	const credential = {
+		token: 'captured',
+		temporaryContext: { id: 'scope', epoch: 'epoch' },
+		isCurrent: () => active
+	};
+	await listFiles('/api/v1/terminals/admin', credential, '/', 'temporary:scope');
+	expect(fetcher.mock.calls[0][1].headers).toMatchObject({
+		Authorization: 'Bearer captured',
+		'X-Temporary-Context-Id': 'scope',
+		'X-Temporary-Context-Epoch': 'epoch',
+		'X-Session-Id': 'temporary:scope'
+	});
+	active = false;
+	await expect(
+		readFile('/api/v1/terminals/admin', credential, '/secret', 'temporary:scope')
+	).rejects.toThrow();
+	expect(fetcher).toHaveBeenCalledOnce();
+});

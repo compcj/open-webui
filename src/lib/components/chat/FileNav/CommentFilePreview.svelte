@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getContext, onMount, onDestroy } from 'svelte';
 	import type { WorkBook } from 'xlsx';
 	export let onReady = () => {};
@@ -30,7 +31,7 @@
 	const i18n: any = getContext('i18n');
 	export let path: string;
 	export let baseUrl: string;
-	export let apiKey: string;
+	export let apiKey: TerminalCredential;
 	export let chatId: string | null = null;
 	export let targetPage: number | null = null;
 	let comments: FileComment[] = [];

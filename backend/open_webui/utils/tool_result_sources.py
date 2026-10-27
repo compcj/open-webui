@@ -18,8 +18,16 @@ def tool_budget_active(request, metadata: dict | None = None) -> bool:
     settings = state.get('settings')
     if not getattr(settings, 'tool_budget_enabled', False):
         return False
+    from open_webui.utils.context_scope import temporary_request_store
+
+    store = temporary_request_store(request)
     chat_id = state.get('chat_id')
-    if not chat_id or str(chat_id).startswith(('temporary:', 'local:', 'channel:')) or not state.get('user_message_id'):
+    temporary = store is not None and store.scope.store_key == chat_id
+    if (
+        not chat_id
+        or (str(chat_id).startswith(('temporary:', 'local:', 'channel:')) and not temporary)
+        or not state.get('user_message_id')
+    ):
         return False
     if metadata is not None and metadata.get('chat_id') != chat_id:
         return False
@@ -179,7 +187,15 @@ async def register_tool_results(request, metadata, model_id, *, output=None, out
     if not tool_budget_active(request, metadata):
         return
     from fastapi import HTTPException
-    from open_webui.models.chat_tool_result_selections import get_tool_selection_store
+    from open_webui.utils.context_scope import request_context_store
+
+    store = request_context_store(request)
+    if store is None:
+        from open_webui.models.chat_tool_result_selections import get_tool_selection_store
+
+        selections = get_tool_selection_store()
+    else:
+        selections = store.selections
 
     message_id = metadata.get('message_id')
     if descriptors is None:
@@ -192,7 +208,7 @@ async def register_tool_results(request, metadata, model_id, *, output=None, out
     if not descriptors:
         return
     model_id = model_id or request.state.context_compaction.get('model_id')
-    if not model_id or not await get_tool_selection_store().register_pending(
+    if not model_id or not await selections.register_pending(
         metadata['chat_id'], model_id, descriptors, branch_id=message_id
     ):
         raise HTTPException(

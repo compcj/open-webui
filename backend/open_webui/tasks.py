@@ -189,27 +189,30 @@ async def cleanup_task(redis, task_id: str, id=None):
             item_tasks.pop(id, None)
 
 
-async def create_task(redis, coroutine, id=None, task_id=None):
-    """
-    Create a new asyncio task and add it to the global task dictionary.
-    """
-    task_id = task_id or str(uuid4())  # Generate a unique ID for the task
-    task = asyncio.create_task(coroutine)  # Create the task
+async def create_task(redis, coroutine, id=None, task_id=None, *, on_complete=None):
+    """Register before scheduling; completion hooks run only after worker exit."""
+    task_id = task_id or str(uuid4())
+    try:
+        if redis:
+            await redis_save_task(redis, task_id, id)
+    except BaseException:
+        coroutine.close()
+        if on_complete is not None:
+            await on_complete()
+        raise
 
-    # Add a done callback for cleanup
-    task.add_done_callback(lambda t: asyncio.create_task(cleanup_task(redis, task_id, id)))
+    async def completed(task):
+        try:
+            if on_complete is not None:
+                await on_complete()
+        finally:
+            await cleanup_task(redis, task_id, id)
+
+    task = asyncio.create_task(coroutine)
+    task.add_done_callback(lambda done: asyncio.create_task(completed(done)))
     tasks[task_id] = task
-
-    # If an ID is provided, associate the task with that ID
     if id:
-        if item_tasks.get(id):
-            item_tasks[id].append(task_id)
-        else:
-            item_tasks[id] = [task_id]
-
-    if redis:
-        await redis_save_task(redis, task_id, id)
-
+        item_tasks.setdefault(id, []).append(task_id)
     return task_id, task
 
 

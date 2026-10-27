@@ -208,7 +208,7 @@ def api(monkeypatch):
         **namespace,
         source=chat,
         captured=captured,
-        request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))),
+        request=SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(redis=None))),
     )
 
 

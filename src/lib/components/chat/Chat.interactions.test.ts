@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
 const names = new Set([
 	'chatEventHandler',
+	'applyChatEvent',
 	'cancelBrowserInteractions',
 	'resolveBrowserInteraction',
 	'handleInteractionDisconnect'
@@ -23,6 +24,8 @@ const createChat = (temporary = false, author = 'actor') => {
   let browserInteractions = [], browserApprovalMode = null, eventInteractionId = null;
   let showEventConfirmation = false, eventCallback = () => {};
   const isTemporaryChatId = () => temporary;
+  const isTemporaryContextRpc = () => false;
+  const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
   const console = { log: () => {} };
   ${declarations}
   return { event: chatEventHandler, pending: () => browserInteractions, resolve: resolveBrowserInteraction,

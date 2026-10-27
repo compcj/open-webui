@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getContext, tick } from 'svelte';
 	import MarkdownDocument from './MarkdownDocument.svelte';
 	import { settings, config } from '$lib/stores';
@@ -32,7 +33,7 @@
 
 	// Terminal connection for notebook execution
 	export let baseUrl: string = '';
-	export let apiKey: string = '';
+	export let apiKey: TerminalCredential = '';
 	export let chatId: string | null = null;
 	export let resourceVersion = 0;
 	export let onLocalLink: (path: string) => void = () => {};

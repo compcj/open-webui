@@ -91,6 +91,16 @@ def runtime():
         for node in ast.walk(tree)
         if isinstance(node, ast.While) and calls(node, 'stage_ask_user_tool_calls') and calls(node, 'execute_tool_call')
     )
+    # The scoped temporary path owns durable settlement; this fixture probes
+    # the saved/unscoped pre-execution loop at its original boundary.
+    loop = copy.deepcopy(loop)
+    scoped_index = next(
+        index
+        for index, node in enumerate(loop.body)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == 'temporary_store'
+    )
+    loop.body[scoped_index : scoped_index + 1] = loop.body[scoped_index].orelse
+    ns['request'] = SimpleNamespace(state=SimpleNamespace())
     end = next(
         index
         for index, node in enumerate(loop.body)

@@ -55,6 +55,7 @@ const createChat = ({ temporary = false, search = false, busy = false } = {}) =>
 	};
 	const code = `
  const {${Object.keys(scope).join(',')}}=scope;
+ const contextCompactionMode='legacy',temporaryController={chatId:null};
  let $chatId=temporary?'':'saved-chat', $temporaryChatEnabled=temporary, $user={id:'actor'},localStorage={token:'token'};
  let history={currentId:busy?'reply':null,messages:busy?{reply:{id:'reply',role:'assistant',done:false}}:{}};
  let prompt='composer draft', files=[{id:'composer-file'}],chatFiles=[],selectedModels=['model'],selectedModelIds=['model'];

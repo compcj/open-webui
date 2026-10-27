@@ -16,6 +16,7 @@
 </script>
 
 <script lang="ts">
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { getAllContexts, mount, unmount, setContext, onDestroy } from 'svelte';
 	import { writable } from 'svelte/store';
 	import DOMPurify from 'dompurify';
@@ -31,7 +32,7 @@
 	export let id: string;
 	export let path = '';
 	export let baseUrl = '';
-	export let apiKey = '';
+	export let apiKey: TerminalCredential = '';
 	export let chatId: string | null = null;
 	export let resourceVersion = 0;
 	export let onLocalLink: (path: string) => void = () => {};

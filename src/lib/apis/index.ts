@@ -317,7 +317,11 @@ export const chatAction = async (token: string, action_id: string, body: ChatAct
 	return res;
 };
 
-export const stopTask = async (token: string, id: string) => {
+export const stopTask = async (
+	token: string,
+	id: string,
+	temporaryContext?: { id: string; epoch: string } | null
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/stop/${id}`, {
@@ -325,6 +329,12 @@ export const stopTask = async (token: string, id: string) => {
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
+			...(temporaryContext
+				? {
+						'X-Temporary-Context-Id': temporaryContext.id,
+						'X-Temporary-Context-Epoch': temporaryContext.epoch
+					}
+				: {}),
 			...(token && { authorization: `Bearer ${token}` })
 		}
 	})
@@ -349,7 +359,11 @@ export const stopTask = async (token: string, id: string) => {
 	return res;
 };
 
-export const stopTasksByChatId = async (token: string, chat_id: string) => {
+export const stopTasksByChatId = async (
+	token: string,
+	chat_id: string,
+	temporaryContext?: { id: string; epoch: string } | null
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chat_id)}/stop`, {
@@ -357,6 +371,12 @@ export const stopTasksByChatId = async (token: string, chat_id: string) => {
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
+			...(temporaryContext
+				? {
+						'X-Temporary-Context-Id': temporaryContext.id,
+						'X-Temporary-Context-Epoch': temporaryContext.epoch
+					}
+				: {}),
 			...(token && { authorization: `Bearer ${token}` })
 		}
 	})

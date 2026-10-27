@@ -172,6 +172,10 @@ class ToolEntry:
     reduction_reasons: list[str] = field(default_factory=list)
 
 
+from open_webui.utils.context_scope import request_context_store
+from open_webui.utils.context_store_errors import ContextStoreError
+
+
 class ToolBudgetPlan:
     def __init__(
         self,
@@ -188,6 +192,7 @@ class ToolBudgetPlan:
         *,
         branch_id=None,
         stored_summary_models=None,
+        stores=None,
     ):
         self.request, self.user = request, user
         self.metadata, self.model_id, self.models = metadata, model_id, models
@@ -218,8 +223,15 @@ class ToolBudgetPlan:
                     continue
                 descriptor = {**ref, 'message_id': key[0]}
                 self.entries.setdefault(key, ToolEntry(key, descriptor, text, v2.estimate_text(text)))
-        self.store = get_tool_result_store() if self.entries else None
-        self.selections = get_tool_selection_store() if self.entries else None
+        self.context_store = stores or request_context_store(request)
+        self.store = (
+            (self.context_store.results if self.context_store else get_tool_result_store()) if self.entries else None
+        )
+        self.selections = (
+            (self.context_store.selections if self.context_store else get_tool_selection_store())
+            if self.entries
+            else None
+        )
         self.selection_rows = []
         self.loaded = False
         self.last_batch = None
@@ -500,10 +512,17 @@ class ToolBudgetPlan:
             try:
                 page = json.loads(entry.text)
                 resized = await resize_tool_result_page(
-                    self.user, self.state['chat_id'], page, branch_id=self.branch_id, max_tokens=allocation
+                    self.user,
+                    self.state['chat_id'],
+                    page,
+                    branch_id=self.branch_id,
+                    max_tokens=allocation,
+                    context_store=self.context_store,
                 )
                 return json.dumps(resized, ensure_ascii=False, separators=(',', ':')), 'read'
             except asyncio.CancelledError:
+                raise
+            except ContextStoreError:
                 raise
             except Exception as exc:
                 raise v2.CompactionFailure(
@@ -513,6 +532,8 @@ class ToolBudgetPlan:
         try:
             return await self.summarize(entry, allocation), 'summary'
         except asyncio.CancelledError:
+            raise
+        except ContextStoreError:
             raise
         except Exception:
             return excerpt_result(
@@ -557,6 +578,7 @@ class ToolBudgetPlan:
                 json.loads(entry.text),
                 branch_id=self.branch_id,
                 max_tokens=allowance,
+                context_store=self.context_store,
             )
             return json.dumps(page, ensure_ascii=False, separators=(',', ':')), 'read'
         return excerpt_result(

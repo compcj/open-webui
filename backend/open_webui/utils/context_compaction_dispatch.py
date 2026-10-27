@@ -54,6 +54,12 @@ async def apply_context_compaction(request, user, payload: dict, metadata: dict 
         payload = await prepare_v2_request(
             request, user, payload, metadata or {}, model_id, models, force=bool(state.get('force'))
         )
+    from open_webui.utils.context_scope import temporary_request_store
+
+    scoped = temporary_request_store(request)
+    if scoped is not None:
+        await scoped.history.ensure_active()
+    payload.pop('temporary_context', None)
     # Server-only source identity must never become an inference parameter.
     payload['messages'] = [
         {

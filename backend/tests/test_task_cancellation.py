@@ -385,7 +385,7 @@ async def test_saved_chat_stop_keeps_author_scope_and_reports_any_failure():
         'stop_task': AsyncMock(side_effect=stop),
     }
     result = await chat_stop_endpoint(ns, chat)(
-        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))),
+        SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(redis=None))),
         'chat',
         SimpleNamespace(id='member'),
     )
@@ -411,7 +411,7 @@ async def test_chat_stop_recovers_author_task_after_expiry_instead_of_finalizing
         },
     )
     endpoint = chat_stop_endpoint(caller, chat)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=redis)))
+    request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(redis=redis)))
     heartbeat = None
     try:
         if retry:
@@ -454,7 +454,7 @@ async def test_chat_stop_can_still_reject_paused_approval_after_task_acknowledge
         },
     )
     result = await chat_stop_endpoint(ns, chat)(
-        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=redis))),
+        SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(redis=redis))),
         'chat',
         SimpleNamespace(id='author'),
     )

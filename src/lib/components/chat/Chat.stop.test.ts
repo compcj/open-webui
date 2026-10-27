@@ -31,6 +31,7 @@ const createChat = (stop: () => Promise<unknown>, chatId: string | null = 'chat'
 	const body = `
 		const { stopTasksByChatId, stopTask, toast, submitPrompt, abort } = dependencies;
 		const localStorage = { token: 'synthetic-token' };
+  const temporaryController = { chatId: null, identity: null, capture: () => () => true };
 		const $user = { id: 'author' }, chat = { user_id: 'author' };
 		let $chatId = chatId;
 		const stoppingChats = new Map(), processingQueueChats = new Set();

@@ -16,6 +16,8 @@ import pytest
 from fastapi import HTTPException, Request
 from starlette.responses import Response
 from test_tool_result_storage import database, edit
+from open_webui.utils.context_scope import ContextScope, temporary_request_store
+from open_webui.utils.temporary_context_runtime import abort_temporary_reservations
 
 
 def fanout(monkeypatch, settings, payload_handler, provider):
@@ -37,7 +39,7 @@ def fanout(monkeypatch, settings, payload_handler, provider):
     wrapper.body = endpoint.body[start:]
     running = []
 
-    async def create_task(redis, process, *, id, task_id):
+    async def create_task(redis, process, *, id, task_id, on_complete=None):
         task = asyncio.create_task(process)
         running.append(task)
         return task_id, task
@@ -48,6 +50,10 @@ def fanout(monkeypatch, settings, payload_handler, provider):
     writes = AsyncMock()
     namespace = {
         'asyncio': asyncio,
+        'temporary_reservations': {},
+        'temporary_request_store': temporary_request_store,
+        'ContextScope': ContextScope,
+        'abort_temporary_reservations': abort_temporary_reservations,
         'copy': copy,
         'uuid4': uuid4,
         'Request': Request,

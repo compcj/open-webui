@@ -48,6 +48,7 @@
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 	import LinkSlash from '$lib/components/icons/LinkSlash.svelte';
 
+	const temporaryContext: any = getContext('temporary-context');
 	const i18n = getContext('i18n') as any;
 
 	type IntegrationItem = {
@@ -223,6 +224,9 @@
 			$settings?.terminalServers ?? [],
 			localStorage.token
 		);
+		if (connection?.system)
+			connection.key =
+				temporaryContext?.terminalCredential(localStorage.token, $chatId) ?? localStorage.token;
 		const items = await loadTerminalSkillItems(() =>
 			listTerminalSkills(connection, $chatId || null).catch(() => [])
 		);

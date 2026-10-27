@@ -9,13 +9,14 @@ import json
 import struct
 
 from fastapi import HTTPException
-from open_webui.models.chat_tool_results import ChatToolResults
 
 DEFAULT_PAGE_TOKENS = 2048
 MAX_PAGE_TOKENS = 8192
 
 
 def get_tool_result_store():
+    from open_webui.models.chat_tool_results import ChatToolResults
+
     return ChatToolResults
 
 
@@ -78,22 +79,30 @@ def _decode_cursor(record, branch_id, query, cursor) -> int:
         ) from None
 
 
-async def _readable_result(user, chat_id, result_id, branch_id):
-    from open_webui.models.chats import Chats
-
+async def _readable_result(user, chat_id, result_id, branch_id, context_store=None):
     if user is None or getattr(user, 'role', None) not in {'user', 'admin'}:
         raise HTTPException(status_code=404, detail='Tool result not found.')
-    if not await Chats.get_accessible_chat_by_id(chat_id, user):
-        raise HTTPException(status_code=404, detail='Tool result not found.')
-    record = await get_tool_result_store().get_result(result_id, branch_id=branch_id)
+    if context_store is not None and context_store.scope.kind == 'temporary':
+        scope = context_store.scope
+        if user.id != scope.actor_id or chat_id != scope.store_key:
+            raise HTTPException(status_code=404, detail='Tool result not found.')
+        record = await context_store.results.get_result(result_id, branch_id=branch_id)
+        snapshot = await context_store.checkpoints.read_snapshot(chat_id)
+    else:
+        from open_webui.models.chats import Chats
+
+        if not await Chats.get_accessible_chat_by_id(chat_id, user):
+            raise HTTPException(status_code=404, detail='Tool result not found.')
+        record = await get_tool_result_store().get_result(result_id, branch_id=branch_id)
+        from open_webui.internal.db import get_async_db_context
+        from open_webui.models.chat_context_checkpoints import read_snapshot_in_session
+
+        async with get_async_db_context() as db:
+            snapshot = await read_snapshot_in_session(db, chat_id)
     if record is None or record['chat_id'] != chat_id:
         raise HTTPException(status_code=404, detail='Tool result not found on this branch, or its source changed.')
-    from open_webui.internal.db import get_async_db_context
-    from open_webui.models.chat_context_checkpoints import read_snapshot_in_session
-    from open_webui.models.chat_tool_results import branch_chain, source_state
+    from open_webui.utils.context_store_rules import branch_chain, source_state
 
-    async with get_async_db_context() as db:
-        snapshot = await read_snapshot_in_session(db, chat_id)
     chain = branch_chain(snapshot['messages_map'], branch_id) if snapshot else None
     if not chain or source_state(snapshot, record, branch_id) != (record['source_hash'], record['source_fingerprint']):
         raise HTTPException(status_code=404, detail='Tool result not found on this branch, or its source changed.')
@@ -153,9 +162,9 @@ def _bounded_page(record, *, branch_id, query, request_cursor, start, max_tokens
 
 
 async def read_tool_result_page(
-    user, chat_id, result_id, *, branch_id, query=None, cursor=None, max_tokens=DEFAULT_PAGE_TOKENS
+    user, chat_id, result_id, *, branch_id, query=None, cursor=None, max_tokens=DEFAULT_PAGE_TOKENS, context_store=None
 ) -> dict:
-    record = await _readable_result(user, chat_id, result_id, branch_id)
+    record = await _readable_result(user, chat_id, result_id, branch_id, context_store)
     if query is not None and (not isinstance(query, str) or len(query) > 1024):
         raise HTTPException(status_code=400, detail='query must contain at most 1024 characters.')
     query = query or None
@@ -177,9 +186,11 @@ async def read_tool_result_page(
     )
 
 
-async def resize_tool_result_page(user, chat_id, page: dict, *, branch_id: str, max_tokens: int) -> dict:
+async def resize_tool_result_page(
+    user, chat_id, page: dict, *, branch_id: str, max_tokens: int, context_store=None
+) -> dict:
     """Shrink only exact evidence, regenerating a valid cursor at the shorter end."""
-    record = await _readable_result(user, chat_id, page.get('result_id'), branch_id)
+    record = await _readable_result(user, chat_id, page.get('result_id'), branch_id, context_store)
     start, end = page.get('start'), page.get('end')
     if (
         type(start) is not int

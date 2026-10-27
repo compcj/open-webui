@@ -28,6 +28,9 @@ def runtime():
     ns = {
         'JSONCodec': json,
         'new_tool_output_ids': [],
+        'execution_by_call_id': {},
+        'execution_by_output_id': {},
+        'temporary_store': None,
         'current_usage': {},
         'json': json,
         'log': logging.getLogger(__name__),

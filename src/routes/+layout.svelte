@@ -1,4 +1,5 @@
 <script>
+	import { isTemporaryContextRpc } from '$lib/utils/temporary-context';
 	import { io } from 'socket.io-client';
 	import { spring } from 'svelte/motion';
 	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
@@ -515,7 +516,8 @@
 		};
 	};
 
-	const executeTool = async (data, cb, chatId) => {
+	const executeTool = async (data, cb, chatId, current = () => true) => {
+		if (!current()) return;
 		if (!$config?.features?.enable_tool_servers) {
 			cb?.({ error: 'Tool servers are disabled' });
 			return;
@@ -545,6 +547,7 @@
 				chatId
 			);
 
+			if (!current()) return;
 			console.log('executeToolServer', res);
 			const result = Array.isArray(res) ? res[0] : res;
 			const inlineDisplayFile =
@@ -580,7 +583,35 @@
 		}
 	};
 
+	/** @param {any} event @param {any} cb */
 	const chatEventHandler = async (event, cb) => {
+		if (isTemporaryContextRpc(event)) {
+			window.dispatchEvent(
+				new CustomEvent('temporary-context:rpc', {
+					detail: {
+						event,
+						callback: cb,
+						run: (/** @type {() => boolean} */ current) => {
+							if (!current()) return;
+							return applyLayoutChatEvent(
+								event,
+								(/** @type {any} */ value) => {
+									if (current()) cb?.(value);
+								},
+								current
+							);
+						}
+					}
+				})
+			);
+			return;
+		}
+		return applyLayoutChatEvent(event, cb);
+	};
+	/** @param {any} event @param {any} cb */
+	const applyLayoutChatEvent = async (event, cb, current = () => true) => {
+		if (!current()) return;
+		const requestSocket = $socket;
 		if (event.shared) return;
 		// Answer this session's availability check even when another chat is active.
 		if (
@@ -618,6 +649,7 @@
 		}
 
 		await tick();
+		if (!current()) return;
 		const type = event?.data?.type ?? null;
 		const data = event?.data?.data ?? null;
 
@@ -666,7 +698,7 @@
 				return;
 			} else if (type === 'execute:tool') {
 				console.log('execute:tool', data);
-				executeTool(data, cb, event.chat_id);
+				executeTool(data, cb, event.chat_id, current);
 				return;
 			} else if (type === 'request:terminal') {
 				try {
@@ -710,6 +742,10 @@
 								OPENAI_API_URL
 							);
 
+							if (!current()) {
+								controller?.abort();
+								return;
+							}
 							if (res) {
 								// raise if the response is not ok
 								if (!res.ok) {
@@ -730,6 +766,10 @@
 										while (true) {
 											// Read data chunks from the response stream
 											const { done, value } = await reader.read();
+											if (!current()) {
+												controller?.abort();
+												break;
+											}
 											if (done) {
 												break;
 											}
@@ -742,7 +782,7 @@
 
 											for (const line of lines) {
 												console.log(line);
-												$socket?.emit(channel, line);
+												if (current()) requestSocket?.emit(channel, line);
 											}
 										}
 									};
@@ -765,9 +805,7 @@
 					console.error('chatCompletion', error);
 					cb(error);
 				} finally {
-					$socket.emit(channel, {
-						done: true
-					});
+					if (current()) requestSocket?.emit(channel, { done: true });
 				}
 				return;
 			}

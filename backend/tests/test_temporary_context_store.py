@@ -315,7 +315,7 @@ async def test_factory_does_not_downgrade_sentinel_tls(monkeypatch):
         await create_temporary_context_repository(
             redis_url='rediss://master', redis_sentinels=[('sentinel.invalid', 26379)]
         )
-    assert not calls
+    assert calls == [('rediss://master',)]  # Factory receives TLS; failure still has no memory fallback.
 
 
 @pytest.mark.asyncio

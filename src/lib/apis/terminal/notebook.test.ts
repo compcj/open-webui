@@ -64,3 +64,33 @@ describe('notebook chat context', () => {
 		]);
 	});
 });
+
+it('disposes the original temporary kernel after its page credential becomes stale', async () => {
+	const fetcher: any = vi.fn(async () => new Response(null, { status: 204 }));
+	vi.stubGlobal('fetch', fetcher);
+	const credential = {
+		token: 'original-token',
+		temporaryContext: { id: 'scope', epoch: 'epoch' },
+		isCurrent: () => false
+	};
+	await expect(
+		stopNotebookSession('/api/v1/terminals/original', credential, 'kernel', 'temporary:scope')
+	).resolves.toBe(true);
+	expect(fetcher.mock.calls[0][1].headers).toMatchObject({
+		Authorization: 'Bearer original-token',
+		'X-Temporary-Context-Id': 'scope',
+		'X-Temporary-Context-Epoch': 'epoch',
+		'X-Session-Id': 'temporary:scope'
+	});
+	await expect(
+		executeNotebookCell(
+			'/api/v1/terminals/original',
+			credential,
+			'kernel',
+			0,
+			'code',
+			'temporary:scope'
+		)
+	).rejects.toThrow();
+	expect(fetcher).toHaveBeenCalledOnce();
+});

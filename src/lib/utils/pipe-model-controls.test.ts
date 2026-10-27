@@ -46,7 +46,8 @@ it('sends canonical legacy pipe reasoning through the actual chat fallback', asy
 	};
 	const body = `
 		const { model, controlSelections, effort, generateOpenAIChatCompletion, supportsModelControls } = scope;
-		let chatFiles = [];
+		const temporaryController = { capture: () => () => true };
+  let chatFiles = [];
 		const params = {}, controlAdvancedParams = { reasoning_effort: 'low' };
 		const reasoningEffortByModel = { [model.id]: effort }, $models = [model];
 		const $selectedTerminalId = null;
