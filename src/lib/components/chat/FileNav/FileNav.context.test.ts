@@ -61,6 +61,9 @@ const directoryBody = transpileModule(
 	`
 	let { selectedTerminal, chatId, listFiles, setCwd } = state;
 	let currentPath = '/start/', savedPath = currentPath, directoryController = null;
+	let terminalContextRevision = 0, loadGeneration = 0, $selectedTerminalId = '/terminal';
+	let openedFile = null, saveConnection = null, dirty = false, terminalContext = null;
+	const protectBuffer = async () => true;
 	let loading = false, error = null, selectedFile = null, selectedFileWritable = true, previewPort = null;
 	let entries = [], currentWritable = true, treeCache = new Map();
 	const clampToFileRoot = path => path;
@@ -91,6 +94,7 @@ describe('file browser directory request ownership', () => {
 			setCwd
 		});
 		const pending = view.loadDir('/old-chat/');
+		await Promise.resolve();
 		view.switchChat('chat-b');
 		resolve({ entries: [{ name: 'old-chat' }] });
 		await pending;
@@ -108,7 +112,9 @@ describe('file browser directory request ownership', () => {
 			setCwd
 		});
 		const first = view.loadDir('/first/');
+		await Promise.resolve();
 		const second = view.loadDir('/second/');
+		await Promise.resolve();
 		expect(listFiles.mock.calls[0][4]?.aborted).toBe(true);
 		resolvers[1]({ entries: [{ name: 'second' }] });
 		await second;
@@ -144,9 +150,14 @@ const fileBody = transpileModule(
 	`
 	let { selectedTerminal, chatId, readFile } = state;
 	let terminal = selectedTerminal;
-	let $selectedTerminalId = '/terminal', $terminalServers = [], $settings = {};
+	let $selectedTerminalId = '/terminal', $terminalServers = [], $settings = {}, $config = {};
 	const getTerminal = () => terminal;
-	let terminalContextRevision = 0;
+	let terminalContextRevision = 0, loadGeneration = 0, commentGeneration = 0;
+	let dirtyChoice = null, dirty = false, saving = false, saveConnection = null, diskChanged = false, terminalContext = null;
+	let openedFile = null, pendingFile = null, viewerRoot = null;
+	const protectBuffer = async () => true, supportsComments = () => false;
+	const filesystemFile = (file, terminal_id, session_id) => ({ ...file, terminal_id, session_id });
+	const publishFile = () => {}, tick = async () => {};
 	let currentPath = '/work/', selectedFile = null, selectedFileWritable = true, fileLoading = false;
 	let fileContent = null, documentTargetPage = null, filePreviewController = null;
 	let fileImageUrl = null, fileVideoUrl = null, fileAudioUrl = null, filePdfData = null;
@@ -200,6 +211,7 @@ describe('file browser source ownership', () => {
 			readFile
 		});
 		const pending = view.openEntry({ name: 'index.html', type: 'file' });
+		await Promise.resolve();
 		view.switchChat('chat-b');
 		expect(readFile.mock.calls[0][4]?.aborted).toBe(true);
 		resolve('<html>old chat</html>');
@@ -274,6 +286,7 @@ describe('file browser terminal context invalidation', () => {
 			readFile
 		});
 		const pending = view.openEntry({ name: 'index.html', type: 'file' });
+		await Promise.resolve();
 		const directorySignal = view.startDirectoryRead();
 		view.startComparison();
 		expect(view.get().comparison.terminal).toEqual(originalConnection);
@@ -314,6 +327,7 @@ describe('file browser terminal context invalidation', () => {
 			readFile
 		});
 		const pending = view.openEntry({ name: 'index.html', type: 'file' });
+		await Promise.resolve();
 		const directorySignal = view.startDirectoryRead();
 		view.startComparison();
 		const comparison = view.get().comparison;

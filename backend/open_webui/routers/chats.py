@@ -38,10 +38,11 @@ from open_webui.models.config import Config
 from open_webui.models.folders import Folders
 from open_webui.models.shared_chats import ChatShareMode, ShareChatForm, SharedChatResponse, SharedChats
 from open_webui.models.tags import TagModel, Tags
+from open_webui.models.users import UserModel
 from open_webui.socket.main import get_event_emitter, get_user_id_from_session_pool
 from open_webui.tasks import get_response_streams_by_chat_id, has_active_tasks, stop_item_tasks
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
-from open_webui.utils.access_control.folders import has_folder_write_access
+from open_webui.utils.access_control import has_permission, validate_access_grants
+from open_webui.utils.access_control.folders import has_chat_move_access, has_folder_write_access
 from open_webui.utils.auth import bearer_security, get_admin_user, get_current_user, get_verified_user
 from open_webui.utils.chat_fork import build_fork_history
 from open_webui.utils.context_compaction import compact_chat_branch, get_chat_context_usage
@@ -190,6 +191,22 @@ async def shared_chat_response(chat, user=None, db=None):
         if message.get('role') == 'user':
             message['user'] = authors.get(message['user_id'], {'id': message['user_id'], 'name': ''})
     return data
+
+
+def set_message_authors(chat: dict, user: UserModel) -> None:
+    """Attribute client-supplied messages to the user."""
+    messages = list((chat.get('history', {}).get('messages') or {}).values())
+    messages.extend(chat.get('messages') or [])
+    for message in messages:
+        author = message.get('user')
+        author_id = message.get('user_id') or (author.get('id') if isinstance(author, dict) else None)
+        if author_id and author_id != user.id:
+            # Reattribution must not turn another author's private request or voice
+            # metadata into the importing actor's own visible metadata.
+            message.pop('meta', None)
+        message['user_id'] = user.id
+        if message.get('role') == 'user':
+            message['user'] = {'id': user.id, 'name': user.name}
 
 
 async def add_active_state_to_chat_list(
@@ -918,6 +935,7 @@ async def create_new_chat(
         )
 
     try:
+        set_message_authors(form_data.chat, user)
         chat = await Chats.insert_new_chat(str(uuid4()), user.id, form_data, db=db)
         await publish_event(
             request,
@@ -949,7 +967,12 @@ async def import_chats(
     await require_chat_import_permission(request, user, db)
 
     try:
+        for chat_form in form_data.chats:
+            set_message_authors(chat_form.chat, user)
         chats = await Chats.import_chats(user.id, form_data.chats, db=db)
+        await Tags.ensure_tags_exist(
+            list({tag_id for chat in chats for tag_id in (chat.meta or {}).get('tags', [])}), user.id, db=db
+        )
         await publish_event(
             request,
             EVENTS.CHAT_IMPORTED,
@@ -1052,7 +1075,7 @@ async def search_user_chats(
     words = text.strip().split(' ')
     if page == 1 and len(words) == 1 and words[0].startswith('tag:'):
         tag_id = words[0].replace('tag:', '')
-        if len(chat_list) == 0:
+        if len(chat_list) == 0 and await Chats.count_chats_by_tag_name_and_user_id(tag_id, user.id, db=db) == 0:
             if await Tags.get_tag_by_name_and_user_id(tag_id, user.id, db=db):
                 log.debug('deleting tag: %s', tag_id)
                 await Tags.delete_tag_by_name_and_user_id(tag_id, user.id, db=db)
@@ -1584,8 +1607,22 @@ async def update_chat_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    chat = await Chats.get_chat_by_id_and_user_id(id, user.id, db=db)
+    chat = await Chats.get_chat_by_id(id, db=db)
+    if chat and chat.user_id != user.id:
+        folder = await Folders.get_folder_by_id_and_user_id(chat.folder_id, user.id, db=db) if chat.folder_id else None
+        if (
+            not folder
+            or set(form_data.chat) != {'title'}
+            or form_data.variables is not None
+            or form_data.folder_id is not None
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        title = form_data.chat['title']
+        if not isinstance(title, str) or not title.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT('Invalid title'))
+        form_data.chat['title'] = title.strip()
     if chat:
+        set_message_authors(form_data.chat, user)
         touch = 'history' in form_data.chat or 'messages' in form_data.chat
         chat = await Chats.update_chat_by_id(id, form_data.chat, db=db, touch=touch)
         if form_data.variables is not None:
@@ -1606,12 +1643,47 @@ async def update_chat_by_id(
             subject_id=id,
             data={'title': chat.title},
         )
+        if chat.user_id != user.id:
+            return await shared_chat_response(chat, user, db=db)
         return chat_response_for_user(chat, user.id)
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
+
+
+############################
+# UpdateChatParams
+############################
+
+
+@router.patch('/{id}/params', response_model=dict)
+async def update_chat_params(
+    request: Request,
+    id: str,
+    form_data: dict,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    if not await Chats.get_chat_by_id_and_user_id(id, user.id, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    chat = await Chats.update_chat_params_by_id(id, form_data)
+    if chat is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    await publish_event(
+        request,
+        EVENTS.CHAT_UPDATED,
+        actor=user,
+        subject_id=id,
+        data={'title': chat.title},
+    )
+    return chat.chat['params']
 
 
 ############################
@@ -2071,6 +2143,14 @@ async def fork_chat_by_id(
         }
     )
     updated_chat = (await shared_chat_response(chat.model_copy(update={'chat': updated_chat}), user, db=db))['chat']
+    if not is_owner:
+        messages = list((updated_chat.get('history', {}).get('messages') or {}).values())
+        messages.extend(updated_chat.get('messages') or [])
+        for message in messages:
+            if (message.get('user_id') or chat.user_id) == chat.user_id:
+                message['user_id'] = user.id
+                if message.get('role') == 'user':
+                    message['user'] = {'id': user.id, 'name': user.name}
     meta = {
         **((chat.meta or {}) if is_owner else {}),
         'forked_from': chat.id,
@@ -2213,6 +2293,13 @@ async def clone_shared_chat_by_id(
         'branchPointMessageId': chat.chat['history']['currentId'],
         'title': f'Clone of {chat.title}',
     }
+    messages = list((updated_chat.get('history', {}).get('messages') or {}).values())
+    messages.extend(updated_chat.get('messages') or [])
+    for message in messages:
+        if (message.get('user_id') or chat.user_id) == chat.user_id:
+            message['user_id'] = user.id
+            if message.get('role') == 'user':
+                message['user'] = {'id': user.id, 'name': user.name}
 
     chats = await Chats.import_chats(
         user.id,
@@ -2383,13 +2470,12 @@ async def update_shared_chat_access_by_id(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
+    form_data.access_grants = await validate_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_chats',
-        'sharing.open_chats',
+        resource_type='shared_chat',
         db=db,
     )
 
@@ -2475,7 +2561,10 @@ async def update_chat_folder_id_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    chat = await Chats.get_chat_by_id_and_user_id(id, user.id, db=db)
+    chat = await Chats.get_chat_by_id(id, db=db)
+    if chat and chat.user_id != user.id:
+        if not await has_chat_move_access(user.id, chat.folder_id, form_data.folder_id, db=db):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT())
     if chat:
         # None is allowed: it moves the chat out of any folder.
         if form_data.folder_id is not None and not await has_folder_write_access(user.id, form_data.folder_id, db=db):
@@ -2492,6 +2581,8 @@ async def update_chat_folder_id_by_id(
             subject_id=id,
             data={'folder_id': form_data.folder_id},
         )
+        if chat.user_id != user.id:
+            return await shared_chat_response(chat, user, db=db)
         return chat_response_for_user(chat, user.id)
     else:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT())

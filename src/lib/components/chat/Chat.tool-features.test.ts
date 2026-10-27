@@ -22,6 +22,8 @@ const handlers = new Set([
 	'handleContextToolToggle',
 	'openWebSearchConfirm',
 	'resetWebSearchConfirmation',
+	'settleQueuedSubmission',
+	'hasPendingQueuedSubmission',
 	'confirmWebSearch',
 	'cancelWebSearch',
 	'resetInput',
@@ -80,7 +82,7 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		let knowledgeEnabled = false, knowledgeWriteEnabled = false, memoryEnabled = false, notesEnabled = false;
 		let toolFeatureUserId = 'user-a';
 		let webSearchActive = false, webSearchConfirmed = false, showWebSearchConfirm = false;
-		let pendingWebSearchPrompt = null, pendingWebSearchToggleModelId;
+		let pendingWebSearchPrompt = null, pendingWebSearchSubmission = null, pendingWebSearchToggleModelId;
 		let webSearchConfirmTimeout;
 		let selectedToolIds = [], selectedSkillIds = [], selectedFilterIds = [], pendingOAuthTools = [];
 		let $tools = [], $functions = [], $skills = [], $terminalServers = [];

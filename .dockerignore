@@ -21,3 +21,6 @@ backend/data/*
 
 .venv
 .git
+
+# Local agent scratch may contain disposable data and validation credentials.
+.agent-work

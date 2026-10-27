@@ -9,6 +9,7 @@
 	import { toast } from 'svelte-sonner';
 	import {
 		settings,
+		config,
 		selectedTerminalId,
 		showControls,
 		showFileNavPath,
@@ -69,14 +70,21 @@
 	$: signedDelivery = typeof item?.download_url === 'string';
 	$: deliveryOwner = typeof item?.owner_id === 'string' && item.owner_id === $user?.id;
 	$: {
-		(selector, signedDelivery, $terminalServers, $selectedTerminalId, $settings);
+		(selector, signedDelivery, $terminalServers, $selectedTerminalId, $settings, $config);
 		terminal = resolveTerminal();
 	}
 	$: unavailable = !terminal || (signedDelivery && !deliveryOwner);
 	$: previewKey =
 		terminal && !unavailable
-			? `${terminal.url}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
+			? `${terminal.url}|${terminal.key}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
 			: '';
+	$: isPerChatTerminal =
+		($terminalServers ?? []).find((server: any) => server.id === selector)?.contexts?.chat
+			?.context_id === 'chat_id';
+	$: previewBaseUrl =
+		terminal && isPerChatTerminal && chatId
+			? `${terminal.url}/chats/${encodeURIComponent(chatId)}`
+			: (terminal?.url ?? '');
 	$: previewClass = isImage(path)
 		? 'h-[22rem]'
 		: isPdf(path) ||
@@ -108,7 +116,12 @@
 			if (!signedDelivery && $selectedTerminalId !== selector) return null;
 			return { url: systemTerminal.url, key: localStorage.token };
 		}
-		if (signedDelivery || $selectedTerminalId !== selector) return null;
+		if (
+			signedDelivery ||
+			$selectedTerminalId !== selector ||
+			!$config?.features?.enable_direct_integrations
+		)
+			return null;
 
 		const directTerminal = (($settings as any)?.terminalServers ?? []).find(
 			(server: any) => server.url === selector && server.enabled
@@ -406,7 +419,7 @@
 					{fileSqliteData}
 					{fileDocxData}
 					{fileContent}
-					baseUrl={terminal?.url ?? ''}
+					baseUrl={previewBaseUrl}
 					apiKey={terminal?.key ?? ''}
 					{fileOfficeHtml}
 					{fileOfficeSlides}

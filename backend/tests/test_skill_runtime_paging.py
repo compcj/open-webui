@@ -13,6 +13,8 @@ from urllib.parse import unquote
 
 import pytest
 
+from skill_test_config import skill_config
+
 from open_webui.utils.exact_tool_results import resize_exact_tool_result
 from open_webui.utils.skill_files import (
     SkillFile,

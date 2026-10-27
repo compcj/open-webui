@@ -410,10 +410,10 @@ async def get_terminal_skill(
         'directory': directory,
         'fingerprint': hashlib.sha256(skill['content'].encode('utf-8')).hexdigest(),
         **(
-            skill_overview(skill['content'], resources, 'resources', tools_enabled)
+            await skill_overview(skill['content'], resources, 'resources', tools_enabled)
             if overview
             else {
-                **skill_content_page(skill['content'], offset, max_chars),
+                **await skill_content_page(skill['content'], offset, max_chars),
                 **bounded_skill_manifest(resources, 'resources'),
             }
         ),

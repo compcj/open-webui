@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import aiohttp
@@ -86,6 +86,7 @@ def runtime():
         'CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS': 1,
         'RESPONSE_COMPLETION_RESPONSE_FIELDS': ('error', 'id', 'output', 'usage'),
         'get_system_oauth_token': AsyncMock(return_value=None),
+        'log_model_usage': Mock(),
         'get_tool_citation_source_ids': lambda *args: {},
         'save_response_stream': AsyncMock(),
         'clear_response_stream': AsyncMock(),
@@ -109,7 +110,11 @@ def runtime():
             upsert_message_to_chat_by_id_and_message_id=save,
         ),
     }
-    load_functions(ns, 'utils/response.py', {'normalize_usage'})
+    load_functions(
+        ns,
+        'utils/response.py',
+        {'normalize_usage', 'handle_responses_streaming_event', 'deep_merge', 'get_response_delta_key'},
+    )
     load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call'})
     load_functions(
         ns,
@@ -121,6 +126,8 @@ def runtime():
             'reconcile_tool_pairs',
             'get_paired_tool_call_ids',
             'get_last_user_message_item',
+            'get_content_from_message',
+            'set_last_user_message_content',
         },
     )
     load_functions(
@@ -131,7 +138,6 @@ def runtime():
             'output_id',
             'append_to_text_field',
             'get_response_completion_event_data',
-            'handle_responses_streaming_event',
             '_deduplicate_tool_calls',
             '_split_tool_calls',
             'tool_result_content',
@@ -592,3 +598,57 @@ async def test_legacy_round_usage_counts_only_latest_response_and_new_tool_text(
     # Latest 220 plus only the new 90-character result: neither billing 330 nor old tool text.
     assert threshold(snapshots[1], '', None, 309)
     assert not threshold(snapshots[1], '', None, 310)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('with_code', [False, True])
+async def test_v2_continuations_register_new_results_for_the_selected_model(runtime, monkeypatch, with_code):
+    from open_webui.utils import tool_result_sources
+
+    admissions = []
+
+    async def register(request, metadata, model_id, **kwargs):
+        # Registration must see the already-persisted original, before another send.
+        assert runtime.saved['output'] == kwargs['output']
+        assert kwargs['output_ids']
+        admissions.append((model_id, copy.deepcopy(kwargs)))
+
+    monkeypatch.setattr(tool_result_sources, 'register_tool_results', register)
+    execute_code = AsyncMock(return_value={'stdout': 'synthetic code result', 'stderr': '', 'result': ''})
+
+    def setup(ctx, ns, response_for):
+        ctx['form_data']['model'] = 'selected-model'
+        ctx['request'].state.context_compaction = {'mode': 'v2', 'model_id': 'selected-model'}
+        if with_code:
+            ctx['metadata']['params']['function_calling'] = 'legacy'
+            ctx['metadata']['features'] = {'code_interpreter': True}
+            ctx['event_caller'] = execute_code
+            ns['Config'] = SimpleNamespace(
+                get=AsyncMock(
+                    side_effect=lambda key: {'code_interpreter.enable': True, 'code_interpreter.engine': 'pyodide'}[key]
+                )
+            )
+            ns['sanitize_code'] = lambda code: code
+            ns['CODE_INTERPRETER_BLOCKED_MODULES'] = []
+            ns['DEFAULT_CODE_INTERPRETER_TAGS'] = [('<code_interpreter>', '</code_interpreter>')]
+            ns['re'] = re
+            load_functions(ns, 'utils/middleware.py', {'_start_tag_pattern'})
+            ns['generate_chat_completion'] = AsyncMock(
+                side_effect=[
+                    response_for(
+                        [
+                            chat_chunk('<code_interpreter type="code">print("test")</code_interpreter>'),
+                            'data: [DONE]\n\n',
+                        ]
+                    ),
+                    response_for([chat_chunk('Final answer', 'stop'), 'data: [DONE]\n\n']),
+                ]
+            )
+
+    await runtime.run([tool_call_chunk()], follow_up=[chat_chunk('Final answer', 'stop')], setup=setup)
+    assert runtime.saved.get('error') is None, runtime.saved.get('error')
+    assert [model_id for model_id, _ in admissions] == ['selected-model'] * (2 if with_code else 1)
+    assert runtime.ns['generate_chat_completion'].await_count == len(admissions)
+    runtime.ns['execute_tool_call'].assert_awaited_once()
+    assert execute_code.await_count == int(with_code)
+    assert runtime.ns['get_output_text'](runtime.saved['output']).endswith('Final answer')

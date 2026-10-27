@@ -113,7 +113,7 @@ def runtime():
         if isinstance(node, ast.If)
         and isinstance(node.test, ast.Name)
         and node.test.id == 'delta_tool_calls'
-        and calls(node, 'save_current_response_stream')
+        and calls(node, '_deduplicate_tool_calls')
     )
     wrapper = ast.parse('async def ingest_delta(delta_tool_calls):\n    pass')
     wrapper.body[0].body = [copy.deepcopy(delta_block)]

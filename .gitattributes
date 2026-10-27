@@ -47,3 +47,5 @@
 # Misc
 *.env text eol=lf
 *.lock text eol=lf
+# Preserve the checksum-verified upstream third-party notice byte for byte.
+src/lib/encryption/vendor/THIRD_PARTY_LICENSES.txt whitespace=-blank-at-eol

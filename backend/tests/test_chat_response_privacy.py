@@ -34,6 +34,7 @@ def api(monkeypatch):
     selected = {
         'chat_response_for_user',
         'shared_chat_response',
+        'set_message_authors',
         'generate_chat_export_ndjson',
         'get_chats_by_folder_id',
         'get_user_archived_chats',
@@ -100,6 +101,7 @@ def api(monkeypatch):
             'get_event_emitter': AsyncMock(return_value=None),
             'Config': SimpleNamespace(get=AsyncMock(return_value={})),
             'filter_allowed_access_grants': AsyncMock(return_value=[]),
+            'validate_access_grants': AsyncMock(return_value=[]),
             'AccessGrants': SimpleNamespace(set_access_grants=AsyncMock()),
             'stop_item_tasks': AsyncMock(),
             'build_fork_history': build_fork_history,
@@ -277,7 +279,7 @@ def test_ndjson_export_projects_each_batch_without_altering_server_snapshot(api)
 @pytest.mark.parametrize('actor', ['owner', 'writer', 'admin'])
 def test_list_responses_apply_same_author_projection(api, route, actor):
     before = api.source.model_dump()
-    kwargs = {'user': SimpleNamespace(id=actor, role='admin' if actor == 'admin' else 'user'), 'db': None}
+    kwargs = {'user': SimpleNamespace(id=actor, name=actor, role='admin' if actor == 'admin' else 'user'), 'db': None}
     if route == 'get_chats_by_folder_id':
         kwargs['folder_id'] = 'folder'
     result = asyncio.run(getattr(api, route)(**kwargs))
@@ -300,7 +302,12 @@ def test_list_responses_apply_same_author_projection(api, route, actor):
 )
 def test_owner_mutation_response_hides_writer_private_snapshot(api, route):
     before = api.source.model_dump()
-    kwargs = {'request': api.request, 'id': api.source.id, 'user': SimpleNamespace(id='owner', role='user'), 'db': None}
+    kwargs = {
+        'request': api.request,
+        'id': api.source.id,
+        'user': SimpleNamespace(id='owner', name='owner', role='user'),
+        'db': None,
+    }
     if route == 'update_chat_by_id':
         kwargs['form_data'] = api.ChatForm(chat={'title': 'new title'})
     if route == 'update_chat_folder_id_by_id':
@@ -327,7 +334,12 @@ def test_owner_mutation_response_hides_writer_private_snapshot(api, route):
 )
 def test_copy_never_persists_other_authors_private_snapshot(api, route, actor):
     before = api.source.model_dump()
-    kwargs = {'request': api.request, 'id': api.source.id, 'user': SimpleNamespace(id=actor, role='user'), 'db': None}
+    kwargs = {
+        'request': api.request,
+        'id': api.source.id,
+        'user': SimpleNamespace(id=actor, name=actor, role='user'),
+        'db': None,
+    }
     if route == 'clone_chat_by_id':
         kwargs['form_data'] = SimpleNamespace(title=None)
     result = asyncio.run(getattr(api, route)(**kwargs))
@@ -344,7 +356,9 @@ def test_create_and_import_responses_follow_actor_projection(api, route):
     if route == 'import_chats':
         form = api.ChatsImportForm(chats=[api.ChatImportForm(chat=form.chat)])
     result = asyncio.run(
-        getattr(api, route)(request=api.request, form_data=form, user=SimpleNamespace(id='owner', role='user'), db=None)
+        getattr(api, route)(
+            request=api.request, form_data=form, user=SimpleNamespace(id='owner', name='owner', role='user'), db=None
+        )
     )
     assert_private(result[0] if isinstance(result, list) else result, 'owner')
     assert api.source.model_dump() == before

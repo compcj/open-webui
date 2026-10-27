@@ -21,6 +21,8 @@ from open_webui.utils.skill_files import (
 )
 
 import pytest
+
+from skill_test_config import skill_config
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -172,6 +174,11 @@ def skill_block(monkeypatch):
     wrapper = ast.parse('async def run():\n    pass')
     wrapper.body[0].body = [
         ast.Global(names=['available_skills', 'terminal_skills', 'form_data', 'view_skill_ids']),
+        # These existing discovery cases use the explicit lazy mode.
+        ast.Assign(
+            targets=[ast.Name(id='activated_skill_ids', ctx=ast.Store())],
+            value=ast.Name(id='mentioned_skill_ids', ctx=ast.Load()),
+        ),
         *process.body[start:end],
         block,
         metadata_update,
@@ -324,7 +331,10 @@ def terminal_runtime(monkeypatch):
     from types import ModuleType
 
     config = ModuleType('open_webui.models.config')
-    config.Config = SimpleNamespace(get=AsyncMock(return_value=[]))
+    config.Config = SimpleNamespace(get=AsyncMock(return_value=[]), get_many=AsyncMock(return_value={}))
+    config.Config.get.side_effect = lambda key, *args: (
+        None if key.startswith('skills.') else config.Config.get.return_value
+    )
     monkeypatch.setitem(sys.modules, config.__name__, config)
     env = ModuleType('open_webui.env')
     env.AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL = True

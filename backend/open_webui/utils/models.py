@@ -59,7 +59,7 @@ def stamp_default_reasoning_effort(info: dict | None, default_params: dict | Non
 
 def public_model_params(params):
     controls = params.get('model_controls', {})
-    return (
+    public = (
         {
             'model_controls': {
                 key: {
@@ -86,6 +86,9 @@ def public_model_params(params):
         if controls
         else {}
     )
+    if 'compact_token_threshold' in params:
+        public['compact_token_threshold'] = params['compact_token_threshold']
+    return public
 
 
 async def fetch_ollama_models(request: Request, user: UserModel = None):
@@ -469,8 +472,15 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     action_items_by_id = {}
     filter_items_by_id = {}
+    default_threshold = (config.get('models.default_params') or {}).get('compact_token_threshold')
 
     for model in models:
+        if default_threshold is not None:
+            info = model.get('info') or {}
+            model['info'] = {
+                **info,
+                'params': {'compact_token_threshold': default_threshold, **(info.get('params') or {})},
+            }
         action_ids = [
             action_id
             for action_id in set(model.pop('action_ids', [])) | global_action_ids

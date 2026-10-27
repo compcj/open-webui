@@ -6,7 +6,11 @@ import * as contextCompaction from '$lib/utils/context-compaction';
 
 // Exercise the real socket handler without starting services or the editor.
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
-const names = new Set(['chatEventHandler', 'handleContextCompactionStatus']);
+const names = new Set([
+	'chatEventHandler',
+	'handleContextCompactionStatus',
+	'clearContextCompaction'
+]);
 const declarations = parse(source)
 	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
 	.filter((node: any) => names.has(node.id?.name))
@@ -22,7 +26,7 @@ const createChat = () => {
 		const bridge = null;
 		const $i18n = { t: text => text };
 		const $chatId = 'chat';
-		let contextCompactionToastId = null;
+		let $contextCompactions = {}; const contextCompactions = { set: value => $contextCompactions = value };
 		let contextUsageModelId = 'model', contextCompactionMode = 'v2';
 		let contextUsageRequestVersion = 0, serverContextUsage = null;
 		let history = { currentId: 'reply', messages: {

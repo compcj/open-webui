@@ -8,7 +8,11 @@ const names = new Set([
 	'stopResponse',
 	'sendQueuedMessageNow',
 	'submitHandler',
-	'processNextInQueue'
+	'processNextInQueue',
+	'captureSubmissionGuard',
+	'settleQueuedSubmission',
+	'hasPendingQueuedSubmission',
+	'submitQueuedMessages'
 ]);
 const declarations = parse(source)
 	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
@@ -21,7 +25,7 @@ const createChat = (stop: () => Promise<unknown>, chatId: string | null = 'chat'
 		stopTasksByChatId: vi.fn(stop),
 		stopTask: vi.fn(stop),
 		toast: { error: vi.fn() },
-		submitPrompt: vi.fn(),
+		submitPrompt: vi.fn(async () => ({ status: 'submitted' })),
 		abort: vi.fn()
 	};
 	const body = `
@@ -39,7 +43,10 @@ const createChat = (stop: () => Promise<unknown>, chatId: string | null = 'chat'
 		const getChatVariablesForm = () => ({ conflicts: [] }), equal = () => true;
 		const messageInput = { setText: () => {} };
 		const eventTarget = new EventTarget();
-		const cancelBrowserInteractions = () => {};
+		const cancelBrowserInteractions = () => {}; const clearContextCompaction = () => {};
+		let pendingWebSearchSubmission = null; let processing = false; const queueCapturedPrompt = () => {};
+		let chatSubmissionAlive = true; const queuedSubmissionGuards = new Map();
+		const getChatId = async () => $chatId; const $i18n = {t:value=>value};
 		const bridge = { connected: true };
 		const shouldAutoScrollResponse = () => false, scrollToBottom = () => {};
 		let taskIds = ['task'], generating = true, generationController = { abort };

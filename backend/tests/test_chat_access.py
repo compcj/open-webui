@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, StrictBool, StrictStr, field_validator
+from pydantic import Field, BaseModel, StrictBool, StrictStr, field_validator
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
 
@@ -378,6 +378,7 @@ def test_admin_settings_round_trip_and_old_client_compatibility():
         'Depends': Depends,
         'BaseModel': BaseModel,
         'StrictStr': StrictStr,
+        'Field': Field,
         'field_validator': field_validator,
         're': re,
         'get_admin_user': admin_user,

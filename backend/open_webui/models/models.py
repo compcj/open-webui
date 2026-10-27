@@ -7,11 +7,11 @@ from copy import deepcopy
 from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException
-from open_webui.models.model_history import ModelHistory, ModelHistories, model_snapshot
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrant, AccessGrantModel, AccessGrants
 from open_webui.models.chat_tool_result_selections import ChatToolResultSelection
 from open_webui.models.groups import Groups
+from open_webui.models.model_history import ModelHistories, ModelHistory, model_snapshot
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.misc import json_text_variants
 from open_webui.utils.validate import validate_image_url
@@ -373,6 +373,7 @@ class ModelsTable:
                 **data, user_id=user_id, version_id=entry.id, created_at=int(time.time()), updated_at=int(time.time())
             )
             session.add_all([current, entry])
+            await AccessGrants.replace_access_grants(session, 'model', form.id, form.access_grants)
         else:
             if production_version_id is not None:
                 # Serialize with history deletion before reading the selected snapshot.
@@ -415,8 +416,6 @@ class ModelsTable:
             )
             if result.rowcount != 1:
                 raise HTTPException(409, {'code': 'version_conflict'})
-        if form.access_grants is not None or current in session.new:
-            await AccessGrants.replace_access_grants(session, 'model', form.id, form.access_grants)
         return current
 
     async def _written_model(self, session, model):

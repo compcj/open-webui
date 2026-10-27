@@ -21,7 +21,7 @@ def runtime():
             sid: {**(user or {'id': 'expired'}), 'chat_ids': ['chat-1']} for sid, user in sid_users.items()
         },
         'get_session_ids_from_room': lambda room: list(sid_users),
-        'get_socket_session_user': AsyncMock(side_effect=lambda sid: sid_users[sid]),
+        'get_socket_session_user': AsyncMock(side_effect=lambda sid, **kwargs: sid_users[sid]),
         'Users': SimpleNamespace(get_user_by_id=AsyncMock(side_effect=lambda user_id: SimpleNamespace(id=user_id))),
         'Chats': SimpleNamespace(
             get_accessible_chat_by_id=AsyncMock(side_effect=lambda chat_id, user: access[user.id])
@@ -33,7 +33,14 @@ def runtime():
     }
     load_functions(
         'socket/main.py',
-        {'get_authorized_chat_session_ids', 'emit_local_chat_event', 'chat_delivery_id', 'handle_chat_emit'},
+        {
+            'get_authorized_chat_session_ids',
+            'emit_local_chat_event',
+            'chat_delivery_id',
+            'handle_chat_emit',
+            'get_authorized_encryption_session_ids',
+            'emit_with_chat_access',
+        },
         ns,
     )
     return SimpleNamespace(ns=ns, access=access, emit=emit)
@@ -164,3 +171,82 @@ async def test_installed_manager_remote_delivery_does_not_publish_again(runtime)
     await manager._handle_emit(message)
     assert [call.args[0] for call in sent.call_args_list] == ['remote-member']
     published.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unavailable', [False, True])
+async def test_encrypted_delivery_rechecks_local_token_and_fails_closed(runtime, unavailable):
+    ns = runtime.ns
+    ns['encryption'] = SimpleNamespace(
+        authorize=AsyncMock(
+            side_effect=RuntimeError('revocation lookup unavailable') if unavailable else ValueError('revoked')
+        ),
+        eligible_users=AsyncMock(return_value={}),
+    )
+    ns['get_session_ids_from_room'] = lambda room: ['member']
+    message = {
+        'event': 'encryption:event',
+        'data': [{'kind': 'packet', 'channel': 'private-channel', 'packet': 'ciphertext'}],
+        'room': 'member',
+        'namespace': '/',
+        'host_id': 'other-worker',
+    }
+    await ns['handle_chat_emit'](message)
+    ns['_socket_handle_emit'].assert_not_awaited()
+    ns['encryption'].authorize.assert_awaited_once_with('member', 'private-channel')
+
+
+@pytest.mark.asyncio
+async def test_encrypted_delivery_keeps_remote_routing_and_delivers_only_eligible_local_sids(runtime):
+    ns = runtime.ns
+    ns['encryption'] = SimpleNamespace(
+        authorize=AsyncMock(return_value=SimpleNamespace(id='member')),
+        eligible_users=AsyncMock(return_value={'member': object()}),
+    )
+    ns['get_session_ids_from_room'] = lambda room: ['member', 'remote-sid']
+    message = {
+        'event': 'encryption:event',
+        'data': [{'kind': 'packet', 'channel': 'private-channel'}],
+        'room': 'member',
+        'namespace': '/',
+    }
+    await ns['handle_chat_emit'](message)
+    ns['encryption'].authorize.assert_awaited_once_with('member', 'private-channel')
+    assert ns['_socket_handle_emit'].call_args.args[0] == {**message, 'room': 'member', 'skip_sid': None}
+    ns['_socket_handle_emit'].reset_mock()
+    ns['encryption'].eligible_users.return_value = {}
+    await ns['handle_chat_emit'](message)
+    ns['_socket_handle_emit'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_encryption_end_notice_requires_token_but_not_revoked_channel_access(runtime):
+    ns = runtime.ns
+    ns['encryption'] = SimpleNamespace(authorize=AsyncMock(), eligible_users=AsyncMock())
+    ns['get_session_ids_from_room'] = lambda room: ['member', 'expired']
+    message = {
+        'event': 'encryption:event',
+        'data': [{'kind': 'ended', 'channel': 'private-channel', 'session': 'epoch'}],
+        'room': 'member',
+        'namespace': '/',
+    }
+    await ns['handle_chat_emit'](message)
+    assert ns['_socket_handle_emit'].await_count == 1
+    assert ns['_socket_handle_emit'].call_args.args[0]['room'] == 'member'
+    assert ns['get_socket_session_user'].await_count == 2
+    assert all(call.kwargs == {'wait_for_disconnect': False} for call in ns['get_socket_session_user'].call_args_list)
+    ns['encryption'].authorize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('manager,ignore_queue', [('memory', False), ('redis', True)])
+async def test_local_encrypted_delivery_also_checks_live_access(runtime, manager, ignore_queue):
+    ns = runtime.ns
+    ns['WEBSOCKET_MANAGER'] = manager
+    ns['encryption'] = SimpleNamespace(authorize=AsyncMock(side_effect=ValueError('revoked')))
+    ns['get_session_ids_from_room'] = lambda room: ['member']
+    await ns['emit_with_chat_access'](
+        'encryption:event', {'kind': 'packet', 'channel': 'private'}, to='member', ignore_queue=ignore_queue
+    )
+    runtime.emit.assert_not_awaited()
+    ns['encryption'].authorize.assert_awaited_once_with('member', 'private')

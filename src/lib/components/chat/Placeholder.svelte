@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ImageGenerationEngineOption } from '$lib/apis/images';
+	import type { TerminalContext } from '$lib/types';
 	import { toast } from 'svelte-sonner';
 	import type { ContextToolFeature } from '$lib/utils/tool-feature-preferences';
 	import { marked } from 'marked';
@@ -59,10 +60,12 @@
 	export let onReasoningEffortChange: (modelId: string, value: string) => void = () => {};
 
 	export let history;
+	export let chatId = '';
 
 	export let prompt = '';
 	export let files = [];
 	export let messageInput: MessageInput | null | undefined = null;
+	export let terminalContext: TerminalContext | null = null;
 
 	export let selectedToolIds = [];
 	export let selectedSkillIds = [];
@@ -121,7 +124,9 @@
 	$: models = selectedModels.map((id) => $_models.find((m) => m.id === id));
 	$: selectedModel = atSelectedModel ?? models[selectedModelIdx];
 	$: selectedModelName = resolveLocalizedModelName(selectedModel, $i18n.language);
-	$: selectedModelDescription = resolveLocalizedModelDescription(selectedModel, $i18n.language);
+	$: selectedModelDescription =
+		$config?.license_metadata?.chat_placeholder_description ||
+		resolveLocalizedModelDescription(selectedModel, $i18n.language);
 	$: selectedSuggestionPrompts =
 		resolveLocalizedModelPromptSuggestions(atSelectedModel, $i18n.language) ??
 		resolveLocalizedModelPromptSuggestions(models[selectedModelIdx], $i18n.language) ??
@@ -180,6 +185,7 @@
 								>
 									<button
 										aria-hidden={models.length <= 1}
+										tabindex={models.length > 1 ? 0 : -1}
 										aria-label={$i18n.t('Get information on {{name}} in the UI', {
 											name: models[modelIdx]?.name
 										})}
@@ -205,12 +211,17 @@
 						</div>
 					</div>
 
-					<div
+					<h2
 						class=" text-2xl @sm:text-2xl line-clamp-1 flex items-center"
 						in:fade={{ duration: 100 }}
 					>
 						{#if selectedModelName}
-							<Tooltip content={selectedModelName} placement="top" className=" flex items-center ">
+							<Tooltip
+								as="span"
+								content={selectedModelName}
+								placement="top"
+								className=" flex items-center "
+							>
 								<span class="line-clamp-1">
 									{selectedModelName}
 								</span>
@@ -218,7 +229,7 @@
 						{:else}
 							{$i18n.t('Hello, {{name}}', { name: $user?.name })}
 						{/if}
-					</div>
+					</h2>
 				</div>
 
 				<div class="flex mt-1 mb-2">
@@ -231,6 +242,7 @@
 										sanitizeResponseContent(selectedModelDescription).replaceAll('\n', '<br>')
 									)
 								)}
+								allowHTML={true}
 								placement="top"
 							>
 								<div
@@ -244,7 +256,7 @@
 								</div>
 							</Tooltip>
 
-							{#if models[selectedModelIdx]?.info?.meta?.user}
+							{#if models[selectedModelIdx]?.info?.meta?.user && (!models[selectedModelIdx]?.info?.meta?.user?.community || $config?.features.enable_community_sharing)}
 								<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
 									{$i18n.t('By')}
 									{#if models[selectedModelIdx]?.info?.meta?.user?.community}
@@ -268,6 +280,8 @@
 			<div class="text-base font-normal @md:max-w-3xl w-full py-3 {atSelectedModel ? 'mt-2' : ''}">
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
+						{chatId}
+						{terminalContext}
 						{callActive}
 						{callEnabled}
 						bind:this={messageInput}

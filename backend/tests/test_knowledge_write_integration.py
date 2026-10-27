@@ -285,7 +285,7 @@ async def isolated_scenario(import_scenario=None):
         'VIEW_FILE_DEFAULT_MAX_CHARS': 20_000,
         'VIEW_FILE_MAX_CHARS': 100_000,
     }
-    load_source(ns, 'routers/retrieval.py', {'ProcessFileForm', 'has_vector_results', 'process_file'})
+    load_source(ns, 'routers/retrieval.py', {'ProcessFileForm', 'has_vector_results', 'process_file', 'index_file'})
     load_source(
         ns,
         'routers/files.py',
@@ -435,7 +435,7 @@ async def isolated_scenario(import_scenario=None):
         '__knowledge_write_context__': {'enabled': True, 'knowledge_ids': [base.id]},
     }
     result = json.loads(await write_knowledge_file(base.id, 'draft', 'before 知识😀', **context))
-    assert result['status'] == 'success', result
+    assert result.get('status') == 'success', result
     file_id = result['file_id']
     file = await Files.get_file_by_id(file_id)
     original = Path(file.path).read_bytes()

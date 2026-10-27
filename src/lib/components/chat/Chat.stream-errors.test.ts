@@ -24,7 +24,7 @@ const createChat = () => {
 		const navigator = {};
 		const bridge = null;
 		const dispatchCallOverlayAudio = () => {};
-		const dismissContextCompactionToast = () => {};
+		let $contextCompactions = {}; const clearContextCompaction = () => {};
 		const processNextInQueue = async () => {};
 		const removeAllDetails = (text) => text;
 		const eventTarget = { dispatchEvent: () => {} };

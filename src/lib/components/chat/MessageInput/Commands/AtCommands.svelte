@@ -5,15 +5,17 @@
 	import {
 		chatId as activeChatId,
 		folders,
+		config,
 		models,
 		selectedTerminalId,
 		settings,
-		terminalServers
+		terminalServers,
+		user
 	} from '$lib/stores';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getFolders } from '$lib/apis/folders';
 	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
-	import { searchFiles } from '$lib/apis/terminal';
+	import { searchFiles, filesystemFile } from '$lib/apis/terminal';
 	import { decodeString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
 	import {
 		resolveLocalizedModelDescription,
@@ -33,6 +35,7 @@
 
 	export let query = '';
 	export let onSelect: (e: any) => void = () => {};
+	export let fileUploadEnabled: boolean = true;
 
 	let selectedIdx = 0;
 	export let filteredItems: any[] = [];
@@ -60,6 +63,8 @@
 	});
 
 	$: filteredModels = query ? fuse.search(query).map((e) => e.item) : modelItems;
+	let webUploadEnabled: boolean = true;
+	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
 	$: knowledgeResults = [
 		...filesystemItems,
 		...(query.startsWith('http')
@@ -70,7 +75,9 @@
 		...folderItems,
 		...knowledgeItems,
 		...fileItems
-	];
+	].filter((item) =>
+		['youtube', 'web'].includes(item.type) ? webUploadEnabled : fileUploadEnabled
+	);
 
 	$: filteredItems = [
 		...knowledgeResults.map((data) => ({ type: data.type, data })),
@@ -107,6 +114,8 @@
 			return;
 		}
 
+		const terminalId = $selectedTerminalId;
+		const sessionId = $activeChatId;
 		const res = await searchFiles(
 			terminal.url,
 			terminal.key,
@@ -114,19 +123,15 @@
 			'.',
 			20,
 			'any',
-			$activeChatId || undefined,
+			sessionId || undefined,
 			localStorage.getItem('fileNav:showHidden') === 'true'
 		).catch(() => null);
 
+		if (terminalId !== $selectedTerminalId || sessionId !== $activeChatId) return;
 		filesystemItems = (res?.results ?? []).map((item: any) => ({
-			...item,
-			type: 'filesystem',
+			...filesystemFile(item, terminalId!, sessionId || null),
 			filesystem_type: item.type,
-			id: item.path,
-			url: item.path,
-			name: item.name,
-			description: item.path,
-			status: 'processed'
+			description: item.path
 		}));
 	};
 
@@ -150,9 +155,9 @@
 			return { url: systemTerminal.url, key: localStorage.token };
 		}
 
-		const directTerminal = ($settings?.terminalServers ?? []).find(
-			(t: any) => t.url === $selectedTerminalId && t.enabled
-		);
+		const directTerminal = (
+			$config?.features?.enable_direct_integrations ? ($settings?.terminalServers ?? []) : []
+		).find((t: any) => t.url === $selectedTerminalId && t.enabled);
 		return directTerminal?.url ? { url: directTerminal.url, key: directTerminal.key ?? '' } : null;
 	};
 

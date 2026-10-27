@@ -12,6 +12,7 @@ const names = new Set([
 	'setModelControl',
 	'persistChatUserSettings',
 	'saveControls',
+	'saveParam',
 	'handleManualCompact'
 ]);
 const declarations = parse(source)
@@ -39,6 +40,7 @@ const createChat = (shared = false) => {
 	const updateUserSettings = vi.fn(async (_token, value) => value);
 	const updateChatById = vi.fn(async (_token, _id, value) => ({ chat: value }));
 	const compactChatById = vi.fn();
+	const updateChatParams = vi.fn(async () => ({}));
 	const enqueueChatSettingsSave = createToolFeatureSaveQueue();
 	const scope = {
 		...controls,
@@ -48,6 +50,7 @@ const createChat = (shared = false) => {
 		updateUserSettings,
 		updateChatById,
 		compactChatById,
+		updateChatParams,
 		enqueueChatSettingsSave,
 		model,
 		shared
@@ -58,13 +61,15 @@ const createChat = (shared = false) => {
   let $settings = { reasoningEffortByModel: { m: 'low' }, params: {} };
   const settings = writable($settings); settings.subscribe(value => $settings = value);
   const localStorage = { token: 'token-owner' }; const $i18n = { t: value => value };
-  const toast = { error: () => {} }; const console = { error: () => {} };
+  const toast = { error: () => {} }; const isTemporaryChatId = () => false; const console = { error: () => {} };
   let $chatId = 'chat', isShared = shared, $temporaryChatEnabled = false, chat = { chat: {} }, chatFiles = [];
   let params = {}, reasoningEffortByModel = { m: 'low' }, $models = [model];
   let controlSelections = controlsForRequest(params, $settings.params, $models, reasoningEffortByModel, $settings.reasoningEffortByModel);
   ${declarations}
   return { choose: setModelControl, compact: handleManualCompact, settings, user, localStorage,
-   state: () => ({ params, reasoningEffortByModel, settings: $settings }),
+   state: () => ({ params, reasoningEffortByModel, settings: $settings, chat }),
+   saveFiles: () => { chatFiles = [{ id: "file" }]; return saveControls(); },
+   navigate: () => { $chatId = "new-chat"; chat = { id: "new-chat", chat: {} }; },
    recompute: () => controlSelections = controlsForRequest(params, $settings.params, $models, reasoningEffortByModel, $settings.reasoningEffortByModel),
    block: async gate => enqueueChatSettingsSave(() => gate, () => {})
   };
@@ -76,7 +81,8 @@ const createChat = (shared = false) => {
 		)(scope),
 		updateUserSettings,
 		updateChatById,
-		compactChatById
+		compactChatById,
+		updateChatParams
 	};
 };
 
@@ -101,7 +107,7 @@ describe('actual chat model-control handlers', () => {
 		expect(chat.updateUserSettings.mock.calls.at(-1)?.[1].ui.params.model_controls).toEqual({
 			m: {}
 		});
-		expect(chat.updateChatById.mock.calls.at(-1)?.[2].params.model_controls).toEqual({ m: {} });
+		expect(chat.updateChatParams.mock.calls.at(-1)?.[2].model_controls).toEqual({ m: {} });
 	});
 	it('serializes choices and prevents queued saves crossing account boundaries', async () => {
 		const chat = createChat();
@@ -117,6 +123,7 @@ describe('actual chat model-control handlers', () => {
 		await Promise.all([blocked, first, second]);
 		expect(chat.updateUserSettings).not.toHaveBeenCalled();
 		expect(chat.updateChatById).not.toHaveBeenCalled();
+		expect(chat.updateChatParams).not.toHaveBeenCalled();
 	});
 	it('collaborators save their own choices and cannot write owner controls or manually compact', async () => {
 		const chat = createChat(true);
@@ -124,6 +131,7 @@ describe('actual chat model-control handlers', () => {
 		await chat.compact();
 		expect(chat.updateUserSettings).toHaveBeenCalledOnce();
 		expect(chat.updateChatById).not.toHaveBeenCalled();
+		expect(chat.updateChatParams).not.toHaveBeenCalled();
 		expect(chat.compactChatById).not.toHaveBeenCalled();
 	});
 	it('excludes owner parameters, remembered controls and variables at the shared-chat read boundary', () => {
@@ -150,5 +158,18 @@ describe('actual chat model-control handlers', () => {
 			)
 		).toEqual({ m: { reasoning: 'low' } });
 		expect(controls.actorChatPreferences(chat, 'owner').params.system).toBe('private');
+	});
+});
+
+describe('file controls autosave navigation', () => {
+	it('does not replace the newly opened chat with an earlier autosave response', async () => {
+		const chat = createChat();
+		let resolve!: (value: any) => void;
+		chat.updateChatById.mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+		const saving = chat.saveFiles();
+		chat.navigate();
+		resolve({ id: 'chat', chat: { files: [{ id: 'file' }] } });
+		await saving;
+		expect(chat.state().chat.id).toBe('new-chat');
 	});
 });

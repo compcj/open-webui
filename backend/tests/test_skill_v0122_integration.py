@@ -7,6 +7,8 @@ import zipfile
 
 import pytest
 
+from skill_test_config import skill_config
+
 from open_webui.utils import skill_files as sf
 from open_webui.utils.exact_tool_results import resize_exact_tool_result
 from open_webui.utils.tool_result_sources import registered_tool_kind
@@ -108,12 +110,13 @@ def test_exact_search_reduces_only_complete_entries_and_reports_omissions():
 
 
 @pytest.mark.parametrize('tools_enabled,size', [(True, 5000), (False, 100000)])
-def test_overview_limits_and_exact_page_reassembly(tools_enabled, size):
+@pytest.mark.asyncio
+async def test_overview_limits_and_exact_page_reassembly(tools_enabled, size):
     content = '中😀' * 60000
-    overview = sf.skill_overview(content, [], tools_enabled=tools_enabled)
+    overview = await sf.skill_overview(content, [], tools_enabled=tools_enabled)
     assert overview['content'] == content[:size]
     assert overview['next_offset'] == size
-    assert sf.skill_overview('x' * 20000, [])['next_offset'] is None
+    assert (await sf.skill_overview('x' * 20000, []))['next_offset'] is None
 
 
 def test_archive_filter_rejects_links_inside_other_recognized_skill_roots():

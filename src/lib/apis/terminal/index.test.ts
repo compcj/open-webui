@@ -3,8 +3,11 @@ import { config } from '$lib/stores';
 
 import {
 	downloadDeliveryFile,
+	downloadFileBlob,
 	downloadFilePreview,
 	getFileDelivery,
+	resolveTerminalConnection,
+	terminalRequest,
 	validateDeliveryUrl
 } from './index';
 
@@ -184,5 +187,116 @@ describe('terminal feature policy', () => {
 			getFileDelivery('/api/v1/terminals/system', 'token', '/tmp/file.txt')
 		).rejects.toThrow('Tool servers are disabled');
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('shared system-terminal preview download path', () => {
+	it('uses signed original delivery for comment, hover and Markdown resource downloads', async () => {
+		const baseUrl = '/api/v1/terminals/system';
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						path: '/work/document.docx',
+						exists: true,
+						owner_id: 'actor',
+						download_url: baseUrl + '/files/download?ref=signed'
+					})
+				)
+			)
+			.mockResolvedValueOnce(new Response('original bytes'));
+		vi.stubGlobal('fetch', fetchMock);
+		const result = await downloadFileBlob(baseUrl, 'actor-token', '/work/document.docx', 'chat-a');
+		expect(await result?.blob.text()).toBe('original bytes');
+		expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+			baseUrl + '/files/display?path=%2Fwork%2Fdocument.docx',
+			'http://localhost:3000' + baseUrl + '/files/download?ref=signed'
+		]);
+		for (const [, init] of fetchMock.mock.calls)
+			expect(init.headers['X-Session-Id']).toBe('chat-a');
+	});
+	it('does not fall back to unsigned system bytes when delivery validation fails', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response('{}'));
+		vi.stubGlobal('fetch', fetchMock);
+		expect(
+			await downloadFileBlob('/api/v1/terminals/system', 'token', '/work/image.svg', 'chat')
+		).toBeNull();
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+});
+
+describe('direct terminal connection runtime authorization', () => {
+	const direct = [{ url: 'https://terminal.example', key: 'synthetic' }];
+	it('rejects saved direct connections while retaining system terminals when the flag is off', () => {
+		expect(resolveTerminalConnection(direct[0].url, [], direct, 'token')).toBeNull();
+		expect(resolveTerminalConnection('system', [{ id: 'system' }], direct, 'token')?.system).toBe(
+			true
+		);
+		expect(direct).toEqual([{ url: 'https://terminal.example', key: 'synthetic' }]);
+	});
+	it('permits direct selection when the global switch is on', () => {
+		config.set({
+			features: { enable_tool_servers: true, enable_direct_integrations: true }
+		} as any);
+		expect(resolveTerminalConnection(direct[0].url, [], direct, 'token')?.system).toBe(false);
+	});
+	it('rechecks the switch before using an already captured direct connection', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(
+			terminalRequest(
+				{ selector: direct[0].url, baseUrl: direct[0].url, key: 'synthetic', system: false },
+				'chat',
+				'/processes'
+			)
+		).rejects.toThrow('Direct integrations are disabled');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('per-chat signed terminal delivery', () => {
+	it('accepts root-scoped signed downloads issued through a per-chat display route', async () => {
+		const base = '/api/v1/terminals/system%2Fmain';
+		const preview = base + '/chats/chat%2Fone';
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						path: '/work/chart.svg',
+						exists: true,
+						owner_id: 'actor',
+						download_url: base + '/files/download?ref=signed',
+						image_url: base + '/files/image?ref=signed-image'
+					})
+				)
+			)
+			.mockResolvedValueOnce(new Response('original'));
+		vi.stubGlobal('fetch', fetchMock);
+		expect(
+			await (
+				await downloadFileBlob(preview, 'actor-token', '/work/chart.svg', 'chat/one')
+			)?.blob.text()
+		).toBe('original');
+		expect(fetchMock.mock.calls[0][0]).toBe(preview + '/files/display?path=%2Fwork%2Fchart.svg');
+		expect(fetchMock.mock.calls[1][0]).toBe(
+			'http://localhost:3000' + base + '/files/download?ref=signed'
+		);
+	});
+	it.each([
+		['/api/v1/terminals/other/files/download?ref=signed', '/api/v1/terminals/system/chats/chat'],
+		[
+			'/api/v1/terminals/system/files/download?ref=signed',
+			'/api/v1/terminals/system/chats/chat/extra'
+		],
+		['/api/v1/terminals/system/files/download?ref=signed', '/api/v1/terminals/system/chats/'],
+		['/custom/files/download?ref=signed', '/custom/chats/chat'],
+		[
+			'https://foreign.example/api/v1/terminals/system/files/download?ref=signed',
+			'/api/v1/terminals/system/chats/chat'
+		]
+	])('rejects mismatched or malformed terminal scope', (url, base) => {
+		expect(validateDeliveryUrl(url, base, 'download')).toBeNull();
 	});
 });

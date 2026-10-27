@@ -1,6 +1,36 @@
 import { get } from 'svelte/store';
 import { config } from '$lib/stores';
 import { checkSourceSize, readSourceResponse } from './sourceText';
+// The same attachment is used by @mentions, terminal uploads, and Files-pane requests.
+export type FilesystemFile = {
+	type: 'filesystem';
+	id: string;
+	path: string;
+	url: string;
+	name: string;
+	status: string;
+	size?: number;
+	modified?: number;
+	terminal_id?: string;
+	session_id?: string | null;
+};
+export const filesystemFile = (
+	entry: { path: string; name: string; size?: number; modified?: number },
+	terminalId: string,
+	sessionId: string | null
+): FilesystemFile => ({
+	type: 'filesystem',
+	id: entry.path,
+	path: entry.path,
+	url: entry.path,
+	name: entry.name,
+	size: entry.size,
+	modified: entry.modified,
+	status: 'processed',
+	terminal_id: terminalId,
+	session_id: sessionId
+});
+
 export type FileEntry = {
 	name: string;
 	type: 'file' | 'directory';
@@ -110,7 +140,10 @@ export const resolveTerminalConnection = (
 			system: true
 		};
 	}
-	const direct = directServers.find((server) => server.url === selector);
+	if (!get(config)?.features?.enable_direct_integrations) return null;
+	const direct = directServers.find(
+		(server) => server.url === selector && server.enabled !== false
+	);
 	return direct
 		? { selector, baseUrl: direct.url.replace(/\/$/, ''), key: direct.key ?? '', system: false }
 		: null;
@@ -123,6 +156,8 @@ export const terminalRequest = async <T>(
 	options: RequestInit = {}
 ): Promise<T> => {
 	if (!get(config)?.features?.enable_tool_servers) throw new Error('Tool servers are disabled');
+	if (!connection.system && !get(config)?.features?.enable_direct_integrations)
+		throw new Error('Direct integrations are disabled');
 	const response = await fetch(`${connection.baseUrl}${path}`, {
 		...options,
 		headers: {
@@ -161,7 +196,11 @@ export const validateDeliveryUrl = (
 		const origin = browserOrigin();
 		const base = new URL(baseUrl, origin);
 		const candidate = new URL(value, origin);
-		const expectedPath = `${base.pathname.replace(/\/$/, '')}/files/${kind}`;
+		// Display requests may carry chat context in the route; signed delivery
+		// always uses the exact same server's root endpoint.
+		const basePath = base.pathname.replace(/\/$/, '');
+		const systemChatRoot = basePath.match(/^(.*\/api\/v1\/terminals\/[^/]+)\/chats\/[^/]+$/)?.[1];
+		const expectedPath = `${systemChatRoot ?? basePath}/files/${kind}`;
 		if (
 			candidate.origin !== base.origin ||
 			candidate.origin !== origin ||
@@ -502,6 +541,11 @@ export const downloadFileBlob = async (
 	sessionId?: string,
 	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
+	if (baseUrl.includes('/api/v1/terminals/')) {
+		const delivery = await getFileDelivery(baseUrl, apiKey, path, sessionId, signal);
+		if (!delivery) return null;
+		return downloadDeliveryFile(delivery.download_url, baseUrl, apiKey, sessionId, signal);
+	}
 	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;

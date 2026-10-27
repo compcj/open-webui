@@ -265,6 +265,11 @@
 			loading = false;
 			startDurationCounter();
 
+			if (document.activeElement === document.body || !document.activeElement?.checkVisibility()) {
+				await tick();
+				document.getElementById('confirm-recording-button')?.focus();
+			}
+
 			await requestWakeLock();
 
 			audioChunks = [];
@@ -473,6 +478,7 @@
 	onDestroy(() => {
 		window.removeEventListener('keydown', handleKeyDown);
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
+		stopRecording();
 		releaseWakeLock();
 		closeAudioContext();
 		// remove resize observer
@@ -497,6 +503,7 @@
 
 
              rounded-full"
+			aria-label={$i18n.t('Cancel')}
 			on:click={async () => {
 				cancelRecording();
 				onCancel();

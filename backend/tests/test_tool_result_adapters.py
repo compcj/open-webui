@@ -672,9 +672,10 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     ns.update(
         output=output,
         full_output=lambda: output,
-        response_usage={},
+        current_usage={},
         new_tool_output_ids=[item['id'] for item in output if item.get('type') == 'function_call_output'],
         form_data={
+            'model': 'model',
             'previous_response_id': 'stale-previous',
             'messages': [
                 {'role': 'system', 'content': 'rules'},
@@ -936,7 +937,7 @@ async def test_code_execution_admits_only_new_saved_result_before_followup(runti
         ),
         metadata={'chat_id': 'chat-1', 'message_id': 'a'},
         model_id='model',
-        form_data={'messages': []},
+        form_data={'model': 'model', 'messages': []},
         new_form_data={'messages': []},
         ci_item=current,
         full_output=lambda: [old, current],

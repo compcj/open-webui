@@ -67,7 +67,12 @@ async def import_scenario(ns, request, owner, base, data, vectors):
     from open_webui.retrieval.loaders.local import DocxLoader, TextLoader
     from open_webui.retrieval.loaders.pdf import PDFLoader
     from open_webui.tools.knowledge_import import import_knowledge_terminal_file, import_knowledge_url
-    from open_webui.utils.headers import bearer_auth_header
+
+    # Load the real header helpers without importing optional OAuth/application
+    # configuration now pulled in by the upstream headers module.
+    header_ns = {'Any': typing.Any}
+    load_source(header_ns, 'utils/headers.py', {'normalize_bearer_token', 'bearer_auth_header'})
+    bearer_auth_header = header_ns['bearer_auth_header']
     import docx
 
     await Config.upsert(
@@ -104,6 +109,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
         'AIOHTTP_CLIENT_ALLOW_REDIRECTS': False,
         'AIOHTTP_CLIENT_SESSION_SSL': True,
         'USER_AGENT': 'synthetic-import-test',
+        'WEB_LOADER_HEADERS': {'User-Agent': 'synthetic-import-test'},
         'DEFAULT_CONFIG': {},
         'ERROR_MESSAGES': ns['ERROR_MESSAGES'],
         'is_host_allowed': lambda *args: True,

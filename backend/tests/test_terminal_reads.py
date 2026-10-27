@@ -18,7 +18,8 @@ from open_webui.utils.skill_files import SKILL_CONTENT_MAX_CHARS, skill_overview
 
 @pytest.fixture
 def runtime(monkeypatch):
-    config = SimpleNamespace(get=AsyncMock(return_value=[]))
+    config = SimpleNamespace(get=AsyncMock(return_value=[]), get_many=AsyncMock(return_value={}))
+    config.get.side_effect = lambda key, *args: None if key.startswith('skills.') else config.get.return_value
     access = AsyncMock(return_value=False)
     for name, values in {
         'open_webui.env': {

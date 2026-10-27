@@ -49,6 +49,7 @@ it('sends canonical legacy pipe reasoning through the actual chat fallback', asy
 		let chatFiles = [];
 		const params = {}, controlAdvancedParams = { reasoning_effort: 'low' };
 		const reasoningEffortByModel = { [model.id]: effort }, $models = [model];
+		const $selectedTerminalId = null;
 		const $settings = {}, $config = { features: {} }, $user = {}, $socket = {};
 		const $temporaryChatEnabled = false, $selectedFolder = null, embedded = false;
 		const selectedToolIds = [], selectedSkillIds = [], selectedFilterIds = [];
@@ -57,6 +58,7 @@ it('sends canonical legacy pipe reasoning through the actual chat fallback', asy
 		const eventTarget = { dispatchEvent: () => {} }, CustomEvent = class {};
 		const getStopTokens = () => [], getFeatures = () => ({}), getPromptVariables = () => ({});
 		const isTemporaryChatId = () => false;
+		const createMessagesList = history => Object.values(history.messages);
 		${sendDeclaration}
 		return () => sendMessageSocket(model, [], {
 			messages: {

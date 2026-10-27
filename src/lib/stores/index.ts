@@ -1,3 +1,9 @@
+import {
+	CONTROL_LABELS,
+	isControlVisible,
+	type ControlId,
+	type Visibility
+} from '$lib/utils/ui-visibility';
 import { APP_NAME } from '$lib/constants';
 import { type Writable, derived, writable } from 'svelte/store';
 import type { ModelConfig } from '$lib/apis';
@@ -147,9 +153,20 @@ export const visiblePinnedModels = derived([pinnedModels, models], ([$pinnedMode
 	)
 );
 
+export const visibleControls = derived(
+	[config, user],
+	([$config, $user]) =>
+		Object.fromEntries(
+			(Object.keys(CONTROL_LABELS) as ControlId[]).map((id) => [
+				id,
+				isControlVisible(id, { config: $config, user: $user })
+			])
+		) as Record<ControlId, boolean>
+);
+
 export const audioQueue = writable<AudioQueue | null>(null);
 export const chatRequestQueues: Writable<
-	Record<string, { id: string; prompt: string; files: any[] }[]>
+	Record<string, { id: string; prompt: string; files: any[]; error?: string }[]>
 > = writable({});
 
 export type ChannelQueuedMessage = {
@@ -432,6 +449,7 @@ type Config = {
 		enable_signup_password_confirmation: boolean;
 		enable_ldap: boolean;
 		enable_websocket: boolean;
+		enable_encrypted_channels?: boolean;
 		slim?: boolean;
 		auth: boolean;
 		auth_trusted_header: boolean;
@@ -458,12 +476,17 @@ type Config = {
 		enable_community_sharing: boolean;
 		enable_memories: boolean;
 		enable_notes?: boolean;
+		enable_subagents?: boolean;
 		enable_plugins?: boolean;
 		enable_tools?: boolean;
 		enable_functions?: boolean;
 		enable_tool_servers?: boolean;
+		enable_terminal_servers?: boolean;
 		enable_apps?: boolean;
 		enable_autocomplete_generation: boolean;
+		enable_title_generation: boolean;
+		enable_follow_up_generation: boolean;
+		enable_tags_generation: boolean;
 		enable_direct_connections: boolean;
 		enable_direct_integrations?: boolean;
 		enable_version_update_check: boolean;
@@ -479,6 +502,7 @@ type Config = {
 	};
 	ui?: {
 		default_interface_settings?: Record<string, unknown>;
+		visibility?: Visibility;
 		pending_user_overlay_title?: string;
 		pending_user_overlay_content?: string;
 		response_watermark?: string;

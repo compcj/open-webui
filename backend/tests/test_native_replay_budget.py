@@ -194,6 +194,9 @@ async def test_native_initial_stream_failure_emits_error_without_dispatch():
         name='run',
         args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
         body=[
+            # The real stream handler initializes this nonlocal before reading.
+            # The raising transport mock must reproduce that surrounding state.
+            ast.Assign(targets=[ast.Name(id='current_usage', ctx=ast.Store())], value=ast.Dict(keys=[], values=[])),
             boundary,
             ast.Expr(
                 value=ast.Await(value=ast.Call(func=ast.Name(id='execute_tools', ctx=ast.Load()), args=[], keywords=[]))
@@ -203,7 +206,11 @@ async def test_native_initial_stream_failure_emits_error_without_dispatch():
     )
     ns = {
         'response': SimpleNamespace(background=None),
-        'form_data': {},
+        'form_data': {'model': 'test'},
+        'request': object(),
+        'user': object(),
+        'current_usage': {},
+        'log_model_usage': lambda *args: None,
         'continuing': False,
         'stream_body_handler': AsyncMock(side_effect=ValueError('Native stream ended before signature')),
         'emit_message_error': AsyncMock(),
@@ -245,6 +252,7 @@ async def test_nonstream_native_terminal_choices_finalize_save_usage_and_details
         upsert_message_to_chat_by_id_and_message_id=AsyncMock(), get_chat_title_by_id=AsyncMock(return_value='')
     )
     ctx = {
+        'form_data': data,
         'request': object(),
         'user': object(),
         'metadata': {'chat_id': 'saved', 'message_id': 'reply'},
@@ -252,6 +260,7 @@ async def test_nonstream_native_terminal_choices_finalize_save_usage_and_details
         'event_emitter': emitter,
     }
     ns = {
+        'log_model_usage': lambda *args: None,
         'get_response_data': lambda value: (value, value),
         'is_saved_chat_id': lambda value: True,
         'Chats': chats,
@@ -401,6 +410,7 @@ async def test_nonstream_continue_keeps_signed_response_boundaries():
     data = payload()
     marker = data['_native_transport']
     ctx = {
+        'form_data': data,
         'request': object(),
         'user': object(),
         'metadata': {'chat_id': 'saved', 'message_id': 'reply'},
@@ -409,6 +419,7 @@ async def test_nonstream_continue_keeps_signed_response_boundaries():
     }
     ns = {
         'copy': copy,
+        'log_model_usage': lambda *args: None,
         'get_response_data': lambda value: (value, value),
         'is_saved_chat_id': lambda value: True,
         'Chats': SimpleNamespace(

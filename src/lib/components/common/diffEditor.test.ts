@@ -2,7 +2,7 @@ import { EditorState, Text } from '@codemirror/state';
 import { Chunk } from '@codemirror/merge';
 import { describe, expect, it } from 'vitest';
 import { copyChunk, keepBothChunk, changedLineCounts, diffEditorConfig } from './diffEditor';
-import { pairedLinePosition } from './diffEditorAlignment';
+import { matchingLinePairs } from './diffEditor';
 
 const docs = (original: string, proposed: string) => {
 	const a = Text.of(original.split('\n')),
@@ -46,6 +46,10 @@ describe('revision comparison changes', () => {
 	it('counts line changes and maps unaffected rows after an insertion', () => {
 		const { a, b, chunks } = docs('one\ntwo\nthree', 'one\ninserted\ntwo\nthree');
 		expect(changedLineCounts(a, b, chunks)).toEqual({ removed: 0, added: 1 });
-		expect(pairedLinePosition(a, b, chunks, a.line(3).from)).toBe(b.line(4).from);
+		expect(matchingLinePairs(a, b, chunks)).toContainEqual([a.line(3).from, b.line(4).from]);
+		expect(matchingLinePairs(b, a, Chunk.build(b, a, diffEditorConfig))).toContainEqual([
+			b.line(4).from,
+			a.line(3).from
+		]);
 	});
 });
