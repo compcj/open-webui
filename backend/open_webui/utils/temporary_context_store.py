@@ -83,6 +83,10 @@ def _identifier(value, name='identifier'):
     return value
 
 
+def _task_digest(task_id):
+    return hashlib.sha256(_identifier(task_id, 'task_id').encode('utf-8')).hexdigest()
+
+
 def _segments(doc, include_data=True):
     control = {key: value for key, value in doc.items() if key not in ('data', 'events')}
     return _encode(control), _encode(doc['data']) if include_data else None, _encode(doc['events'])
@@ -772,12 +776,32 @@ class TemporaryContextRepository:
             }
             if any(values['reply_id'] in occupied for values in prepared):
                 raise ContextConflict()
+            retired = doc['data'].get('retired_tasks', {})
+            if any(
+                values['task_id'] in doc['tasks'] or _task_digest(values['task_id']) in retired for values in prepared
+            ):
+                raise ContextConflict()
+            # Completion must come from the worker, and every execution must
+            # already be settled and published. Keep active-task retry records.
+            finished = {
+                task_id
+                for task_id, task in doc['tasks'].items()
+                if task['status'] == 'done' and task_id not in unsettled_tasks
+            }
+            if finished:
+                # This anti-reuse ledger belongs to byte-charged data, not the
+                # bounded control reserve. Never accept it from client history.
+                retired = doc['data'].setdefault('retired_tasks', {})
+                retired.update({_task_digest(task_id): True for task_id in finished})
+                for task_id in finished:
+                    del doc['tasks'][task_id]
+                doc['executions'] = {
+                    key: entry for key, entry in doc['executions'].items() if entry['task_id'] not in finished
+                }
             if len(doc['tasks']) + len(prepared) > self.config.max_tasks:
                 raise ContextCapacity(limit='tasks')
             entries = []
             for values in prepared:
-                if values['task_id'] in doc['tasks']:
-                    raise ContextConflict()
                 entry = {
                     **values,
                     'fence': doc['fence'],
@@ -798,7 +822,6 @@ class TemporaryContextRepository:
             transition,
             expected_revision=expected_revision,
             lifecycle=True,
-            include_data=False,
         )
 
     def _require_open(self, doc, now):
@@ -995,7 +1018,14 @@ class TemporaryContextRepository:
                     entry['reason_code'] = 'task_completed_unsettled'
             _finish_close(doc)
 
-        doc, _ = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
+        try:
+            # Active control must still settle when the data segment was lost.
+            doc, _ = await self._transact(context_id, actor_id, epoch, transition, lifecycle=True, include_data=False)
+        except ContextConflict:
+            doc = await self.read(context_id, actor_id, epoch, allow_closed=True)
+            if _task_digest(task_id) not in doc['data'].get('retired_tasks', {}):
+                raise
+            # A retired completion retry is read-only and cannot touch new work.
         return doc
 
     async def lease(self, context_id, actor_id, epoch, *, socket_id=None, connected=True, rebind=False):

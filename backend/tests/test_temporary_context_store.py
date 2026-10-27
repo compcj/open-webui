@@ -358,3 +358,23 @@ async def test_expired_lease_persists_fence_before_returning_gone():
         await repo.lease(doc['id'], 'alice', doc['epoch'], socket_id='late')
     retained, _ = await repo.backend.load(doc['id'], include_data=False)
     assert retained['status'] == 'closing' and retained['fence'] == 1
+
+
+@pytest.mark.asyncio
+async def test_retirement_ledger_is_byte_charged_and_capacity_failure_is_atomic():
+    from open_webui.utils.temporary_context_store import _bytes
+
+    repo, _ = repository(context_bytes=70_000)
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    await task(repo, doc)
+    doc = await repo.acknowledge_task_done(*args, task_id='task-1')
+    remaining = repo.config.context_bytes - repo.config.control_reserve_bytes - _bytes(doc['events'])
+    await repo.transact(
+        *args, lambda d, now: d['data'].update(padding='x' * (remaining - _bytes({'padding': ''}) - 10))
+    )
+    before = await repo.read(*args)
+    with pytest.raises(ContextCapacity):
+        await task(repo, before, task_id='next')
+    assert await repo.read(*args) == before
+    assert 'task-1' in before['tasks'] and 'retired_tasks' not in before['data']

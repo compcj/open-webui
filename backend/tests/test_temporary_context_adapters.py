@@ -264,3 +264,86 @@ async def test_exact_temporary_reader_validates_scope_source_and_unicode_cursor(
             context_store=ctx.store.bundle(),
         )
     assert denied.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_retirement_preserves_canonical_raw_selections_and_rejects_old_scope(context):
+    from dataclasses import replace
+    from open_webui.utils.context_store_errors import ContextConflict
+    from open_webui.utils.context_store_temporary import TemporaryContextAdapter
+    from open_webui.utils.temporary_context_runtime import valid_temporary_rpc
+
+    ctx = context
+    desc = await resolve(ctx, text='unchanged original')
+    assert await ctx.store.register_pending(ctx.scope.store_key, 'model', [desc], branch_id='a')
+    raw = await ctx.store.save_result(ctx.scope.store_key, desc, branch_id='a')
+    prepared = await ctx.store.prepare_selections(
+        ctx.scope.store_key,
+        'model',
+        branch_id='a',
+        choices=[
+            dict(
+                descriptor=desc,
+                context_id=None,
+                method='original',
+                allocation=20,
+                original_tokens=20,
+                processed_tokens=20,
+            )
+        ],
+        batch_reports=[
+            dict(
+                batch_id='batch',
+                source_message_id='a',
+                complete=True,
+                decision_id='retirement-decision',
+                results=[dict(message_id='a', output_id='out')],
+            )
+        ],
+        validate=lambda rows, fresh: len(fresh) == 1,
+    )
+    assert prepared is not None and len(prepared) == 1
+    assert prepared[0]['state'] == 'prepared'
+    assert prepared[0]['text'] == 'unchanged original'
+    assert prepared[0]['recorded_at'] > 0
+    assert prepared[0]['decision_id'] == 'retirement-decision'
+    accounting = await ctx.store.latest_accounting(ctx.scope.store_key, 'model', 'leaf')
+    assert accounting['last_tool_batch']['complete'] is True
+    assert accounting['last_tool_batch']['decision_id'] == prepared[0]['decision_id']
+    assert accounting['recorded_at'] == accounting['last_tool_batch']['recorded_at'] == prepared[0]['recorded_at']
+    assert accounting['last_tool_batch']['original_tokens'] == 20
+    assert accounting['last_tool_batch']['processed_tokens'] == 20
+    args = (ctx.doc['id'], 'owner', ctx.doc['epoch'])
+    await ctx.repo.acknowledge_task_done(*args, task_id='task')
+    before = await ctx.repo.read(*args)
+    current, _ = await ctx.repo.register_tasks(
+        *args,
+        [dict(task_id='new', reply_id='new-reply', model_id='model', branch_id='leaf', worker_nonce='new-worker')],
+        expected_revision=before['revision'],
+    )
+    assert 'task' not in current['tasks'] and not current['executions']
+    assert {k: v for k, v in current['data'].items() if k != 'retired_tasks'} == before['data']
+    reader = TemporaryContextAdapter(ctx.repo, replace(ctx.scope, task_id=None, execution_fence=None))
+    assert (await reader.get_result(raw['id'], branch_id='leaf'))['text'] == 'unchanged original'
+    assert await reader.list_selections(ctx.scope.store_key, 'model', 'leaf') == prepared
+    assert await reader.latest_accounting(ctx.scope.store_key, 'model', 'leaf') == accounting
+    assert (await reader.read_snapshot())['messages_map']['a']['output'][1]['output'][0]['text'] == 'unchanged original'
+    with pytest.raises(ContextConflict):
+        await ctx.store.ensure_active()
+    assert not valid_temporary_rpc(current, {'task_id': 'task'}, 0)
+    execution_id = next(iter(before['executions']))
+    with pytest.raises(ContextConflict):
+        await ctx.store.execution_result(execution_id)
+    with pytest.raises(ContextConflict):
+        await ctx.repo.publish_execution_results(
+            *args,
+            task_id='task',
+            execution_ids=[execution_id],
+            expected_fence=0,
+            raw_transition=lambda d, now: d['data'].clear(),
+        )
+    with pytest.raises(ContextConflict):
+        await ctx.repo.mark_uncertain(*args, task_id='task', execution_id=execution_id)
+    with pytest.raises(ContextConflict):
+        await ctx.repo.acknowledge_task_done(*args, task_id='unknown')
+    assert await ctx.repo.read(*args) == current

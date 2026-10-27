@@ -221,3 +221,165 @@ async def test_disconnect_probe_cannot_overwrite_a_concurrent_authenticated_rebi
     current = await repo.read(*args)
     assert current['socket']['id'] == 'rebound' and current['socket']['connected']
     assert current['disconnected_deadline'] is None
+
+
+async def retired_rounds(repo, other, *, exclusive=False):
+    """Exercise lifetime totals beyond both caps without changing byte quotas."""
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    original = {
+        'snapshot': {'messages_map': {'u': {'content': 'original'}}},
+        'result_admissions': {'original': {'source_hash': 'hash'}},
+        'checkpoints': {'original': {'summary': 'summary'}},
+        'selections': {'original': {'text': 'selected'}},
+        'accounting': {'original': {'complete': True}},
+    }
+    await repo.transact(*args, lambda d, now: d['data'].update(original))
+    first_execution = None
+    width = 1 if exclusive else 5
+    rounds = 36 if exclusive else 14
+    for round_index in range(rounds):
+        current = await other.read(*args)
+        batch = [
+            {**task(f'task-{round_index}-{i}', f'reply-{round_index}-{i}'), 'model_id': f'model-{i}'}
+            for i in range(width)
+        ]
+        current, _ = await repo.register_tasks(*args, batch, expected_revision=current['revision'], exclusive=exclusive)
+        assert len(current['tasks']) <= repo.config.max_tasks
+        for values in batch:
+            if not exclusive:
+                for ordinal in range(2):
+                    identity = dict(
+                        round_id='round',
+                        call_id=f'call-{ordinal}',
+                        ordinal=ordinal,
+                        reply_id=values['reply_id'],
+                        model_id=values['model_id'],
+                    )
+                    entry, started = await repo.begin_execution(
+                        *args, task_id=values['task_id'], identity=identity, target_hash='target'
+                    )
+                    assert started
+                    await repo.resolve_execution(
+                        *args, task_id=values['task_id'], execution_id=entry['id'], raw_transition=lambda d, now: None
+                    )
+                    duplicate, started = await other.begin_execution(
+                        *args, task_id=values['task_id'], identity=identity, target_hash='target'
+                    )
+                    assert not started and duplicate['id'] == entry['id']
+                    if first_execution is None:
+                        first_execution = entry
+            await repo.acknowledge_task_done(*args, task_id=values['task_id'])
+        # Repeated worker completion is safe before and after retirement.
+        await other.acknowledge_task_done(*args, task_id='task-0-0')
+    current = await other.read(*args)
+    assert len(current['tasks']) == width
+    assert len(current['executions']) == (0 if exclusive else width * 2)
+    assert {key: current['data'][key] for key in original} == original
+    before = current
+    with pytest.raises(ContextConflict):
+        await repo.register_tasks(*args, [task('task-0-0', 'reused')], expected_revision=current['revision'])
+    with pytest.raises(ContextConflict):
+        await repo.begin_execution(
+            *args,
+            task_id='task-0-0',
+            identity=dict(round_id='round', call_id='call-0', ordinal=0, reply_id='reply-0-0', model_id='model-0'),
+            target_hash='target',
+        )
+    if first_execution:
+        with pytest.raises(ContextConflict):
+            await repo.resolve_execution(
+                *args,
+                task_id='task-0-0',
+                execution_id=first_execution['id'],
+                raw_transition=lambda d, now: d['data'].clear(),
+            )
+    assert await other.read(*args) == before
+    assert (await repo.close(*args))['status'] == 'closed_confirmed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('exclusive', [False, True], ids=['five-models', 'compact-promotion'])
+async def test_memory_retired_control_does_not_limit_scope_lifetime(exclusive):
+    repo, _ = repository()
+    await retired_rounds(repo, repo, exclusive=exclusive)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('exclusive', [False, True], ids=['five-models', 'compact-promotion'])
+async def test_redis_retired_control_does_not_limit_scope_lifetime(stores, exclusive):
+    await retired_rounds(*stores, exclusive=exclusive)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state', ['active', 'uncertain', 'publication_pending'])
+async def test_retirement_preserves_unsettled_tasks_and_execution_dedup(state):
+    repo, _ = repository(max_tasks=1)
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    await repo.register_tasks(*args, [task('old')], expected_revision=0)
+    identity = dict(round_id='round', call_id='call', ordinal=0, reply_id='reply', model_id='model')
+    entry, _ = await repo.begin_execution(*args, task_id='old', identity=identity, target_hash='target')
+    if state != 'uncertain':
+        await repo.resolve_execution(
+            *args,
+            task_id='old',
+            execution_id=entry['id'],
+            raw_transition=lambda d, now: d['data'].update(raw='original'),
+            requires_publication=state == 'publication_pending',
+        )
+    if state != 'active':
+        await repo.acknowledge_task_done(*args, task_id='old')
+    before = await repo.read(*args)
+    from open_webui.utils.context_store_errors import ContextCapacity
+
+    with pytest.raises((ContextConflict, ContextCapacity)):
+        await repo.register_tasks(*args, [task('next', 'new')], expected_revision=before['revision'])
+    assert await repo.read(*args) == before
+    if state == 'active':
+        _, started = await repo.begin_execution(*args, task_id='old', identity=identity, target_hash='target')
+        assert not started
+    elif state == 'publication_pending':
+        await repo.publish_execution_results(
+            *args, task_id='old', execution_ids=[entry['id']], expected_fence=0, raw_transition=lambda d, now: None
+        )
+        current = await repo.read(*args)
+        current, _ = await repo.register_tasks(*args, [task('next', 'new')], expected_revision=current['revision'])
+        assert 'old' not in current['tasks'] and entry['id'] not in current['executions']
+        assert current['data']['raw'] == 'original'
+
+
+async def retirement_race(repo, other):
+    doc = await repo.create('alice')
+    args = (doc['id'], 'alice', doc['epoch'])
+    for task_id in ('old-one', 'old-two'):
+        await repo.register_tasks(*args, [task(task_id)], expected_revision=0)
+        await repo.acknowledge_task_done(*args, task_id=task_id)
+    outcomes = await asyncio.gather(
+        repo.register_tasks(*args, [task('new-one')], expected_revision=0),
+        other.register_tasks(*args, [task('new-two')], expected_revision=0),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(value, tuple) for value in outcomes) == 1
+    assert sum(isinstance(value, ContextConflict) for value in outcomes) == 1
+    current = await other.read(*args)
+    assert len(current['tasks']) == 1 and len(current['data']['retired_tasks']) == 2
+    for task_id in ('old-one', 'old-two'):
+        await other.acknowledge_task_done(*args, task_id=task_id)
+        with pytest.raises(ContextConflict):
+            await repo.register_tasks(*args, [task(task_id, 'other')], expected_revision=0)
+    after = await repo.read(*args)
+    assert after['tasks'] == current['tasks']
+    assert after['events'] == current['events']
+    assert after['revision'] == current['revision']
+
+
+@pytest.mark.asyncio
+async def test_memory_retirement_and_registration_share_cas():
+    repo, _ = repository()
+    await retirement_race(repo, repo)
+
+
+@pytest.mark.asyncio
+async def test_redis_retirement_and_registration_share_cas(stores):
+    await retirement_race(*stores)
