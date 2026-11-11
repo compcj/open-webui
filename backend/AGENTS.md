@@ -100,6 +100,12 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   content and persist incomplete output; cancellation preserves that output and shields cleanup.
   Never dispatch partial tool arguments or legacy code from an interrupted round. Clear an upstream error
   only after actual recovery, retaining unrecovered errors even when partial content exists.
+- Server Chat Completions may retry `ClientPayloadError` once before substantive stream events,
+  using identical serialized request bytes without repeating preparation, compaction or tools.
+  Hold only known empty preludes (at most 64 KiB), keep comment heartbeats flowing, and disable retry
+  on content, reasoning, tools, usage, errors, finish markers or unknown events. Exclude pipelines,
+  Responses/native transports and nonstream requests. Close the failed response first, honor cancellation,
+  and recheck temporary-scope activity before resending; a second failure stays visible.
 - A repeated tool ID in one batch/replay must not execute twice. A fresh provider round may reuse
   an ID and needs a distinct stable execution identity. Deterministically split concatenated calls,
   retire their parent placeholder, preserve completed children and resume only pending children.

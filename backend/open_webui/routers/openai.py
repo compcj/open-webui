@@ -1709,15 +1709,18 @@ async def generate_chat_completion(
     try:
         session = await get_session()
 
-        r = await session.request(
-            method='POST',
-            url=request_url,
-            data=payload,
-            headers=headers,
-            cookies=cookies,
-            ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            timeout=get_client_timeout(stream=is_streaming_request),
-        )
+        async def send_request():
+            return await session.request(
+                method='POST',
+                url=request_url,
+                data=payload,
+                headers=headers,
+                cookies=cookies,
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                timeout=get_client_timeout(stream=is_streaming_request),
+            )
+
+        r = await send_request()
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):
@@ -1771,8 +1774,29 @@ async def generate_chat_completion(
                     status_code=r.status,
                     headers=_clean_proxy_headers(r.headers),
                 )
+            source = stream_wrapper(r)
+            if is_streaming_request and not is_responses and not model.get('pipeline'):
+                from open_webui.utils.chat_stream_retry import stream_chat_with_retry
+                from open_webui.utils.context_scope import temporary_request_store
+
+                async def retry_stream():
+                    # Reuse frozen request bytes and prepared tool selections.
+                    # A closed temporary scope must not start another HTTP send.
+                    scoped = temporary_request_store(request)
+                    if scoped is not None:
+                        await scoped.history.ensure_active()
+                    retried = await send_request()
+                    if retried.status >= 400 or 'text/event-stream' not in retried.headers.get('Content-Type', ''):
+                        await cleanup_response(retried)
+                        raise HTTPException(
+                            status_code=retried.status if retried.status >= 400 else 502,
+                            detail=f'Chat Completions recovery returned an unexpected response (HTTP {retried.status}).',
+                        )
+                    return stream_wrapper(retried)
+
+                source = stream_chat_with_retry(source, retry_stream)
             return StreamingResponse(
-                stream_wrapper(r),
+                source,
                 status_code=r.status,
                 headers=_clean_proxy_headers(r.headers),
             )

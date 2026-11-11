@@ -271,7 +271,7 @@ Run with installed dependencies under Python 3.11/3.12 and Node 22. Tests use sy
 isolated state; the documented commands are not a claim that they ran during a documentation audit.
 
 ```sh
-python -m pytest backend/tests/test_task_cancellation.py backend/tests/test_streaming_error_recovery.py backend/tests/test_chat_model_isolation.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_tool_call_rounds.py -q
+python -m pytest backend/tests/test_task_cancellation.py backend/tests/test_streaming_error_recovery.py backend/tests/test_chat_stream_retry.py backend/tests/test_chat_model_isolation.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_tool_call_rounds.py -q
 npm run test:frontend -- --run src/lib/components/chat/Chat.stop.test.ts src/lib/components/chat/Chat.stream-errors.test.ts src/lib/components/chat/Messages/structuredOutput.split-tools.test.ts
 ```
 
@@ -281,6 +281,10 @@ navigating or selecting a new reply must not let an old stop mutate it. Exercise
 before and after a tool round, buffered deltas, SSE completion before HTTP EOF, a literal `[DONE]` in
 message text, and approval continuation without tool re-execution. Compare same-model and different-model
 parallel replies in off/legacy/V2 modes, including saved branch selections and plugins reading the body.
+For early Chat Completions recovery, cover actual incomplete chunked HTTP responses, empty role preludes,
+prompt heartbeats, identical request replay, the one-retry limit, cancellation and temporary-scope closure.
+Content, reasoning, tools, usage, errors, unknown events and the prelude buffer cap must disable retry;
+Responses/native protocols, pipelines and nonstream requests retain their existing behavior.
 These isolated/loopback tests do not prove deployment-level Redis failover or real-provider behavior;
 exercise those separately in disposable environments before making such claims.
 
