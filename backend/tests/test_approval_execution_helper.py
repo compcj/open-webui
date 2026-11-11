@@ -1,40 +1,28 @@
 """Approval execution uses the actual callable and result assembly boundary."""
 
-import ast
 import json
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from test_web_tool_citations import load_functions
+
 
 @pytest.fixture
 def runtime():
-    path = Path(__file__).parents[1] / 'open_webui/utils/middleware.py'
-    tree = ast.parse(path.read_text(encoding='utf-8'))
-    names = {'execute_tool_call', 'execute_tool_call_for_output', 'tool_result_content'}
-    nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
-    assert {node.name for node in nodes} == names, 'Approval execution helper must exist in production'
     ns = {
         'Any': object,
         'JSONCodec': json,
-        'ast': ast,
         'log': logging.getLogger(__name__),
         'uuid4': uuid4,
         'is_saved_chat_id': lambda value: value == 'saved',
     }
-    # Load the production dispatcher without importing application/database state.
-    dispatch_path = path.with_name('tool_search.py')
-    dispatch_tree = ast.parse(dispatch_path.read_text(encoding='utf-8'))
-    dispatch_nodes = [
-        node for node in dispatch_tree.body if isinstance(node, ast.FunctionDef) and node.name == 'resolve_tool_call'
-    ]
-    assert len(dispatch_nodes) == 1
-    ns.update(CALL_TOOL_NAME='call_tool', SEARCH_TOOL_NAME='search_tools')
-    exec(compile(ast.Module(body=dispatch_nodes, type_ignores=[]), str(dispatch_path), 'exec'), ns)
+    load_functions(
+        ns, 'utils/middleware.py', {'execute_tool_call', 'execute_tool_call_for_output', 'tool_result_content'}
+    )
     effect = AsyncMock(return_value={'data': 'result'})
     ns['get_updated_tool_function'] = AsyncMock(return_value=effect)
     ns['build_terminal_file_tool_result'] = lambda *args: None
@@ -42,7 +30,6 @@ def runtime():
         return_value=('canonical result', [{'type': 'image', 'url': 'synthetic.png'}], ['embed'])
     )
     ns['terminal_event_handler'] = AsyncMock()
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), ns)
     return SimpleNamespace(ns=ns, effect=effect)
 
 

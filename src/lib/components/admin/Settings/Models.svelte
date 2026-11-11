@@ -1,4 +1,7 @@
 <script lang="ts">
+	import Comments from '$lib/components/comments/Comments.svelte';
+	import type { CommentsRequest } from '$lib/components/comments/CommentsPanel.svelte';
+	let comments: CommentsRequest | null = null;
 	import { marked } from 'marked';
 	import Sortable from 'sortablejs';
 	import fileSaver from 'file-saver';
@@ -98,7 +101,7 @@
 		meta?: { hidden?: boolean; description?: string };
 		ollama?: { digest?: string; modified_at?: string };
 	})[] = [];
-	let selectedModelId = null;
+	let selectedModelId: string | null = null;
 
 	let showManageModal = false;
 	let showResetModal = false;
@@ -285,13 +288,17 @@
 			.split(',')
 			.filter((id) => id);
 
-		savedModels = await getAllModels(localStorage.token);
+		savedModels = (await getAllModels(localStorage.token)).filter(
+			(model: ModelListItem) => !model.id.startsWith('agent:')
+		);
 		tags = [...new Set(savedModels.flatMap(modelTags))].sort();
 		if (selectedTag && !tags.includes(selectedTag)) {
 			selectedTag = '';
 		}
 
-		allModels = await getModels(localStorage.token);
+		allModels = (await getModels(localStorage.token)).filter(
+			(model: any) => model.owned_by !== 'terminal'
+		);
 
 		const providerModels = await getModels(localStorage.token, null, true);
 		const allModelIds = new Set<string>(allModels.map((model: ModelListItem) => model.id));
@@ -847,11 +854,12 @@
 							class=" w-full text-sm py-1 rounded-r-xl outline-hidden bg-transparent"
 							bind:value={searchValue}
 							placeholder={$i18n.t('Search Models')}
+							aria-label={$i18n.t('Search Models')}
 						/>
 						{#if searchValue}
 							<div class="self-center pl-1.5 translate-y-[0.5px] rounded-l-xl bg-transparent">
 								<button
-									class="p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+									class="py-0.5 rounded-full transition hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 									aria-label={$i18n.t('Clear search')}
 									on:click={() => {
 										searchValue = '';
@@ -1131,6 +1139,7 @@
 									{#if shiftKey}
 										<Tooltip content={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}>
 											<button
+												aria-label={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
 												class="self-center w-fit text-sm p-1.5 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
 												type="button"
 												on:click={() => {
@@ -1244,6 +1253,7 @@
 									</button>
 
 									<ModelMenu
+										onComment={(request) => (comments = request)}
 										user={$user}
 										{model}
 										deleteLabel={canResetModel(model) ? $i18n.t('Reset') : $i18n.t('Delete')}
@@ -1346,7 +1356,8 @@
 		<ModelEditor
 			admin
 			edit
-			model={models.find((m: ModelListItem) => m.id === selectedModelId)}
+			model={models.find((m) => m.id === selectedModelId)}
+			providerModel={allModels.find((m) => m.id === selectedModelId)}
 			preset={false}
 			onAccessUpdate={(model) => {
 				savedModels = [...savedModels.filter((m) => m.id !== model.id), model];
@@ -1372,3 +1383,5 @@
 		<Spinner className="size-5" />
 	</div>
 {/if}
+
+<Comments modal bind:view={comments} />

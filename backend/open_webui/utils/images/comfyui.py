@@ -118,11 +118,16 @@ async def _ws_get_images(ws, workflow, client_id, base_url, api_key):
         raise ComfyUIError(
             'ComfyUI task history is unavailable. The task may still be running; check the ComfyUI queue before retrying.'
         )
+    if (history.get('status') or {}).get('status_str') == 'error':
+        raise ComfyUIError('ComfyUI execution failed. Check the ComfyUI server logs for node details.')
+
     for node_id in history['outputs']:
         node_output = history['outputs'][node_id]
         if node_id in workflow and workflow[node_id].get('class_type') in [
             'SaveImage',
             'SaveImageAdvanced',
+            'SaveAnimatedWEBP',
+            'SaveAnimatedPNG',
             'PreviewImage',
         ]:
             if 'images' in node_output:

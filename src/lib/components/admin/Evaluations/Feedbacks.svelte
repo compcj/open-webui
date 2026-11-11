@@ -68,11 +68,7 @@
 		selectedFeedback = null;
 	};
 
-	//////////////////////
-	//
 	// CRUD operations
-	//
-	//////////////////////
 
 	const getFeedbacks = async () => {
 		try {
@@ -119,12 +115,23 @@
 		});
 		if (response) {
 			toast.success($i18n.t('Feedback deleted successfully'));
+			await loadModelIds();
+			if (!modelIds.includes(selectedModelId)) {
+				selectedModelId = '';
+			}
 			page = 1;
 			getFeedbacks();
 		}
 	};
 
 	const shareHandler = async () => {
+		const feedbacks = await exportAllFeedbacks(localStorage.token, selectedModelId).catch(
+			(error) => {
+				toast.error(String(error));
+				return null;
+			}
+		);
+		if (!Array.isArray(feedbacks)) return;
 		// LICENSE covers this Open WebUI Community wordmark.
 		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
 		// https://docs.openwebui.com/license.
@@ -135,7 +142,6 @@
 			const { snapshot, user, ...rest } = f;
 			return rest;
 		});
-		console.log(feedbacksToShare);
 
 		const url = 'https://openwebui.com';
 		const tab = await window.open(`${url}/leaderboard`, '_blank');
@@ -446,6 +452,7 @@
 								scope="col"
 								class="px-2.5 py-2 font-normal text-right cursor-pointer select-none w-0"
 							>
+								<span class="sr-only">{$i18n.t('Actions')}</span>
 							</th>
 						</tr>
 					</thead>

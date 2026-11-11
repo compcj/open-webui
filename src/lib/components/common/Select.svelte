@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { flyAndScale } from '$lib/utils/transitions';
 	import { onMount, tick } from 'svelte';
+	import { mobile } from '$lib/stores';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
 	/** Currently selected value */
@@ -175,7 +176,7 @@
 	class="focus-ring {triggerClass}"
 	type="button"
 	aria-expanded={open}
-	on:click={() => toggleOpen()}
+	on:click={() => toggleOpen(!$mobile)}
 	on:keydown={handleTriggerKeydown}
 >
 	<slot name="trigger" {selectedLabel} {open}>

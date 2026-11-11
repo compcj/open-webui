@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import copy
+import html
 import importlib.util
 import json
 import logging
@@ -28,6 +29,10 @@ def runtime():
     ns = {
         'JSONCodec': json,
         'new_tool_output_ids': [],
+        'admitted_tool_output_ids': [],
+        'stop_reason': None,
+        'max_tool_call_iterations': None,
+        'tool_call_iterations': 0,
         'execution_by_call_id': {},
         'execution_by_output_id': {},
         'temporary_store': None,
@@ -35,6 +40,8 @@ def runtime():
         'json': json,
         'log': logging.getLogger(__name__),
         'HTMLResponse': HTMLResponse,
+        'html': html,
+        'MCPAppResult': type('MCPAppResult', (), {}),
         'get_image_base64_from_url': AsyncMock(return_value=IMAGE_DATA),
         'output_id': lambda prefix: prefix + '-1',
         'BASE64_IMAGE_DATA_URI_RE': re.compile(r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2}'),
@@ -179,6 +186,7 @@ def test_builtin_persists_and_displays_the_attachment_once_while_returning_visua
     ns.update(
         image_generations=AsyncMock(return_value=[image]),
         image_edits=AsyncMock(return_value=[image]),
+        upload_files_to_terminal=AsyncMock(),
         CreateImageForm=SimpleNamespace,
         EditImageForm=SimpleNamespace,
         is_saved_chat_id=lambda value: value == 'chat-1',

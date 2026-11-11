@@ -65,3 +65,23 @@ it('removes temporary chat identifiers at chat envelopes without deleting messag
 		content: { id: 'temporary:business' }
 	});
 });
+
+it('removes Agent resume state and task identity from copies while retaining reply text', () => {
+	const reply = {
+		id: 'reply',
+		content: 'Earlier reply',
+		meta: { agent: 'signed-session', task_id: 'running' },
+		output: [
+			{
+				type: 'message',
+				content: [{ type: 'output_text', text: 'Earlier reply' }],
+				agent_resolution: { accepted: true }
+			}
+		]
+	};
+	const copied = projectRawChat({ messages: [reply] });
+	expect(copied.messages[0].meta).toEqual({});
+	expect(copied.messages[0].output[0].agent_resolution).toBeUndefined();
+	expect(copied.messages[0].output[0].content).toEqual(reply.output[0].content);
+	expect(reply.meta.agent).toBe('signed-session');
+});

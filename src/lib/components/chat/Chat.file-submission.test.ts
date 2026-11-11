@@ -60,8 +60,8 @@ const createChat = ({ temporary = false, search = false, busy = false } = {}) =>
  let history={currentId:busy?'reply':null,messages:busy?{reply:{id:'reply',role:'assistant',done:false}}:{}};
  let prompt='composer draft', files=[{id:'composer-file'}],chatFiles=[],selectedModels=['model'],selectedModelIds=['model'];
  const $models=[{id:'model'}],$config={features:{enable_web_search_confirmation:search}},$settings={enableMessageQueue:true};
- const $socket={id:'socket'},embedded=false,onCreateEmbeddedChat=null,chatId={set:async id=>{$chatId=id;}};
- const createTemporaryChatId=()=> 'temporary:synthetic',tick=async()=>{},emitTyping=()=>{},equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const $socket={id:'socket'},embedded=false,fullWidthTabs=false,agentModelId=undefined,onCreateEmbeddedChat=null,chatId={set:async id=>{$chatId=id;}};
+ const isTemporaryChatId=id=>id?.startsWith('temporary:'),createTemporaryChatId=()=> 'temporary:synthetic',tick=async()=>{},emitTyping=()=>{},equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const getChatVariablesForm=()=>({conflicts:[],missing:false,empty:false}),chatVariables={};
  let pendingOAuthTools=[],processing='',webSearchActive=search,webSearchConfirmed=false,pendingWebSearchPrompt=null,pendingWebSearchSubmission=null,pendingWebSearchToggleModelId,webSearchConfirmTimeout,showWebSearchConfirm=false;
  let chatSubmissionAlive=true; const queuedSubmissionGuards=new Map();
@@ -69,7 +69,7 @@ const createChat = ({ temporary = false, search = false, busy = false } = {}) =>
  let $chatRequestQueues={}; const chatRequestQueues={update:fn=>{$chatRequestQueues=fn($chatRequestQueues);}};
  const processingQueueChats=new Set(),stoppingChats=new Map(); let seq=0; const uuidv4=()=>String(++seq);
  let transportGate=null,releaseTransport; const submitPrompt=async(text,attached)=>{submitted({text,attached,chatId:$chatId}); await transportGate; return {status:'submitted'};};
- const stopResponse=async()=>true;
+ const stopResponse=async()=>true, clearCommandInput=()=>{}, initializeTerminalDirectory=async()=>{}, terminalTabs=null, $selectedTerminalId=null, terminalContext=null;
  initChatHandler.mockImplementation(async()=>{$chatId='created-chat';return $chatId;});
  messageInput.uploadPendingFiles=async()=>{files[0].status='uploaded';return true;};
  ${declarations}

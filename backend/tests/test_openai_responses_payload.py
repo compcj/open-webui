@@ -110,3 +110,49 @@ def test_trailing_budget_reminder_preserves_responses_instructions_and_input_pre
             'role': 'system',
             'content': [{'type': 'input_text', 'text': text}],
         }
+
+
+def test_responses_replays_provider_batch_with_frozen_child_citation():
+    from open_webui.utils.json_codec import JSONCodec
+    from open_webui.utils.misc import merge_tool_call_batches
+
+    namespace = {
+        'JSONCodec': JSONCodec,
+        'merge_tool_call_batches': merge_tool_call_batches,
+        'remap_reasoning_effort_for_responses': remap_reasoning_effort_for_responses,
+        'RESPONSES_ALLOWED_FIELDS': {
+            'function_call': {'type', 'id', 'call_id', 'name', 'arguments'},
+            'function_call_output': {'type', 'call_id', 'output'},
+        },
+    }
+    load_functions(namespace, 'routers/openai.py', {'convert_to_responses_payload', '_normalize_stored_item'})
+    stored = [
+        {
+            'type': 'function_call',
+            'id': 'original-id',
+            'call_id': 'child',
+            'name': 'lookup',
+            'arguments': '{}',
+            'provider_batch': {
+                'call_id': 'original-call',
+                'size': 1,
+                'index': 0,
+                'tool_name': 'lookup',
+                'function': {'name': 'call_tool', 'arguments': '{"calls":[{"name":"lookup"}]}'},
+            },
+        },
+        {
+            'type': 'function_call_output',
+            'call_id': 'child',
+            'status': 'completed',
+            'output': [{'type': 'input_text', 'text': 'raw result'}],
+            'citation_context': 'frozen citation [1]',
+        },
+    ]
+    result = namespace['convert_to_responses_payload']({'messages': [{'role': 'assistant', 'output': stored}]})
+    call, output = result['input']
+    assert call['name'] == 'call_tool'
+    assert call['arguments'] == stored[0]['provider_batch']['function']['arguments']
+    assert call['call_id'] == output['call_id'] == 'original-call'
+    assert 'raw result' in output['output'][0]['text']
+    assert 'frozen citation [1]' in output['output'][0]['text']

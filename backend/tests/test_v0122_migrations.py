@@ -1,4 +1,4 @@
-"""Real SQLite/PostgreSQL upgrade acceptance for the v0.12.2 merge.
+"""Real SQLite/PostgreSQL upgrade acceptance for the v0.13.3 merge.
 
 TEST_POSTGRES_URL opts in using an administrator connection to a disposable test
 server. Each case creates and drops its own database; the named database is never
@@ -18,8 +18,10 @@ import pytest
 import sqlalchemy as sa
 
 ROOT = Path(__file__).resolve().parents[2]
-HEAD = 'a122d15e0001'
-BASELINES = [None, 'f9a4b2d6c805', 'a120d13e0003', 'b8f2c6d91a04', '0bd252b206fb']
+HEAD = 'a133d11e0001'
+FORK_0124 = 'a122d15e0001'
+OFFICIAL_0133 = '9f6c2a8d1b43'
+BASELINES = [None, 'f9a4b2d6c805', 'a120d13e0003', 'b8f2c6d91a04', '0bd252b206fb', FORK_0124, OFFICIAL_0133]
 RAW_CHAT = json.dumps(
     {
         'history': {
@@ -52,10 +54,11 @@ def migration_config():
     return config
 
 
-def test_v0122_merge_has_one_head_and_expected_parents():
+def test_v0133_merge_has_one_head_and_expected_parents():
     script = ScriptDirectory.from_config(migration_config())
     assert script.get_heads() == [HEAD]
-    assert script.get_revision(HEAD).down_revision == ('a120d13e0003', '0bd252b206fb')
+    assert script.get_revision(HEAD).down_revision == (FORK_0124, OFFICIAL_0133)
+    assert script.get_revision(FORK_0124).down_revision == ('a120d13e0003', '0bd252b206fb')
     # The merge itself must never perform business-data writes in either direction.
     revision = script.get_revision(HEAD).module
     assert revision.upgrade() is None
@@ -72,7 +75,7 @@ def database(request, tmp_path):
     if not configured:
         pytest.skip('Set TEST_POSTGRES_URL to run real disposable PostgreSQL upgrades')
     admin = sa.create_engine(configured, isolation_level='AUTOCOMMIT')
-    name = f'oui_v0122_migration_{uuid.uuid4().hex}'
+    name = f'oui_v0133_migration_{uuid.uuid4().hex}'
     try:
         with admin.connect() as connection:
             connection.exec_driver_sql(f'CREATE DATABASE {name}')
@@ -92,7 +95,7 @@ def migrate(url, target, directory, *, success=True):
         STATIC_DIR=str(directory / 'static'),
         DATABASE_URL=url.render_as_string(hide_password=False),
         DATABASE_SCHEMA='',
-        WEBUI_SECRET_KEY='synthetic-v0122-migration-secret',
+        WEBUI_SECRET_KEY='synthetic-v0133-migration-secret',
         ENABLE_DB_MIGRATIONS='false',
         ENABLE_ORJSON='false',
         USE_SLIM_DOCKER='True',
@@ -132,7 +135,7 @@ def stored_rows(connection, name):
     return [dict(row) for row in connection.execute(sa.select(*columns).order_by(target.c.id)).mappings()]
 
 
-def seed(connection):
+def seed(connection, *, auth_backfilled=False):
     user = table(connection, 'user')
     auth = table(connection, 'auth')
     for identity in ['existing', 'missing', 'null-email']:
@@ -152,6 +155,16 @@ def seed(connection):
     if 'mfa' in auth.c:
         credentials.update(mfa={'synthetic': 'unchanged'}, session_stamp='session-unchanged')
     connection.execute(auth.insert().values(**credentials))
+    if auth_backfilled:
+        for identity in ['missing', 'null-email']:
+            connection.execute(
+                auth.insert().values(
+                    id=identity,
+                    email=None if identity == 'null-email' else 'missing@example.invalid',
+                    password='',
+                    active=True,
+                )
+            )
     connection.execute(
         table(connection, 'chat')
         .insert()
@@ -200,6 +213,64 @@ def seed(connection):
         )
     )
     names = set(sa.inspect(connection).get_table_names())
+    tool = table(connection, 'tool')
+    tool_values = dict(
+        id='tool', user_id='existing', name='Synthetic', specs='[]', meta='{}', created_at=1, updated_at=2
+    )
+    if 'is_active' in tool.c:
+        tool_values['is_active'] = False
+    connection.execute(tool.insert().values(**tool_values))
+    if 'auth_session' in names:
+        connection.execute(
+            table(connection, 'auth_session')
+            .insert()
+            .values(
+                id='session',
+                user_id='existing',
+                refresh_token_id='refresh',
+                data={'name': 'Synthetic'},
+                created_at=1,
+                updated_at=2,
+                expires_at=3,
+            )
+        )
+        connection.execute(
+            table(connection, 'comment')
+            .insert()
+            .values(
+                id='comment',
+                user_id='existing',
+                resource_type='chat',
+                resource_id='chat',
+                content='Preserve comment',
+                created_at=1,
+                updated_at=2,
+            )
+        )
+        connection.execute(
+            table(connection, 'notification')
+            .insert()
+            .values(
+                id='notification',
+                user_id='existing',
+                event_type='comment',
+                event_key='comment',
+                actor_type='system',
+                data={},
+                created_at=1,
+                updated_at=2,
+            )
+        )
+        connection.execute(
+            table(connection, 'chat_view_state')
+            .insert()
+            .values(
+                chat_id='chat',
+                user_id='existing',
+                state={'schemaVersion': 1, 'synthetic': True},
+                updated_at=2,
+            )
+        )
     if 'chat_context_checkpoint' in names:
         checkpoint = table(connection, 'chat_context_checkpoint')
         for version in [1, 2]:
@@ -280,7 +351,7 @@ def seed(connection):
                 **source,
             )
         )
-    return {
+    original = {
         name: stored_rows(connection, name)
         for name in [
             'auth',
@@ -290,16 +361,29 @@ def seed(connection):
             'chat_tool_result',
             'chat_tool_result_context',
             'chat_tool_result_selection',
+            'tool',
+            'auth_session',
+            'comment',
+            'notification',
         ]
         if name in names
     }
+    if 'chat_view_state' in names:
+        original['chat_view_state'] = [
+            dict(row) for row in connection.execute(sa.select(table(connection, 'chat_view_state'))).mappings()
+        ]
+    return original
 
 
 def verify_preserved(connection, original):
     for name, before in original.items():
-        after = stored_rows(connection, name)
+        if name == 'chat_view_state':
+            after = [dict(row) for row in connection.execute(sa.select(table(connection, name))).mappings()]
+        else:
+            after = stored_rows(connection, name)
         if name == 'auth':
-            after = [row for row in after if row['id'] == 'existing']
+            seeded_ids = {row['id'] for row in before}
+            after = [row for row in after if row['id'] in seeded_ids]
         # New provenance columns may be added, but preexisting values may never change.
         assert [{key: row[key] for key in before[0]} for row in after] == before, name
         if name == 'chat_context_checkpoint':
@@ -358,7 +442,9 @@ def snapshot_database(connection):
 
 
 @pytest.mark.parametrize(
-    'baseline', BASELINES, ids=['empty', 'early-fork', 'fork-v0120', 'official-v0120', 'official-v0122']
+    'baseline',
+    BASELINES,
+    ids=['empty', 'early-fork', 'fork-v0120', 'official-v0120', 'official-v0122', 'fork-v0124', 'official-v0133'],
 )
 def test_real_upgrade_preserves_data_constraints_and_is_idempotent(database, tmp_path, baseline):
     engine = sa.create_engine(database)
@@ -367,7 +453,7 @@ def test_real_upgrade_preserves_data_constraints_and_is_idempotent(database, tmp
             # Exercise the official auth backfill while preparing an official v0.12.2 baseline.
             migrate(database, 'c92da83b017f' if baseline == '0bd252b206fb' else baseline, tmp_path)
             with engine.begin() as connection:
-                original = seed(connection)
+                original = seed(connection, auth_backfilled=baseline in {FORK_0124, OFFICIAL_0133})
             if baseline == '0bd252b206fb':
                 migrate(database, baseline, tmp_path)
                 with engine.connect() as connection:
@@ -377,11 +463,23 @@ def test_real_upgrade_preserves_data_constraints_and_is_idempotent(database, tmp
         with engine.begin() as connection:
             assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalars().all() == [HEAD]
             inspector = sa.inspect(connection)
+            assert {'comment', 'comment_reaction', 'notification', 'auth_session', 'chat_view_state'} <= set(
+                inspector.get_table_names()
+            )
+            assert {'ix_message_channel_parent_created', 'ix_message_parent_id'} <= {
+                index['name'] for index in inspector.get_indexes('message')
+            }
+            assert 'ix_message_reaction_message_id' in {
+                index['name'] for index in inspector.get_indexes('message_reaction')
+            }
             for name in ['chat_context_checkpoint', 'chat_tool_result_context']:
                 assert 'source_scope' in {column['name'] for column in inspector.get_columns(name)}
             if baseline is not None:
                 verify_preserved(connection, original)
                 verify_auth(connection)
+                assert connection.execute(sa.select(table(connection, 'tool').c.is_active)).scalar_one() is (
+                    baseline != OFFICIAL_0133
+                )
             else:
                 assert (
                     connection.execute(sa.select(sa.func.count()).select_from(table(connection, 'auth'))).scalar_one()

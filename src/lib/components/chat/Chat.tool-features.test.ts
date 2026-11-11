@@ -91,6 +91,9 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		const skills = { set: value => $skills = value };
 		const getFunctions = async () => [], getSkills = async () => [];
 		const continueOAuthRedirect = async () => {};
+		let defaultsModelIds = [], modelDefaults = null;
+		const $chatId = 'history-chat', $selectedTerminalId = null, $selectedFolder = null;
+		const history = { currentId: null };
 		const selectedTerminalId = { set: () => {} };
 		let settingDefaults = false, $temporaryChatEnabled = false, $showCallOverlay = false;
 		let chatIdProp = 'history-chat', prompt = '', files = [], messageInput;

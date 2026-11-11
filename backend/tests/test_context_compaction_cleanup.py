@@ -8,7 +8,8 @@ from types import ModuleType
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import Column, Text, delete, select, update
+from fastapi import HTTPException
+from sqlalchemy import JSON, Column, Integer, Text, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -32,9 +33,16 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
         id = Column(Text, primary_key=True)
         user_id = Column(Text)
         folder_id = Column(Text)
+        updated_at = Column(Integer)
 
     class ChatMessage(base):
         __tablename__ = 'chat_message'
+        id = Column(Text, primary_key=True)
+        chat_id = Column(Text)
+        meta = Column(JSON)
+
+    class ChatViewState(base):
+        __tablename__ = 'chat_view_state'
         id = Column(Text, primary_key=True)
         chat_id = Column(Text)
 
@@ -86,10 +94,14 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
         for n in ast.parse(source.read_text(encoding='utf-8')).body
         if isinstance(n, ast.ClassDef) and n.name == 'ChatTable'
     )
-    node = next(n for n in original.body if isinstance(n, ast.AsyncFunctionDef) and n.name == method)
+    nodes = [
+        node
+        for node in original.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in {method, '_delete_chats'}
+    ]
     module = ast.fix_missing_locations(
         ast.Module(
-            body=[ast.ClassDef(name='ChatTable', bases=[], keywords=[], body=[node], decorator_list=[])],
+            body=[ast.ClassDef(name='ChatTable', bases=[], keywords=[], body=nodes, decorator_list=[])],
             type_ignores=[],
         )
     )
@@ -98,6 +110,7 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
         get_async_db_context=context,
         Chat=Chat,
         ChatMessage=ChatMessage,
+        ChatViewState=ChatViewState,
         ChatContextCheckpoint=ChatContextCheckpoint,
         ChatToolResult=ChatToolResult,
         ChatToolResultContext=ChatToolResultContext,
@@ -106,6 +119,10 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
         select=select,
         update=update,
         delete=delete,
+        delete_resource_comments=AsyncMock(return_value=set()),
+        emit_changes=AsyncMock(),
+        HTTPException=HTTPException,
+        UNCONFIRMED_AGENT_STATES=('starting', 'running', 'stopping', 'unconfirmed'),
     )
     exec(compile(module, str(source), 'exec'), namespace)
     table = namespace['ChatTable']()
@@ -125,13 +142,16 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
             )
             for chat_id in ('first', 'other', 'second'):
                 session.add(SharedChat(id=chat_id, chat_id=chat_id))
+                session.add(ChatMessage(id=chat_id, chat_id=chat_id))
+                session.add(ChatViewState(id=chat_id, chat_id=chat_id))
+                session.add(AutomationRun(id=chat_id, chat_id=chat_id))
                 for model in ('a', 'b'):
                     session.add(ChatContextCheckpoint(id=f'{chat_id}-{model}', chat_id=chat_id))
                     session.add(ChatToolResult(id=f'{chat_id}-{model}', chat_id=chat_id))
                     session.add(ChatToolResultContext(id=f'{chat_id}-{model}', chat_id=chat_id))
                     session.add(ChatToolResultSelection(id=f'{chat_id}-{model}', chat_id=chat_id))
             await session.commit()
-        assert await getattr(table, method)(*args) is True
+        assert await getattr(table, method)(*args) is ('stranger' not in args)
         async with sessions() as session:
             rows = (await session.execute(select(ChatContextCheckpoint))).scalars().all()
             assert {row.chat_id for row in rows} == remaining
@@ -141,8 +161,17 @@ async def test_delete_cleans_only_target_chats_checkpoints(tmp_path, monkeypatch
                 assert {row.chat_id for row in rows} == remaining
                 assert len(rows) == len(remaining) * 2
             assert set((await session.execute(select(Chat.id))).scalars()) == remaining
-            if method == 'delete_chats_by_user_id_and_folder_id':
-                assert set((await session.execute(select(SharedChat.chat_id))).scalars()) == remaining
+            assert set((await session.execute(select(SharedChat.chat_id))).scalars()) == remaining
+            assert set((await session.execute(select(ChatMessage.chat_id))).scalars()) == remaining
+            assert set((await session.execute(select(ChatViewState.chat_id))).scalars()) == remaining
+            assert (
+                set(
+                    (
+                        await session.execute(select(AutomationRun.chat_id).where(AutomationRun.chat_id.is_not(None)))
+                    ).scalars()
+                )
+                == remaining
+            )
     finally:
         await engine.dispose()
 
@@ -173,6 +202,11 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
         resource_type = Column(Text)
         resource_id = Column(Text)
 
+    class ChatContextCheckpoint(base):
+        __tablename__ = 'chat_context_checkpoint'
+        id = Column(Text, primary_key=True)
+        model_id = Column(Text)
+
     class ModelHistory(base):
         __tablename__ = 'model_history'
         id = Column(Text, primary_key=True)
@@ -202,10 +236,13 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
         get_async_db_context=context,
         Model=Model,
         ChatToolResultSelection=ChatToolResultSelection,
+        ChatContextCheckpoint=ChatContextCheckpoint,
         delete=delete,
         select=select,
         AccessGrant=AccessGrant,
         ModelHistory=ModelHistory,
+        delete_resource_comments=AsyncMock(return_value=set()),
+        emit_changes=AsyncMock(),
     )
     module = ast.fix_missing_locations(
         ast.Module(
@@ -226,11 +263,13 @@ async def test_model_delete_cleans_selections_without_foreign_keys(tmp_path, met
             for model in ('first', 'second', 'base-provider'):
                 session.add(AccessGrant(id=model, resource_type='model', resource_id=model))
                 session.add(ModelHistory(id=model, model_id=model))
+                session.add(ChatContextCheckpoint(id=model, model_id=model))
             session.add(AccessGrant(id='other-resource', resource_type='skill', resource_id='first'))
             await session.commit()
         assert await getattr(table, method)(*args)
         async with sessions() as session:
             assert set((await session.execute(select(ChatToolResultSelection.model_id))).scalars()) == remaining
+            assert set((await session.execute(select(ChatContextCheckpoint.model_id))).scalars()) == remaining
             assert set((await session.execute(select(ModelHistory.model_id))).scalars()) == remaining
             grants = (await session.execute(select(AccessGrant))).scalars().all()
             assert {(grant.resource_type, grant.resource_id) for grant in grants} == {

@@ -98,7 +98,8 @@ def pipeline(citation_runtime, output_runtime):
     wrapper = ast.parse(
         'async def project_approved_response(request, form_data, user, model, metadata, pending_assistant_message):\n    pass'
     )
-    wrapper.body[0].body = copy.deepcopy(pending.body[1:])
+    resume_index = next(index for index, node in enumerate(pending.body) if isinstance(node, ast.If))
+    wrapper.body[0].body = copy.deepcopy(pending.body[resume_index + 1 :])
     exec(compile(ast.fix_missing_locations(wrapper), 'approved_response_projection', 'exec'), ns)
     ns['form_data'] = copy.deepcopy(citation_runtime.ns['form_data'])
     ns['form_data']['tools'] = [

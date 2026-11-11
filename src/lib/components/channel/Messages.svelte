@@ -233,9 +233,7 @@
 						}
 					);
 				}}
-				onThread={(id) => {
-					onThread(id);
-				}}
+				{onThread}
 				onReaction={(name) => {
 					if (
 						(message?.reactions ?? [])

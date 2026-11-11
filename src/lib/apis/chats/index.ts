@@ -431,7 +431,8 @@ export const getChatListByUserId = async (
 export const getArchivedChatList = async (
 	token: string = '',
 	page: number = 1,
-	filter?: object
+	filter?: object,
+	signal?: AbortSignal
 ) => {
 	let error = null;
 
@@ -448,6 +449,7 @@ export const getArchivedChatList = async (
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/archived?${searchParams.toString()}`, {
 		method: 'GET',
+		signal,
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
@@ -462,10 +464,13 @@ export const getArchivedChatList = async (
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = getErrorDetail(err);
 			console.error(err);
 			return null;
 		});
+
+	if (signal?.aborted) return null;
 
 	if (error) {
 		throw error;
@@ -505,7 +510,12 @@ export const getArchivedChatCount = async (token: string = '') => {
 	return res;
 };
 
-export const getSharedChatList = async (token: string = '', page: number = 1, filter?: object) => {
+export const getSharedChatList = async (
+	token: string = '',
+	page: number = 1,
+	filter?: object,
+	signal?: AbortSignal
+) => {
 	let error = null;
 
 	const searchParams = new URLSearchParams();
@@ -521,6 +531,7 @@ export const getSharedChatList = async (token: string = '', page: number = 1, fi
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/shared?${searchParams.toString()}`, {
 		method: 'GET',
+		signal,
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
@@ -535,10 +546,13 @@ export const getSharedChatList = async (token: string = '', page: number = 1, fi
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = getErrorDetail(err);
 			console.error(err);
 			return null;
 		});
+
+	if (signal?.aborted) return null;
 
 	if (error) {
 		throw error;
@@ -598,6 +612,18 @@ export const getAllChats = async (token: string) => {
 	}
 
 	return chats;
+};
+
+export const getChatSearchSnippet = async (token: string, id: string, text: string) => {
+	const searchParams = new URLSearchParams({ text });
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/search/snippet?${searchParams}`, {
+		headers: {
+			Accept: 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw getErrorDetail(await res.json());
+	return (await res.json()) as string | null;
 };
 
 export const getChatListBySearchText = async (token: string, text: string, page: number = 1) => {
@@ -872,10 +898,11 @@ export const getChatListByTagName = async (token: string = '', tagName: string) 
 	}));
 };
 
-export const getChatById = async (token: string, id: string) => {
+export const getChatById = async (token: string, id: string, signal?: AbortSignal) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}`, {
+		signal,
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -891,6 +918,7 @@ export const getChatById = async (token: string, id: string) => {
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = err.detail;
 
 			console.error(err);
@@ -1593,10 +1621,11 @@ export const deleteChatById = async (token: string, id: string) => {
 	return res;
 };
 
-export const getTagsById = async (token: string, id: string) => {
+export const getTagsById = async (token: string, id: string, signal?: AbortSignal) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/tags`, {
+		signal,
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -1612,6 +1641,7 @@ export const getTagsById = async (token: string, id: string) => {
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = getErrorDetail(err);
 
 			console.error(err);

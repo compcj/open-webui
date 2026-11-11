@@ -37,7 +37,7 @@ def cancel_local_task(task_id: str):
     task = tasks.get(task_id)
     # Repeated stop requests must not interrupt cancellation-state persistence
     # or transport cleanup that is already running in the owning task.
-    if task and not task.done() and not task.cancelling():
+    if task and not task.done() and not task.cancelling() and not getattr(task, '_agent_cleanup_running', False):
         task.cancel()
     return task
 
@@ -111,9 +111,7 @@ async def redis_task_heartbeat(app):
             log.exception('Redis task heartbeat failed')
 
 
-### ------------------------------
-### REDIS-ENABLED HANDLERS
-### ------------------------------
+# Redis-enabled handlers
 
 
 async def redis_save_task(redis: Redis, task_id: str, item_id: str | None):

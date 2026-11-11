@@ -77,12 +77,23 @@ async def test_approved_resume_rechecks_current_kb_permission(execution_runtime,
     knowledge_runtime.base.user_id = 'other'
     knowledge_runtime.grant.return_value = True
     tool_call = call(wrapped)
-    # Saved approvals execute through the same helper after reconstructing tools.
-    # The live grant is revoked after staging and before resuming that call.
+    metadata = {
+        'chat_id': 'saved',
+        'message_id': 'reply',
+        'tools': tools,
+        'params': {'tool_approval_mode': 'ask'},
+    }
+    execute = execution_runtime.ns['execute_tool_call']
+    with pytest.raises(execution_runtime.ns['ToolApprovalRequired']):
+        await execute({}, metadata, None, tool_call)
+    assert tool_call['status'] == 'pending' and tool_call['approval_fingerprint']
+    knowledge_runtime.upload.assert_not_awaited()
+
+    tool_call['approved'] = True
     knowledge_runtime.grant.return_value = False
-    metadata = {'chat_id': 'saved', 'tools': tools, 'params': {'tool_approval_mode': 'ask'}}
-    result = await execution_runtime.ns['execute_tool_call']({}, metadata, None, tool_call)
+    result = await execute({}, metadata, None, tool_call)
     assert 'error' in json.loads(result[1])
+    knowledge_runtime.grant.assert_awaited_once()
     knowledge_runtime.upload.assert_not_awaited()
 
 

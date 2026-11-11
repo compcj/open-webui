@@ -10,7 +10,7 @@ import uuid
 from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 
 import jwt
-from aiohttp import BasicAuth, ClientSession
+from aiohttp import ClientSession, encode_basic_auth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from ldap3 import NONE, Connection, Server, Tls
@@ -19,6 +19,7 @@ from ldap3.utils.dn import parse_dn
 from open_webui.config import (
     ENABLE_PASSWORD_AUTH,
     OAUTH_PROVIDERS,
+    oauth_client_kwargs,
 )
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import (
@@ -83,15 +84,19 @@ from open_webui.utils.mfa import MFA_CONFIG_KEYS, MfaConfigForm, get_mfa_config,
 from open_webui.utils.misc import parse_duration, validate_email_format
 from open_webui.utils.rate_limit import RateLimiter
 from pydantic import BaseModel, Field, StrictStr, field_validator
+from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from open_webui.routers import sessions
+
 router = APIRouter(route_class=MfaRoute)
+router.include_router(sessions.router, prefix='/sessions')
 
 log = logging.getLogger(__name__)
 
-# Forgive us our failed attempts, as we forgive those
-# who exceed their allotted rate against this gate.
+# Let patience meet those who stumble at the gate,
+# and let those within rest safely through the night.
 signin_rate_limiter = RateLimiter(limit=5 * 3, window=60 * 3)
 # Best-effort throttle only: there is no caller identity before the provider answers,
 # and deployments may derive request.client from proxy headers.
@@ -130,6 +135,8 @@ ADMIN_CONFIG_KEYS = {
     'AUTOMATION_MIN_INTERVAL': 'automations.min_interval',
     'ENABLE_AUTOMATIONS': 'automations.enable',
     'ENABLE_CHANNELS': 'channels.enable',
+    'ENABLE_COMMENTS': 'comments.enable',
+    'ENABLE_NOTIFICATIONS': 'notifications.enable',
     'ENABLE_ENCRYPTED_CHANNELS': 'channels.encryption.enable',
     'ENABLE_APPS': 'apps.enable',
     'CHANNEL_MODEL_RESPONSE_MODE': 'channels.model_response_mode',
@@ -139,6 +146,7 @@ ADMIN_CONFIG_KEYS = {
     'ENABLE_SKILL_LAZY_LOADING': 'skills.lazy_loading.enable',
     'SKILL_CONTENT_MAX_CHARS': 'skills.content_max_chars',
     'SKILL_PREVIEW_MAX_CHARS': 'skills.preview_max_chars',
+    'VIEW_CHAT_MAX_CHARS': 'chats.view_max_chars',
     'ENABLE_NOTES': 'notes.enable',
     'ENABLE_USER_WEBHOOKS': 'ui.enable_user_webhooks',
     'ENABLE_USER_STATUS': 'users.enable_status',
@@ -242,9 +250,7 @@ async def get_session_user(
     return response_data
 
 
-############################
 # Update Profile
-############################
 
 
 @router.post('/update/profile', response_model=UserProfileImageResponse)
@@ -275,9 +281,7 @@ async def update_profile(
         raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
-############################
 # Update Timezone
-############################
 
 
 class UpdateTimezoneForm(BaseModel):
@@ -309,9 +313,7 @@ async def update_timezone(
         raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
-############################
 # Update Password
-############################
 
 
 @router.post('/update/password', response_model=bool)
@@ -406,9 +408,7 @@ def extract_group_cn_from_dn(group_dn: str) -> str | None:
     return None
 
 
-############################
 # LDAP Authentication
-############################
 @router.post('/ldap', response_model=SigninResult)
 async def ldap_auth(
     request: Request,
@@ -657,9 +657,7 @@ async def ldap_auth(
         raise HTTPException(400, detail='LDAP authentication failed.')
 
 
-############################
-# SignIn
-############################
+# Sign In
 
 
 @router.post('/signin', response_model=SigninResult)
@@ -790,9 +788,7 @@ async def signin(
         raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
-############################
-# SignUp
-############################
+# Sign Up
 
 
 async def signup_handler(
@@ -929,7 +925,16 @@ async def signout(request: Request, response: Response, db: AsyncSession = Depen
         data = decode_token(token)
         if data and data.get('id'):
             actor = await Users.get_user_by_id(data['id'], db=db)
-        await invalidate_token(request, token)
+        try:
+            await invalidate_token(request, token)
+        except RedisError:
+            raise HTTPException(
+                503, 'Authentication temporarily unavailable. Please retry.', headers={'Retry-After': '5'}
+            ) from None
+        if data and data.get('typ', 'session') == 'session' and data.get('sid') and data.get('id'):
+            from open_webui.models.auth_sessions import AuthSessions
+
+            await AuthSessions.revoke(data['sid'], data['id'])
         await publish_event(
             request,
             EVENTS.AUTH_LOGOUT,
@@ -1016,9 +1021,7 @@ async def signout(request: Request, response: Response, db: AsyncSession = Depen
     return JSONResponse(status_code=200, content={'status': True}, headers=response.headers)
 
 
-############################
 # OAuth Session Management
-############################
 
 
 @router.delete('/oauth/sessions/{provider:path}', response_model=bool)
@@ -1050,9 +1053,7 @@ async def delete_oauth_session_by_provider(
     return True
 
 
-############################
-# AddUser
-############################
+# Add User
 
 
 @router.post('/add', response_model=AddUserResponse, response_model_exclude_none=True)
@@ -1125,9 +1126,7 @@ async def add_user(
         raise HTTPException(500, detail='An internal error occurred while adding the user.')
 
 
-############################
-# GetAdminDetails
-############################
+# Get Admin Details
 
 
 @router.get('/admin/details')
@@ -1158,9 +1157,7 @@ async def get_admin_details(
         raise HTTPException(400, detail=ERROR_MESSAGES.ACTION_PROHIBITED)
 
 
-############################
-# ToggleSignUp
-############################
+# Toggle Sign Up
 
 
 @router.get('/admin/config')
@@ -1192,6 +1189,8 @@ class AdminConfig(MfaConfigForm):
     AUTOMATION_MIN_INTERVAL: int | str | None = None
     ENABLE_AUTOMATIONS: bool
     ENABLE_CHANNELS: bool
+    ENABLE_COMMENTS: bool = False
+    ENABLE_NOTIFICATIONS: bool = True
     ENABLE_ENCRYPTED_CHANNELS: bool = False
     ENABLE_APPS: bool = False
     CHANNEL_MODEL_RESPONSE_MODE: str = 'thread'
@@ -1201,6 +1200,7 @@ class AdminConfig(MfaConfigForm):
     ENABLE_SKILL_LAZY_LOADING: bool = False
     SKILL_CONTENT_MAX_CHARS: int | None = Field(default=None, gt=0, strict=True)
     SKILL_PREVIEW_MAX_CHARS: int | None = Field(default=None, gt=0, strict=True)
+    VIEW_CHAT_MAX_CHARS: int | None = Field(default=None, gt=0, strict=True)
     ENABLE_NOTES: bool
     ENABLE_USER_WEBHOOKS: bool
     ENABLE_USER_STATUS: bool
@@ -1250,6 +1250,10 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('ui.enable_login_form', None)
     if 'ENABLE_ENCRYPTED_CHANNELS' not in form_data.model_fields_set:
         updates.pop('channels.encryption.enable', None)
+    if 'ENABLE_COMMENTS' not in form_data.model_fields_set:
+        updates.pop('comments.enable', None)
+    if 'ENABLE_NOTIFICATIONS' not in form_data.model_fields_set:
+        updates.pop('notifications.enable', None)
     if 'ENABLE_APPS' not in form_data.model_fields_set:
         updates.pop('apps.enable', None)
     if 'I18N' not in form_data.model_fields_set:
@@ -1260,6 +1264,8 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('skills.content_max_chars', None)
     if 'SKILL_PREVIEW_MAX_CHARS' not in form_data.model_fields_set:
         updates.pop('skills.preview_max_chars', None)
+    if 'VIEW_CHAT_MAX_CHARS' not in form_data.model_fields_set:
+        updates.pop('chats.view_max_chars', None)
     updates['ui.default_interface_settings'] = form_data.DEFAULT_INTERFACE_SETTINGS or {}
     updates['folders.max_file_count'] = int(form_data.FOLDER_MAX_FILE_COUNT) if form_data.FOLDER_MAX_FILE_COUNT else ''
     updates['automations.max_count'] = int(form_data.AUTOMATION_MAX_COUNT) if form_data.AUTOMATION_MAX_COUNT else ''
@@ -1349,9 +1355,7 @@ async def update_ldap_config(request: Request, form_data: LdapConfigForm, user=D
     return {'ENABLE_LDAP': await Config.get('ldap.enable')}
 
 
-############################
 # API Key
-############################
 
 
 class OAuthConfigForm(BaseModel):
@@ -1498,6 +1502,10 @@ async def get_oauth_config(request: Request, user=Depends(get_admin_user)):
 
 @router.post('/admin/config/oauth', response_model=OAuthConfigResponse)
 async def update_oauth_config(request: Request, form_data: OAuthConfigForm, user=Depends(get_admin_user)):
+    try:
+        oauth_client_kwargs(form_data.OAUTH_SCOPES, form_data.OAUTH_TIMEOUT, form_data.OAUTH_CODE_CHALLENGE_METHOD)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
     await Config.upsert(oauth_config_updates(form_data.model_dump(exclude_none=True)))
     return await get_oauth_config_values()
 
@@ -1569,9 +1577,7 @@ async def get_api_key(request: Request, user=Depends(get_current_user), db: Asyn
         raise HTTPException(404, detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
 
 
-############################
 # Token Exchange
-############################
 
 
 class TokenExchangeForm(BaseModel):
@@ -1591,7 +1597,9 @@ async def get_token_client_id(client, token: str) -> str | None:
             async with session.post(
                 introspection_endpoint,
                 data={'token': token, 'token_type_hint': 'access_token'},
-                auth=BasicAuth(client.client_id, client.client_secret or ''),
+                headers={
+                    'Authorization': encode_basic_auth(client.client_id, client.client_secret or '', encoding='latin1')
+                },
                 ssl=AIOHTTP_CLIENT_SESSION_SSL,
             ) as r:
                 if r.status != 200:

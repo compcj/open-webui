@@ -896,7 +896,7 @@ def actual_ollama_converter():
     node = next(
         n
         for n in ast.parse(path.read_text(encoding='utf-8')).body
-        if isinstance(n, ast.FunctionDef) and n.name == 'convert_messages_openai_to_ollama'
+        if isinstance(n, ast.FunctionDef) and n.name == 'convert_chat_completions_messages_to_ollama'
     )
     namespace = {'JSONCodec': json}
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), namespace)
@@ -973,6 +973,7 @@ class ManualNativeRoundtripTests(IsolatedCase):
                 {
                     'convert_output_to_messages',
                     'get_provider_function',
+                    'merge_tool_call_batches',
                     'reconcile_tool_pairs',
                     'get_paired_tool_call_ids',
                 },
@@ -994,7 +995,7 @@ class ManualNativeRoundtripTests(IsolatedCase):
             exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
             for name in names:
                 setattr(module, name, namespace[name])
-        payload_module.convert_messages_openai_to_ollama = actual_ollama_converter()
+        payload_module.convert_chat_completions_messages_to_ollama = actual_ollama_converter()
         raw = [
             {'id': 'old', 'role': 'user', 'content': 'original question ' * 500},
             {

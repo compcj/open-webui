@@ -150,9 +150,7 @@ def get_redis_client(async_mode: bool = False) -> Any | None:
         return None
 
 
-# ---------------------------------------------------------------------------
 # Sentinel proxy with automatic failover retry
-# ---------------------------------------------------------------------------
 
 
 class SentinelRedisProxy:
@@ -215,7 +213,7 @@ class SentinelRedisProxy:
             exc,
         )
 
-    # -- async wrappers -----------------------------------------------------
+    # Async wrappers
 
     def _wrap_async(self, name: str, attr: Any) -> Any:
         if inspect.isasyncgenfunction(attr):
@@ -270,7 +268,7 @@ class SentinelRedisProxy:
 
         return wrapper
 
-    # -- sync wrapper -------------------------------------------------------
+    # Sync wrapper
 
     def _wrap_sync(self, name: str) -> Any:
         proxy = self
@@ -293,9 +291,7 @@ class SentinelRedisProxy:
         return wrapper
 
 
-# ---------------------------------------------------------------------------
 # Connection factory
-# ---------------------------------------------------------------------------
 
 
 def _socket_options() -> dict[str, Any]:

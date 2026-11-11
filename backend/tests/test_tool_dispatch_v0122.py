@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from open_webui.utils.tool_calling import parse_arguments
 
 from test_web_tool_citations import BACKEND, load_functions
 from test_streaming_tool_call_dedup import runtime as stream_runtime
@@ -14,7 +15,7 @@ from test_image_tool_context import runtime as output_runtime
 
 
 def dispatch_namespace():
-    ns = {'JSONCodec': json}
+    ns = {'JSONCodec': json, 'parse_arguments': parse_arguments}
     tree = ast.parse((BACKEND / 'utils/tool_search.py').read_text(encoding='utf-8'))
     nodes = [
         node
@@ -142,7 +143,7 @@ async def test_stream_dispatch_approval_uses_target_and_replay_keeps_wrapper(str
     assert saved['name'] == 'write_record'
     assert saved['provider_function'] == original
     assert saved['tool_schema_compatibility'] == 'gemini'
-    assert ns['stage_ask_user_tool_calls'].call_args.args[0][0]['function']['name'] == 'write_record'
+    assert ns['stage_ask_user_tool_calls'].call_args.args[0] == []
 
     saved['status'] = 'completed'
     ns['output'].append(

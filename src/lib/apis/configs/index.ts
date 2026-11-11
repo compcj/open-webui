@@ -75,7 +75,15 @@ export const exportConfig = async (token: string) => {
 	return res;
 };
 
-export const getConnectionsConfig = async (token: string) => {
+export type ConnectionsConfig = {
+	ENABLE_DIRECT_CONNECTIONS?: boolean;
+	ENABLE_BASE_MODELS_CACHE?: boolean;
+	ENABLE_DIRECT_INTEGRATIONS?: boolean;
+	ENABLE_TETHER?: boolean;
+	TERMINAL_PREVIEW_BASE_URL?: string;
+};
+
+export const getConnectionsConfig = async (token: string): Promise<ConnectionsConfig | null> => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/connections`, {
@@ -102,7 +110,7 @@ export const getConnectionsConfig = async (token: string) => {
 	return res;
 };
 
-export const setConnectionsConfig = async (token: string, config: object) => {
+export const setConnectionsConfig = async (token: string, config: ConnectionsConfig) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/connections`, {

@@ -3,8 +3,9 @@
 import asyncio
 import copy
 import logging
+import sys
 import json
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -13,13 +14,17 @@ import socketio
 from redis.exceptions import RedisError
 
 from test_auth_revocation import load_functions
+from open_webui.utils.chat_id import is_temporary_chat_id
 
 
 @pytest.fixture
-def runtime():
+def runtime(monkeypatch):
     sessions = {'old': {'id': 'author'}, 'new': {'id': 'author'}}
     state = {'access': True, 'author': 'author', 'authenticated': True}
     chat = SimpleNamespace(user_id='owner')
+    storage = ModuleType('open_webui.utils.chat')
+    storage.get_temporary_chat = AsyncMock(return_value=None)
+    monkeypatch.setitem(sys.modules, storage.__name__, storage)
     ns = {
         'asyncio': asyncio,
         'socketio': socketio,
@@ -32,7 +37,7 @@ def runtime():
         'REDIS': None,
         'REDIS_EVENT_CHANNEL': 'test:interaction',
         'INTERACTION_AUTH_PENDING': {},
-        'INTERACTION_AUTH_TIMEOUT': 0.05,
+        'INTERACTION_AUTH_TIMEOUT': 0.2,
         'dumps_bytes': lambda value: json.dumps(value).encode(),
         'SESSION_POOL': sessions,
         'get_socket_session_user': AsyncMock(
@@ -41,6 +46,8 @@ def runtime():
         'get_user_id_from_session_pool': lambda sid: (sessions.get(sid) or {}).get('id'),
         'get_user_chat_session_id': lambda *args: 'new',
         'is_saved_chat_id': lambda cid: cid == 'chat',
+        'is_temporary_chat_id': is_temporary_chat_id,
+        'get_redis_client': lambda **kwargs: None,
         'Users': SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='author'))),
         'Chats': SimpleNamespace(
             get_accessible_chat_by_id=AsyncMock(side_effect=lambda *args, **kwargs: chat if state['access'] else None),
@@ -59,7 +66,7 @@ def runtime():
         ns,
     )
     info = {'session_id': 'old', 'chat_id': 'chat', 'message_id': 'reply', 'user_id': 'author'}
-    return SimpleNamespace(ns=ns, sessions=sessions, state=state, info=info)
+    return SimpleNamespace(ns=ns, sessions=sessions, state=state, info=info, storage=storage)
 
 
 @pytest.mark.asyncio
@@ -115,7 +122,8 @@ async def test_temporary_interaction_disconnect_still_cancels(runtime):
     runtime.info['chat_id'] = 'temporary:old'
 
     async def call(*args, **kwargs):
-        runtime.sessions.pop('old')
+        runtime.sessions.pop('old', None)
+        runtime.storage.get_temporary_chat.return_value = {'user_id': 'author', 'session_id': 'new'}
         await asyncio.Future()
 
     runtime.ns['sio'].call.side_effect = call

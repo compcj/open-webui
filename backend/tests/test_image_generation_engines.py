@@ -1,6 +1,7 @@
 import importlib.util
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -9,6 +10,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+
+from test_web_tool_citations import load_functions
 
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
@@ -95,6 +98,7 @@ def image_router(monkeypatch, tmp_path):
     class ErrorMessages:
         ACCESS_PROHIBITED = 'Access prohibited'
         INVALID_URL = 'Invalid URL'
+        COMPRESSED_RESPONSE = 'Compressed response'
 
         @staticmethod
         def DEFAULT(error, fallback='Error'):
@@ -181,11 +185,18 @@ def image_router(monkeypatch, tmp_path):
     install_module(monkeypatch, 'open_webui.internal.db', get_async_session=lambda: None)
     install_module(monkeypatch, 'open_webui.models.chats', Chats=SimpleNamespace(insert_chat_files=AsyncMock()))
     install_module(monkeypatch, 'open_webui.models.config', Config=Config)
-    install_module(
+    web_utils = install_module(
         monkeypatch,
         'open_webui.retrieval.web.utils',
         get_ssrf_safe_session=AsyncMock(),
         validate_url=lambda url: None,
+        ERROR_MESSAGES=ErrorMessages,
+        log=logging.getLogger(__name__),
+    )
+    load_functions(
+        web_utils.__dict__,
+        'retrieval/web/utils.py',
+        {'is_identity_encoding', 'assert_identity_encoding'},
     )
     install_module(
         monkeypatch,

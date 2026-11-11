@@ -190,11 +190,16 @@ async def fetch_url_source(request, url, max_bytes):
 
 
 async def terminal_access(request, user, metadata):
+    from open_webui.models.config import Config
     from open_webui.routers.terminals import _http_terminal_context
 
-    # This resolver accepts only administrator-stored connection IDs and rechecks
-    # connection, actor, saved-chat access and chat/automation context availability.
-    return await _http_terminal_context(metadata.get('terminal_id'), request, user, metadata, require_context=True)
+    terminal_id = metadata.get('terminal_id')
+    if not isinstance(terminal_id, str) or not terminal_id or terminal_id.startswith('tether:'):
+        raise ImportSourceError('Terminal import requires a saved administrator terminal connection')
+    connections = await Config.get('terminal_server.connections', []) or []
+    if not any(connection.get('id') == terminal_id for connection in connections):
+        raise ImportSourceError('Terminal import requires a saved administrator terminal connection')
+    return await _http_terminal_context(terminal_id, request, user, metadata, require_context=True)
 
 
 async def fetch_terminal_source(request, user, metadata, path, max_bytes, binding=None):

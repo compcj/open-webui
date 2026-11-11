@@ -9,6 +9,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from urllib.parse import unquote, urlsplit
 
+import aiohttp
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,7 +76,11 @@ def api(monkeypatch):
         'server_type': 'orchestrator',
         'config': {'contexts': {'chat': {'context_id': 'chat_id'}}},
     }
-    config = SimpleNamespace(get=AsyncMock(return_value=[connection]))
+    config = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=lambda key, default=None: [connection] if key == 'terminal_server.connections' else default
+        )
+    )
     # Bind the storage double to the real table API so deleted methods cannot
     # silently keep HTTP and WebSocket tests passing.
     table = next(
@@ -94,11 +99,22 @@ def api(monkeypatch):
             raise HTTPException(401, 'Not authenticated')
         return SimpleNamespace(id='user-2' if identity == 'other' else 'user-1', role='user')
 
+    async def get_terminal_connections(user):
+        return await config.get('terminal_server.connections', [])
+
+    def get_terminal_client(url, user_id, **kwargs):
+        return aiohttp.ClientSession(**kwargs)
+
     for name, values in {
         'open_webui.config': {
             'TERMINAL_PROXY_HEADERS': {'Content-Type': 'text/html', 'content-security-policy': 'unsafe'}
         },
-        'open_webui.env': {'AIOHTTP_CLIENT_SESSION_SSL': True, 'ENABLE_TOOL_SERVERS': True, 'WEBUI_SECRET_KEY': SECRET},
+        'open_webui.env': {
+            'AIOHTTP_CLIENT_SESSION_SSL': True,
+            'AIOHTTP_CLIENT_TIMEOUT_TERMINAL': 5,
+            'ENABLE_TOOL_SERVERS': True,
+            'WEBUI_SECRET_KEY': SECRET,
+        },
         'open_webui.events': {'EVENTS': SimpleNamespace(), 'publish_event': AsyncMock()},
         'open_webui.models.config': {'Config': config},
         'open_webui.models.chats': {'Chats': chats},
@@ -107,6 +123,15 @@ def api(monkeypatch):
         'open_webui.utils.auth': {
             'get_verified_user': verified,
             'get_verified_user_by_token': AsyncMock(return_value=None),
+        },
+        'open_webui.utils.browser': {
+            'browser_access': AsyncMock(side_effect=AssertionError('Unexpected browser relay')),
+            'browser_ticket': AsyncMock(side_effect=AssertionError('Unexpected browser ticket')),
+        },
+        'open_webui.utils.tether': {
+            'RelayInterrupted': type('RelayInterrupted', (RuntimeError,), {}),
+            'get_terminal_connections': get_terminal_connections,
+            'get_terminal_client': get_terminal_client,
         },
     }.items():
         module = ModuleType(name)

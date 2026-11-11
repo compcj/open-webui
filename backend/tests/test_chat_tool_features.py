@@ -23,7 +23,9 @@ def extract(path, names, namespace):
     nodes = [
         node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
     ]
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+    future = ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)
+    module = ast.fix_missing_locations(ast.Module(body=[future, *nodes], type_ignores=[]))
+    exec(compile(module, str(path), 'exec'), namespace)
 
 
 class ChatToolFeaturesTests(unittest.TestCase):
@@ -49,6 +51,7 @@ class ChatToolFeaturesTests(unittest.TestCase):
         self.env = modules['open_webui.env']
         self.namespace = {
             'Request': object,
+            'ENABLE_TOOLS': False,
             'Config': self.config,
             'has_permission': self.permission,
             'is_saved_chat_id': lambda value: False,
@@ -79,7 +82,11 @@ class ChatToolFeaturesTests(unittest.TestCase):
             self.helper = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.helper)
             self.namespace.update(vars(self.helper))
-        extract(BACKEND / 'utils/tools.py', ['get_attached_knowledge', 'get_builtin_tools'], self.namespace)
+        extract(
+            BACKEND / 'utils/tools.py',
+            ['get_attached_knowledge', 'get_builtin_tools', 'is_file_context_enabled'],
+            self.namespace,
+        )
         self.user = {'id': 'user-1', 'role': 'user', 'settings': {'ui': {'memory': True}}}
         self.model = {'info': {'meta': {}}}
         self.metadata = {}
@@ -88,7 +95,7 @@ class ChatToolFeaturesTests(unittest.TestCase):
         return asyncio.run(
             self.namespace['get_builtin_tools'](
                 SimpleNamespace(state=SimpleNamespace()),
-                {'__user__': self.user, '__metadata__': self.metadata},
+                {'__user__': self.user, '__metadata__': {'session_id': 'session', **self.metadata}},
                 features,
                 self.model,
                 note_chat,
@@ -254,7 +261,7 @@ class ChatToolFeaturesTests(unittest.TestCase):
     def test_memory_context_skips_database_when_disabled(self):
         self.namespace['Memories'] = SimpleNamespace(get_memories_by_user_id=AsyncMock())
         self.namespace['get_content_from_message'] = lambda message: message.get('content', '')
-        extract(BACKEND / 'utils/memory.py', ['add_memory_context'], self.namespace)
+        extract(BACKEND / 'utils/memory.py', ['add_memory_context', 'recall_memories'], self.namespace)
         form = {'messages': [{'role': 'user', 'content': 'Remember this'}]}
         user = SimpleNamespace(id='user-1', model_dump=lambda: self.user)
         self.user['settings']['ui']['memory'] = False
@@ -434,7 +441,10 @@ class ChatToolFeaturesTests(unittest.TestCase):
             id='attached-note',
             user_id='another-user',
             title='Private',
-            data={'content': {'md': 'secret'}},
+            data={
+                'content': {'md': 'secret'},
+                'pages': [{'id': 'page', 'title': 'Private', 'content': {'md': 'secret'}}],
+            },
             updated_at=0,
             created_at=0,
         )
@@ -445,6 +455,7 @@ class ChatToolFeaturesTests(unittest.TestCase):
                 'Notes': SimpleNamespace(get_note_by_id=AsyncMock(return_value=note)),
                 'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
                 'JSONCodec': json,
+                'get_page': lambda data, page_id: data['pages'][0],
                 'log': logging.getLogger(__name__),
             }
         )
@@ -523,6 +534,8 @@ class ChatToolFeaturesTests(unittest.TestCase):
         namespace = {
             'model': self.model,
             'form_data': form,
+            'metadata': {},
+            'is_file_context_enabled': self.namespace['is_file_context_enabled'],
             'chat_completion_files_handler': files_handler,
             'request': None,
             'extra_params': {},

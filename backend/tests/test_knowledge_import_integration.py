@@ -254,8 +254,13 @@ async def import_scenario(ns, request, owner, base, data, vectors):
     origin = f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}'
     connection['url'] = origin
     await Config.upsert({'terminal_server.connections': [connection]})
+
+    async def get_terminal_connections(user):
+        return await Config.get('terminal_server.connections', [])
+
     terminal_ns = {
         'Config': Config,
+        'get_terminal_connections': get_terminal_connections,
         'ENABLE_TOOL_SERVERS': True,
         'HTTPException': HTTPException,
         'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from test_web_tool_citations import BACKEND, load_functions
+from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.temporary_tool_execution import commit_temporary_results
 
 
@@ -480,7 +481,7 @@ async def test_reader_binds_server_chat_branch_and_user_and_returns_exact_json(r
 
 
 def test_ollama_keeps_private_provenance_until_final_dispatch(runtime):
-    load_functions(runtime, 'utils/payload.py', {'convert_messages_openai_to_ollama'})
+    load_functions(runtime, 'utils/payload.py', {'convert_chat_completions_messages_to_ollama'})
     ref = {'message_id': 'assistant-1', 'output_id': 'result-a', 'text': 'exact'}
     messages = [
         {
@@ -492,7 +493,7 @@ def test_ollama_keeps_private_provenance_until_final_dispatch(runtime):
             '_context_original_key': 'raw-key',
         }
     ]
-    converted = runtime['convert_messages_openai_to_ollama'](messages)
+    converted = runtime['convert_chat_completions_messages_to_ollama'](messages)
     assert converted[0].get('_tool_result_refs') == [ref]
     assert converted[0].get('_context_original_key') == 'raw-key'
 
@@ -560,6 +561,7 @@ async def test_nonnative_execution_persistence_injection_and_replay_share_exact_
     tools = {'web': {'spec': {'name': 'web', 'parameters': {'properties': {}}}, 'callable': actual_tool}}
     ns.update(
         uuid4=uuid4,
+        is_saved_chat_id=is_saved_chat_id,
         get_task_model_id=lambda *args: 'task-model',
         TASKS=SimpleNamespace(FUNCTION_CALLING='function_calling'),
         escape=escape,
@@ -593,11 +595,13 @@ async def test_nonnative_execution_persistence_injection_and_replay_share_exact_
     load_functions(
         ns, 'utils/misc.py', {'add_or_update_system_message', 'add_or_update_user_message', 'update_message_content'}
     )
+    load_functions(ns, 'utils/tools.py', {'get_updated_tool_function'})
     load_functions(
         ns,
         'utils/middleware.py',
         {
             'chat_completion_tools_handler',
+            'execute_tool_call',
             'persist_injected_tool_results',
             'get_source_context',
             'get_tool_source_context',
@@ -687,6 +691,9 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
         output=output,
         full_output=lambda: output,
         current_usage={},
+        admitted_tool_output_ids=[item['id'] for item in output if item.get('type') == 'function_call_output'],
+        stop_reason=None,
+        max_tool_call_iterations=None,
         new_tool_output_ids=[item['id'] for item in output if item.get('type') == 'function_call_output'],
         form_data={
             'model': 'model',

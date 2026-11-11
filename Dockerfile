@@ -39,7 +39,8 @@ RUN apk add --no-cache git
 
 COPY package.json package-lock.json ./
 COPY scripts/npm-ci.sh scripts/npm-ci.sh
-RUN sh scripts/npm-ci.sh
+# the frontend build never uses onnxruntime-node's CUDA binaries
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip sh scripts/npm-ci.sh
 
 COPY . .
 # Keep the compiler heap configurable without adding Node settings to the runtime image.
@@ -197,6 +198,7 @@ RUN if [ "$USE_OLLAMA" = "true" ]; then \
     date +%s > /tmp/ollama_build_hash && \
     echo "Cache broken at timestamp: `cat /tmp/ollama_build_hash`" && \
     curl -fsSL https://ollama.com/install.sh | sh && \
+    command -v ollama && \
     rm -rf /var/lib/apt/lists/*; \
     fi
 

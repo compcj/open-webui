@@ -1,6 +1,9 @@
 import { OLLAMA_API_BASE_URL } from '$lib/constants';
 
-export const verifyOllamaConnection = async (token: string = '', connection: dict = {}) => {
+export const verifyOllamaConnection = async (
+	token: string = '',
+	connection: Record<string, unknown> = {}
+) => {
 	let error = null;
 
 	const res = await fetch(`${OLLAMA_API_BASE_URL}/verify`, {
@@ -511,16 +514,3 @@ export const uploadModel = async (token: string, file: File, urlIdx: string | nu
 	}
 	return res;
 };
-
-// export const pullModel = async (token: string, tagName: string) => {
-// 	return await fetch(`${OLLAMA_API_BASE_URL}/pull`, {
-// 		method: 'POST',
-// 		headers: {
-// 			'Content-Type': 'text/event-stream',
-// 			Authorization: `Bearer ${token}`
-// 		},
-// 		body: JSON.stringify({
-// 			name: tagName
-// 		})
-// 	});
-// };

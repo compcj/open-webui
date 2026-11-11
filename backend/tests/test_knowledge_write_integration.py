@@ -110,6 +110,7 @@ async def isolated_scenario(import_scenario=None):
             'audio.stt.supported_content_types': [],
             'rag.content_extraction_engine': '',
             'rag.enable_hybrid_search': False,
+            'rag.embedding_query_prefix': 'synthetic-query-prefix',
         }
     )
 
@@ -315,6 +316,7 @@ async def isolated_scenario(import_scenario=None):
             'external_knowledge_error',
             'add_file_to_knowledge_by_id',
             '_add_file_to_knowledge',
+            'check_knowledge_upload_limits',
         },
     )
     knowledge_router = ModuleType('open_webui.routers.knowledge')
@@ -350,7 +352,9 @@ async def isolated_scenario(import_scenario=None):
         owner.id, KnowledgeForm(name='Shared KB', description='', access_grants=[])
     )
     assert base and shared
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(EMBEDDING_FUNCTION=embedding_function)))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(EMBEDDING_FUNCTION=embedding_function)), client=None
+    )
 
     # Attached targets beyond the default global page must paginate within scope.
     pager = await Users.insert_new_user('pager', 'Synthetic Pager', 'pager@example.test', role='user')

@@ -159,6 +159,7 @@ async def test_context_usage_persists_accounting_without_a_status_notice():
         sio=sio,
         WEBSOCKET_MANAGER='',
         is_saved_chat_id=lambda id: id == 'chat',
+        is_temporary_chat_id=lambda id: False,
     )
     chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
@@ -380,6 +381,9 @@ async def test_accounting_atomic_write_reload_preserves_originals_and_rejects_st
             ),
             namespace,
         )
+        load_functions(
+            namespace, 'models/chat_messages.py', {'agent_output_private_fields', 'strip_agent_output_journal'}
+        )
         table._chat_transaction = lambda id: namespace['_chat_transaction'](table, id)
         table.merge_history = namespace['merge_history']
         table._clean_null_bytes = lambda value: value
@@ -439,6 +443,7 @@ async def test_failed_accounting_write_reports_usage_error_without_status_or_ori
         sio=sio,
         WEBSOCKET_MANAGER='',
         is_saved_chat_id=lambda id: id == 'chat',
+        is_temporary_chat_id=lambda id: False,
     )
     chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
@@ -459,6 +464,7 @@ def test_assistant_metadata_updates_preserve_server_accounting_snapshot():
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == 'upsert_message_to_history')
     method.decorator_list = []
     namespace = {'ChatTable': SimpleNamespace(_add_child_id_to_parent=lambda *args: None), 'time': time}
+    load_functions(namespace, 'models/chat_messages.py', {'agent_output_private_fields', 'strip_agent_output_journal'})
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), namespace)
     accounting = {'model': {'recorded_at': 2, 'last_tool_batch': {'batch_id': 'silent'}}}
     history = {'messages': {'a': {'content': 'original', 'meta': {'tool_budget_accounting': accounting}}}}
@@ -520,6 +526,7 @@ def test_browser_history_save_preserves_server_accounting_without_client_copy():
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == 'merge_history')
     method.decorator_list = []
     namespace = {'copy': copy}
+    load_functions(namespace, 'models/chat_messages.py', {'agent_output_private_fields', 'strip_agent_output_journal'})
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), namespace)
     accounting = {'model': {'recorded_at': 2, 'last_tool_batch': {'batch_id': 'silent'}}}
     existing = {
@@ -547,6 +554,7 @@ def test_browser_history_save_preserves_server_accounting_without_client_copy():
 @pytest.mark.parametrize('interleaving', ['before', 'during', 'reused'])
 async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tmp_path, writer_kind, interleaving):
     from open_webui.utils import context_compaction_v2 as v2
+    from open_webui.utils.session_records import recorded_timestamp
 
     base = declarative_base()
 
@@ -630,6 +638,7 @@ async def test_actual_normalized_writer_keeps_newer_accounting_at_final_write(tm
         ChatMessageModel=SimpleNamespace(model_validate=lambda row: row),
         get_async_db_context=context,
         get_usage=lambda data: None,
+        recorded_timestamp=recorded_timestamp,
         log=__import__('logging').getLogger(__name__),
         flag_modified=flag_modified,
         read_snapshot_in_session=read_snapshot,

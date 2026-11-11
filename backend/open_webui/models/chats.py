@@ -6,22 +6,35 @@ import copy
 from contextlib import asynccontextmanager
 from copy import deepcopy
 import logging
+import os
 import re
 import time
 import uuid
 from typing import Any, Literal
 
+from fastapi import HTTPException
+
 # local imports
+from open_webui.models.chat_views import ChatViewState
+from open_webui.models.notifications import emit_changes
 from open_webui.env import ENABLE_ADMIN_CHAT_ACCESS
+from open_webui.models.comments import delete_resource_comments
 from open_webui.internal.db import Base, JSONField, get_async_db, get_async_db_context
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.automations import AutomationRun
-from open_webui.models.chat_messages import ChatMessage, ChatMessages
+from open_webui.models.chat_messages import (
+    AGENT_OUTPUT_INCOMPLETE_ERROR,
+    ChatMessage,
+    ChatMessages,
+    UNCONFIRMED_AGENT_STATES,
+    strip_agent_output_journal,
+)
 from open_webui.models.chat_context_checkpoints import ChatContextCheckpoint, read_snapshot_in_session
 from open_webui.models.chat_tool_results import ChatToolResult, ChatToolResultContext
 from open_webui.models.chat_tool_result_selections import ChatToolResultSelection
 from open_webui.models.folders import Folders
 from open_webui.models.tags import Tag, TagModel, Tags
+from open_webui.utils.chat_context_copy import copy_chat_without_context_state
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_output_text, sanitize_data_for_db, sanitize_text_for_db
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -46,12 +59,29 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy.sql import case, exists
+from sqlalchemy.sql import case
 from sqlalchemy.sql.expression import bindparam
 
 log = logging.getLogger(__name__)
 ACTIVE_CHAT_GAP_SECONDS = 30 * 60
 CHAT_SEARCH_FILTER_PREFIXES = ('tag:', 'folder:', 'pinned:', 'archived:', 'shared:')
+
+
+def _agent_output_limit(name: str, default: int) -> int:
+    try:
+        limit = int(os.getenv(name, default))
+    except ValueError:
+        limit = 0
+    if limit < 1:
+        raise ValueError(f'{name} must be a positive integer')
+    return limit
+
+
+AGENT_NATIVE_OUTPUT_MAX_BYTES = _agent_output_limit('AGENT_NATIVE_OUTPUT_MAX_BYTES', 64 * 1024 * 1024)
+AGENT_NATIVE_OUTPUT_MAX_EVENTS = _agent_output_limit('AGENT_NATIVE_OUTPUT_MAX_EVENTS', 65_536)
+# One frame can be retained above the normal limit, bounded by the carrier.
+AGENT_NATIVE_OUTPUT_RESERVE_BYTES = 20 * 1024 * 1024
+AGENT_STOP_ATTEMPT_TTL_SECONDS = 60
 
 
 def chat_search_content_query(text: str) -> str:
@@ -60,7 +90,52 @@ def chat_search_content_query(text: str) -> str:
 
 
 def chat_search_terms(text: str) -> list[str]:
-    return list(dict.fromkeys(re.findall(r'[a-z0-9]+', text.lower())))
+    return list(dict.fromkeys(re.findall(r'[a-z0-9]+', text.lower())))[:12]
+
+
+def chat_message_list(chat: dict) -> list:
+    if not isinstance(chat, dict):
+        return []
+    history = chat.get('history')
+    messages = history.get('messages') if isinstance(history, dict) else None
+    if not isinstance(messages, (dict, list)) or not messages:
+        messages = chat.get('messages')
+    if isinstance(messages, dict):
+        return list(messages.values())
+    return messages if isinstance(messages, list) else []
+
+
+def chat_search_snippet(chat: dict, search_text: str, max_length: int = 200) -> str | None:
+    search_text = chat_search_content_query(search_text)
+    if not search_text:
+        return None
+
+    messages = chat_message_list(chat)
+
+    needles = list(dict.fromkeys([search_text, *chat_search_terms(search_text)]))
+    for needle in needles:
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+
+            content = message.get('content')
+            if not isinstance(content, str):
+                continue
+
+            index = content.lower().find(needle)
+            if index == -1:
+                continue
+
+            start = max(index - max_length // 2, 0)
+            end = min(start + max_length, len(content))
+            if index + len(needle) > end:
+                end = min(index + len(needle), len(content))
+                start = max(end - max_length, 0)
+
+            snippet = ' '.join(content[start:end].split())
+            return f'{"..." if start else ""}{snippet}{"..." if end < len(content) else ""}'
+
+    return None
 
 
 def chat_search_message_content_match_sql(dialect_name: str, key: str) -> str:
@@ -70,12 +145,14 @@ def chat_search_message_content_match_sql(dialect_name: str, key: str) -> str:
             EXISTS (
                 SELECT 1
                 FROM json_each(Chat.chat, '$.history.messages') AS history_message
-                WHERE LOWER(history_message.value->>'content') LIKE '%' || :{key} || '%'
+                WHERE LOWER(CASE WHEN history_message.type = 'object'
+                    THEN history_message.value->>'content' END) LIKE '%' || :{key} || '%'
             )
             OR EXISTS (
                 SELECT 1
                 FROM json_each(Chat.chat, '$.messages') AS legacy_message
-                WHERE LOWER(legacy_message.value->>'content') LIKE '%' || :{key} || '%'
+                WHERE LOWER(CASE WHEN legacy_message.type = 'object'
+                    THEN legacy_message.value->>'content' END) LIKE '%' || :{key} || '%'
             )
         )
         """
@@ -93,13 +170,15 @@ def chat_search_message_content_match_sql(dialect_name: str, key: str) -> str:
             )
             OR EXISTS (
                 SELECT 1
-                FROM json_each(Chat.chat#>'{{history,messages}}') AS history_message
+                FROM json_each(CASE WHEN json_typeof(Chat.chat#>'{{history,messages}}') = 'object'
+                    THEN Chat.chat#>'{{history,messages}}' ELSE '{{}}'::json END) AS history_message
                 WHERE json_typeof(history_message.value->'content') = 'string'
                 AND LOWER(history_message.value->>'content') LIKE '%' || :{key} || '%'
             )
             OR EXISTS (
                 SELECT 1
-                FROM json_array_elements(Chat.chat->'messages') AS legacy_message
+                FROM json_array_elements(CASE WHEN json_typeof(Chat.chat->'messages') = 'array'
+                    THEN Chat.chat->'messages' ELSE '[]'::json END) AS legacy_message
                 WHERE json_typeof(legacy_message->'content') = 'string'
                 AND LOWER(legacy_message->>'content') LIKE '%' || :{key} || '%'
             )
@@ -251,9 +330,7 @@ class ChatFileModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-####################
 # Forms
-####################
 
 
 class ChatForm(BaseModel):
@@ -312,6 +389,7 @@ class ChatTitleIdResponse(BaseModel):
     last_read_at: int | None = None
     snippet: str | None = None
     active: bool = False
+    pending_approval: bool = False
     archived: bool = False
 
 
@@ -433,9 +511,13 @@ class ChatTable:
             if not message:
                 yield None
                 return
+            if 'meta' in message:
+                message['meta'] = strip_agent_output_journal(message['meta'], keep_retention_state=True)
             message = deepcopy(message)
             yield message
             message = self._clean_null_bytes(message)
+            if 'meta' in message:
+                message['meta'] = strip_agent_output_journal(message['meta'])
             history.setdefault('messages', {})[message_id] = message
             chat.chat = {**(chat.chat or {}), 'history': history}
             flag_modified(chat, 'chat')
@@ -446,6 +528,277 @@ class ChatTable:
     def _clean_null_bytes(self, obj):
         """Recursively remove null bytes from strings in dict/list structures."""
         return sanitize_data_for_db(obj)
+
+    async def claim_agent_execution(self, chat_id: str, message_id: str, execution: dict) -> bool:
+        """Persist a single starting execution for this chat before remote effects."""
+        async with self._chat_transaction(chat_id) as (session, chat):
+            if chat is None or chat.archived or await ChatMessages.get_unconfirmed_agent_execution(chat_id, db=session):
+                return False
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}', with_for_update=True)
+            if (
+                row is None
+                or row.chat_id != chat_id
+                or row.role != 'assistant'
+                or not execution.get('user_id')
+                or row.user_id != execution.get('user_id')
+                or (row.meta or {}).get('agent_execution')
+                or not execution.get('task_id')
+            ):
+                return False
+            row.meta = {
+                **(row.meta or {}),
+                'agent_execution': {
+                    **execution,
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'state': 'starting',
+                    'output_published': False,
+                    'remote_completed': False,
+                    'output_journal_version': 1,
+                    'output_journal': {'frames': [], 'bytes': 0},
+                },
+            }
+            return True
+
+    async def get_agent_approval_output(self, chat_id: str, message_id: str, task_id: str) -> list | None:
+        # Approval polling needs only the owning reply's normalized output column.
+        async with get_async_db_context() as session:
+            record = ChatMessage.meta['agent_execution']
+            result = await session.execute(
+                select(ChatMessage.output).where(
+                    ChatMessage.id == f'{chat_id}-{message_id}',
+                    ChatMessage.chat_id == chat_id,
+                    record['task_id'].as_string() == task_id,
+                    record['stop_recovering'].as_boolean().is_not(True),
+                )
+            )
+            row = result.one_or_none()
+            return (row[0] or []) if row is not None else None
+
+    async def get_agent_execution(self, chat_id: str, message_id: str) -> dict | None:
+        # Read only normalized server-owned state, never the client-editable history.
+        async with get_async_db_context() as session:
+            execution = await session.scalar(
+                select(ChatMessage.meta['agent_execution']).where(
+                    ChatMessage.chat_id == chat_id, ChatMessage.id == f'{chat_id}-{message_id}'
+                )
+            )
+        return self._agent_execution_state(execution)
+
+    @staticmethod
+    def _agent_execution_state(record: dict | None) -> dict | None:
+        if record is None:
+            return None
+        state = strip_agent_output_journal({'agent_execution': record}, keep_retention_state=True)['agent_execution']
+        if record.get('output_journal_version') == 1:
+            state = {**state, 'output_cursor': len(record['output_journal']['frames'])}
+        return state
+
+    async def acquire_agent_stop(
+        self, chat_id: str, message_id: str, task_id: str, attempt_id: str, *, recover_unpublished: bool = False
+    ) -> dict | None:
+        # Live cleanup and recovery share one DELETE attempt. Expiry permits
+        # another attempt, while completion still requires executor proof.
+        async with self._chat_transaction(chat_id) as (session, chat):
+            if chat is None:
+                return None
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}', with_for_update=True)
+            record = (row.meta or {}).get('agent_execution') if row and row.chat_id == chat_id else None
+            if not record or record.get('task_id') != task_id or record['state'] == 'completed':
+                return None
+            attempt = record.get('stop_attempt') or {}
+            now = time.time()
+            if attempt.get('id') != attempt_id and attempt.get('expires_at', 0) > now:
+                return None
+            recovering = record.get('stop_recovering') is True
+            if record.get('output_journal_version') == 1 and record.get('output_published') is not True:
+                if not recover_unpublished or not record.get('session_id'):
+                    return None
+                recovering = True
+            updated = {
+                **record,
+                'state': 'stopping',
+                'stop_attempt': {'id': attempt_id, 'expires_at': now + AGENT_STOP_ATTEMPT_TTL_SECONDS},
+            }
+            if recovering:
+                updated['stop_recovering'] = True
+            row.meta = {**row.meta, 'agent_execution': updated}
+            return self._agent_execution_state(updated)
+
+    async def append_agent_output_frame(
+        self,
+        chat_id: str,
+        message_id: str,
+        task_id: str,
+        session_id: str,
+        sequence: int,
+        data: str,
+        *,
+        stop_attempt_id: str | None = None,
+    ) -> Literal['stored', 'capacity'] | None:
+        # Retain the exact received frame before acknowledging it to the terminal.
+        if not session_id or type(sequence) is not int or sequence < 1 or not isinstance(data, str):
+            return None
+        frame = {'sequence': sequence, 'data': data}
+        frame_size = len(data.encode('utf-8'))
+        async with self._chat_transaction(chat_id) as (session, chat):
+            if chat is None:
+                return None
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}', with_for_update=True)
+            record = (row.meta or {}).get('agent_execution') if row and row.chat_id == chat_id else None
+            if (
+                not record
+                or record.get('task_id') != task_id
+                or record.get('session_id') != session_id
+                or record['state'] not in UNCONFIRMED_AGENT_STATES
+                or record.get('output_published') is True
+                or record.get('output_journal_version') != 1
+            ):
+                return None
+            journal = record['output_journal']
+            frames = journal['frames']
+            if record.get('stop_recovering') and (
+                not stop_attempt_id or (record.get('stop_attempt') or {}).get('id') != stop_attempt_id
+            ):
+                return None
+            if sequence <= len(frames):
+                if frames[sequence - 1] != frame:
+                    return None
+                return 'capacity' if record.get('output_capacity_reached') and sequence == len(frames) else 'stored'
+            if sequence != len(frames) + 1:
+                return None
+
+            size = journal['bytes'] + frame_size
+            if record.get('output_capacity_reached') or frame_size > AGENT_NATIVE_OUTPUT_RESERVE_BYTES:
+                if record.get('output_retention_blocked') is not True:
+                    row.meta = {**row.meta, 'agent_execution': {**record, 'output_retention_blocked': True}}
+                return None
+
+            updated = dict(record)
+            updated.pop('output_retention_blocked', None)
+            at_capacity = sequence > AGENT_NATIVE_OUTPUT_MAX_EVENTS or size > AGENT_NATIVE_OUTPUT_MAX_BYTES
+            if at_capacity:
+                updated['output_capacity_reached'] = True
+            updated['output_journal'] = {'frames': [*frames, frame], 'bytes': size}
+            row.meta = {**row.meta, 'agent_execution': updated}
+            return 'capacity' if at_capacity else 'stored'
+
+    async def update_agent_execution(
+        self,
+        chat_id: str,
+        message_id: str,
+        task_id: str,
+        *,
+        complete_reply: bool = False,
+        output_cursor: int | None = None,
+        stop_attempt_id: str | None = None,
+        release_stop_attempt: bool = False,
+        **updates,
+    ) -> bool:
+        """Advance only the execution that owns the reply."""
+        async with self._chat_transaction(chat_id) as (session, chat):
+            if chat is None:
+                return False
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}', with_for_update=True)
+            record = (row.meta or {}).get('agent_execution') if row and row.chat_id == chat_id else None
+            if not record or record['task_id'] != task_id:
+                return False
+            attempt = record.get('stop_attempt') or {}
+            if release_stop_attempt:
+                if not stop_attempt_id or attempt.get('id') != stop_attempt_id:
+                    return False
+                updated_record = {key: value for key, value in record.items() if key != 'stop_attempt'}
+                row.meta = {**row.meta, 'agent_execution': updated_record}
+                return True
+            if stop_attempt_id is not None and attempt.get('id') != stop_attempt_id:
+                return False
+            if (complete_reply or updates.get('remote_completed') is True) and attempt and not stop_attempt_id:
+                return False
+            if record.get('stop_recovering') and updates.get('output_published') is True and not stop_attempt_id:
+                return False
+            state = updates.get('state', record['state'])
+            if state not in (*UNCONFIRMED_AGENT_STATES, 'completed'):
+                return False
+            if (record['state'] == 'completed' or complete_reply) and state != 'completed':
+                return False
+            if record['state'] in ('stopping', 'unconfirmed') and state in ('starting', 'running'):
+                # A late start response can identify the session without clearing a stop.
+                updates['state'] = record['state']
+            for key in (
+                'user_id',
+                'chat_id',
+                'message_id',
+                'model',
+                'model_id',
+                'provider',
+                'terminal_identity',
+                'task_id',
+                'automation_id',
+                'output_journal',
+                'output_journal_version',
+                'output_retention_blocked',
+                'output_capacity_reached',
+                'stop_attempt',
+                'stop_recovering',
+            ):
+                updates.pop(key, None)
+            for key in ('terminal_id', 'cwd', 'session_id'):
+                if record.get(key) is not None:
+                    updates.pop(key, None)
+            proof_fields = ('output_published', 'remote_completed')
+            for key in proof_fields:
+                if updates.get(key) is not True:
+                    updates.pop(key, None)
+            if updates.get('output_incomplete') is not True:
+                updates.pop('output_incomplete', None)
+            if updates.get('output_published') is True and record.get('output_journal_version') == 1:
+                if (
+                    type(output_cursor) is not int
+                    or output_cursor != len(record['output_journal']['frames'])
+                    or record.get('output_retention_blocked') is True
+                ):
+                    return False
+            updated_record = {**record, **updates}
+            if (
+                updated_record.get('output_journal_version') == 1
+                and updated_record.get('remote_completed') is True
+                and updated_record.get('output_published') is not True
+            ):
+                return False
+            if state == 'completed' and (
+                not complete_reply or any(updated_record.get(key) is not True for key in proof_fields)
+            ):
+                return False
+            if record['state'] != 'completed':
+                row.meta = {**row.meta, 'agent_execution': updated_record}
+            if complete_reply:
+                # Release the execution fence together with the final reply, including its legacy projection.
+                ended_at = row.meta.get('response_ended_at') or time.time()
+                row.meta = {**row.meta, 'response_ended_at': ended_at}
+                row.done = True
+                if updated_record.get('output_incomplete') is True:
+                    row.error = AGENT_OUTPUT_INCOMPLETE_ERROR
+                row.updated_at = int(ended_at)
+                if isinstance(row.output, list):
+                    row.output = [
+                        {**item, 'status': 'incomplete'}
+                        if isinstance(item, dict)
+                        and item.get('status') in {'pending', 'queued', 'in_progress', 'requires_approval'}
+                        else item
+                        for item in row.output
+                    ]
+                embedded = (((chat.chat or {}).get('history') or {}).get('messages') or {}).get(message_id)
+                if isinstance(embedded, dict):
+                    embedded['done'] = True
+                    if updated_record.get('output_incomplete') is True:
+                        embedded['error'] = AGENT_OUTPUT_INCOMPLETE_ERROR
+                    if row.output is not None:
+                        embedded['output'] = row.output
+                    embedded_meta = dict(embedded.get('meta') or {})
+                    embedded_meta.pop('agent_execution', None)
+                    embedded['meta'] = {**embedded_meta, 'response_ended_at': ended_at}
+                    flag_modified(chat, 'chat')
+            return True
 
     def get_current_message_id(self, chat: dict | None) -> str | None:
         chat = chat or {}
@@ -715,8 +1068,6 @@ class ChatTable:
             return [ChatModel.model_validate(chat) for chat in result.scalars().all()]
 
     def _chat_import_form_to_chat_model(self, user_id: str, form_data: ChatImportForm) -> ChatModel:
-        from open_webui.utils.chat_context_copy import copy_chat_without_context_state
-
         form_data.chat = copy_chat_without_context_state(form_data.chat)
         id = str(uuid.uuid4())
         chat = ChatModel(
@@ -725,7 +1076,11 @@ class ChatTable:
                 'user_id': user_id,
                 'title': self._clean_null_bytes(form_data.chat['title'] if 'title' in form_data.chat else 'New Chat'),
                 'chat': self._clean_null_bytes(form_data.chat),
-                'meta': form_data.meta,
+                'meta': {
+                    key: value
+                    for key, value in (form_data.meta or {}).items()
+                    if key not in ('agent', 'agent_execution')
+                },
                 'variables': form_data.variables or {},
                 'pinned': form_data.pinned,
                 'archived': form_data.archived,
@@ -799,7 +1154,7 @@ class ChatTable:
                                 user_id=message.get('user_id')
                                 or (message['user'].get('id') if isinstance(message.get('user'), dict) else None)
                                 or user_id,
-                                data=message,
+                                data={**message, 'timestamp': message.get('timestamp')},
                             )
                         except Exception as e:
                             log.warning(
@@ -837,11 +1192,16 @@ class ChatTable:
                             )
                         )
                         for row_id, row_meta in rows:
-                            accounting = (row_meta or {}).get('tool_budget_accounting')
-                            if accounting:
+                            row_meta = strip_agent_output_journal(row_meta)
+                            protected = {
+                                key: row_meta[key]
+                                for key in ('tool_budget_accounting', 'agent', 'agent_execution')
+                                if key in (row_meta or {})
+                            }
+                            if protected:
                                 message_id = row_id[len(id) + 1 :]
                                 message = messages.setdefault(message_id, {})
-                                message['meta'] = {**(message.get('meta') or {}), 'tool_budget_accounting': accounting}
+                                message['meta'] = {**(message.get('meta') or {}), **protected}
                     updated['history'] = self.merge_history(existing_history, chat['history'])
                     for mid, message in (stored.get('history', {}).get('messages') or {}).items():
                         if (message.get('user_id') or chat_item.user_id) != chat_item.user_id or (
@@ -916,14 +1276,17 @@ class ChatTable:
     ) -> tuple[int, bool] | None:
         try:
             async with get_async_db_context(db) as session:
-                chat = await session.get(Chat, id)
-                if chat and chat.user_id == user_id:
-                    last_read_at = int(time.time())
-                    was_unread = chat.last_read_at is None or chat.updated_at > chat.last_read_at
-                    chat.last_read_at = last_read_at
-                    await session.commit()
-                    return last_read_at, was_unread
-                return None
+                row = (
+                    await session.execute(select(Chat.updated_at, Chat.last_read_at).filter_by(id=id, user_id=user_id))
+                ).one_or_none()
+                if row is None:
+                    return None
+
+                last_read_at = int(time.time())
+                was_unread = row.last_read_at is None or row.updated_at > row.last_read_at
+                await session.execute(update(Chat).filter_by(id=id).values(last_read_at=last_read_at))
+                await session.commit()
+                return last_read_at, was_unread
         except Exception:
             return None
 
@@ -932,18 +1295,23 @@ class ChatTable:
     ) -> ChatTitleIdResponse | None:
         try:
             async with get_async_db_context(db) as session:
-                chat = await session.get(Chat, id)
-                if chat and chat.user_id == user_id:
-                    chat.last_read_at = 0
-                    await session.commit()
-                    return ChatTitleIdResponse(
-                        id=chat.id,
-                        title=chat.title,
-                        updated_at=chat.updated_at,
-                        created_at=chat.created_at,
-                        last_read_at=chat.last_read_at,
+                row = (
+                    await session.execute(
+                        select(Chat.title, Chat.updated_at, Chat.created_at).filter_by(id=id, user_id=user_id)
                     )
-                return None
+                ).one_or_none()
+                if row is None:
+                    return None
+
+                await session.execute(update(Chat).filter_by(id=id).values(last_read_at=0))
+                await session.commit()
+                return ChatTitleIdResponse(
+                    id=id,
+                    title=row.title,
+                    updated_at=row.updated_at,
+                    created_at=row.created_at,
+                    last_read_at=0,
+                )
         except Exception:
             return None
 
@@ -981,10 +1349,14 @@ class ChatTable:
             await session.commit()
             return result.rowcount or 0
 
-    async def update_chat_title_by_id(self, id: str, title: str) -> ChatModel | None:
+    async def update_chat_title_by_id(
+        self, id: str, title: str, *, expected_title: str | None = None
+    ) -> ChatModel | None:
         try:
             async with self._chat_transaction(id) as (session, chat_item):
                 if chat_item is None:
+                    return None
+                if expected_title is not None and chat_item.title != expected_title:
                     return None
                 clean_title = self._clean_null_bytes(title)
                 chat_item.title = clean_title
@@ -1051,14 +1423,17 @@ class ChatTable:
         }
 
         for message_id, message in merged.items():
-            accounting = ((existing.get(message_id) or {}).get('meta') or {}).get('tool_budget_accounting')
-            if accounting:
-                message['meta'] = {**(message.get('meta') or {}), 'tool_budget_accounting': copy.deepcopy(accounting)}
-            elif 'tool_budget_accounting' in (message.get('meta') or {}):
-                # Browser payloads cannot create server accounting snapshots.
-                message['meta'] = {
-                    key: value for key, value in message['meta'].items() if key != 'tool_budget_accounting'
-                }
+            previous = strip_agent_output_journal((existing.get(message_id) or {}).get('meta')) or {}
+            meta = message.get('meta')
+            protected_fields = ('tool_budget_accounting', 'agent', 'agent_execution')
+            if isinstance(meta, dict) or any(key in previous for key in protected_fields):
+                meta = dict(meta or {})
+                for key in protected_fields:
+                    if key in previous:
+                        meta[key] = copy.deepcopy(previous[key])
+                    else:
+                        meta.pop(key, None)
+                message['meta'] = meta
             parent_id = message.get('parentId')
             if parent_id in merged:
                 merged[parent_id]['childrenIds'].append(message_id)
@@ -1121,18 +1496,22 @@ class ChatTable:
 
         if message_id in messages:
             # Voice updates must not replace approval-resume metadata, and approval
-            # pauses must retain the generated speech already attached to this turn.
+            # pauses must retain speech and response timing already attached to this turn.
             existing_meta = messages[message_id].get('meta')
             existing_meta = existing_meta if isinstance(existing_meta, dict) else {}
             incoming_meta = message.get('meta')
             if isinstance(incoming_meta, dict):
-                if set(incoming_meta) <= {'voice', 'task_id'}:
+                if set(incoming_meta) <= {'voice', 'task_id', 'response_started_at', 'response_ended_at'}:
                     message = {**message, 'meta': {**existing_meta, **incoming_meta}}
                 else:
                     message = {
                         **message,
                         'meta': {
-                            **{key: existing_meta[key] for key in ('voice', 'task_id') if key in existing_meta},
+                            **{
+                                key: existing_meta[key]
+                                for key in ('voice', 'task_id', 'response_started_at', 'response_ended_at')
+                                if key in existing_meta
+                            },
                             **incoming_meta,
                         },
                     }
@@ -1190,8 +1569,11 @@ class ChatTable:
             }
             history['currentId'] = message_id
 
-        ChatTable._add_child_id_to_parent(messages, messages[message_id].get('parentId'), message_id)
-        return messages[message_id]
+        saved_message = messages[message_id]
+        if 'meta' in saved_message:
+            saved_message['meta'] = strip_agent_output_journal(saved_message['meta'])
+        ChatTable._add_child_id_to_parent(messages, saved_message.get('parentId'), message_id)
+        return saved_message
 
     async def backfill_messages_by_chat_id(self, chat_id: str, user_id: str, messages: dict[str, dict]) -> None:
         """Write messages to the ``chat_message`` table so future lookups
@@ -1300,21 +1682,45 @@ class ChatTable:
         message = chat.chat.get('history', {}).get('messages', {}).get(message_id, {})
         return message.get(metadata_key)
 
-    async def insert_chat_turn(self, chat_id, user, user_message, message_ids):
+    async def insert_chat_turn(self, chat_id, user, user_message, message_ids, *, agent_turn: bool = False):
         from fastapi import HTTPException
 
-        if not await self.get_accessible_chat_by_id(chat_id, user, permission='write'):
+        if not await self.has_chat_access(chat_id, user, permission='write'):
             raise HTTPException(403, 'Chat continuation is not allowed.')
         async with self._chat_transaction(chat_id) as (db, chat):
             if not chat:
                 raise HTTPException(404, 'Chat not found.')
             history = (chat.chat or {}).get('history') or {'messages': {}, 'currentId': None}
             messages = history.get('messages') or {}
-            user_message_id = user_message.get('id')
+            user_message_id = (user_message or {}).get('id')
             assistant_ids = [entry.get('message_id') for entry in message_ids]
             ids = [user_message_id, *assistant_ids] if user_message else assistant_ids
             if not all(isinstance(mid, str) and mid for mid in ids) or len(set(ids)) != len(ids):
                 raise HTTPException(409, 'Message already exists or has an invalid ID.')
+            if user_message_id in messages:
+                agent_replies = {
+                    message_id
+                    for message_id, message in messages.items()
+                    if message.get('parentId') == user_message_id
+                    and message.get('role') == 'assistant'
+                    and isinstance(message.get('model'), str)
+                    and message['model'].startswith('agent:')
+                }
+                if agent_replies and (not agent_turn or agent_replies != set(assistant_ids)):
+                    raise HTTPException(409, 'Agent replies cannot be regenerated. Start a new chat instead.')
+            if agent_turn:
+                if not user_message_id or len(assistant_ids) != 1:
+                    raise HTTPException(400, 'Agent conversations require a new saved turn.')
+                if await ChatMessages.get_unconfirmed_agent_execution(chat_id, db=db):
+                    raise HTTPException(409, 'This chat has an unfinished agent operation.')
+                parent_id = messages.get(user_message_id, user_message).get('parentId')
+                # Compare parent links under the insert lock, including root turns.
+                for message_id, message in messages.items():
+                    branch_parent = message.get('parentId')
+                    if (branch_parent == parent_id and message_id != user_message_id) or (
+                        branch_parent == user_message_id and message_id not in assistant_ids
+                    ):
+                        raise HTTPException(409, 'Agent history cannot be branched in place. Start a new chat instead.')
             # An empty reply may be prepared before the request.
             for mid in assistant_ids:
                 existing_reply = messages.get(mid)
@@ -1597,6 +2003,9 @@ class ChatTable:
                 history = chat.get('history', {})
                 parent_id = ((history.get('messages') or {}).get(message_id) or {}).get('parentId')
                 deleted_ids = self.delete_message_from_history(history, message_id)
+                execution = await ChatMessages.get_unconfirmed_agent_execution(id, db=session)
+                if execution and execution['message_id'] in deleted_ids:
+                    raise HTTPException(409, 'The agent execution has not confirmed completion.')
                 await ChatMessages.delete_message_ids_by_chat_id(id, deleted_ids, db=session)
                 if not deleted_ids:
                     chat_item.chat = chat
@@ -1622,6 +2031,8 @@ class ChatTable:
                 updated_chat = ChatModel.model_validate(chat_item)
 
             return updated_chat
+        except HTTPException:
+            raise
         except Exception:
             return None
 
@@ -2134,6 +2545,11 @@ class ChatTable:
                     chat_ids = chat_ids.filter(ChatMessage.created_at >= filter.get('start_date'))
                 if filter.get('end_date'):
                     chat_ids = chat_ids.filter(ChatMessage.created_at <= filter.get('end_date'))
+                if filter.get('group_id'):
+                    from open_webui.models.groups import group_user_memberships
+
+                    group_users = select(group_user_memberships([filter['group_id']], True).c.user_id).scalar_subquery()
+                    chat_ids = chat_ids.filter(ChatMessage.user_id.in_(group_users))
 
             chat_ids = chat_ids.subquery()
 
@@ -2213,7 +2629,7 @@ class ChatTable:
                     id=shared.id,
                     user_id=shared.user_id,
                     title=shared.title,
-                    chat=shared.chat,
+                    chat={**copy_chat_without_context_state(shared.chat), 'share_mode': shared.chat.get('share_mode')},
                     created_at=shared.created_at,
                     updated_at=shared.updated_at,
                     share_id=shared.id,
@@ -2252,15 +2668,34 @@ class ChatTable:
         if user.role not in {'user', 'admin'}:
             return None
         chat = chat if chat is not None else await self.get_chat_by_id(id, db=db)
+        if chat and await self.has_chat_access(id, user, db=db, permission=permission, chat=chat):
+            return ChatModel.model_validate(chat)
+        return None
+
+    async def has_chat_access(
+        self,
+        id: str,
+        user,
+        db: AsyncSession | None = None,
+        *,
+        permission: Literal['read', 'write'] = 'read',
+        chat: Chat | ChatModel | None = None,
+    ) -> bool:
+        if user.role not in {'user', 'admin'}:
+            return False
+        if chat is None:
+            async with get_async_db_context(db) as session:
+                result = await session.execute(select(Chat.user_id, Chat.meta, Chat.folder_id).filter_by(id=id))
+                chat = result.first()
         if not chat:
-            return None
+            return False
         if (
             chat.user_id == user.id
             or user.role == 'admin'
             and permission == 'read'
             and (ENABLE_ADMIN_CHAT_ACCESS or is_internal_chat(chat.meta))
         ):
-            return ChatModel.model_validate(chat)
+            return True
         from open_webui.models.shared_chats import SharedChats
 
         shared = await SharedChats.get_by_chat_id(id, db=db)
@@ -2271,7 +2706,7 @@ class ChatTable:
                 user_id=user.id, resource_type='shared_chat', resource_id=id, permission='read', db=db
             )
         ):
-            return ChatModel.model_validate(chat)
+            return True
         if chat.folder_id:
             from open_webui.utils.access_control.folders import has_folder_access
 
@@ -2281,8 +2716,8 @@ class ChatTable:
                 and (permission == 'read' or (folder.data or {}).get('share_mode') == 'continue')
                 and await has_folder_access(user.id, folder, 'read', db)
             ):
-                return ChatModel.model_validate(chat)
-        return None
+                return True
+        return False
 
     async def filter_task_ids_by_user_id(self, chat, user_id: str, task_ids: list[str]) -> list[str]:
         if not task_ids:
@@ -2476,9 +2911,9 @@ class ChatTable:
         skip: int = 0,
         limit: int = 60,
         db: AsyncSession | None = None,
-    ) -> list[ChatModel]:
+    ) -> list[ChatTitleIdResponse]:
         """
-        Filters chats based on a search query using Python, allowing pagination using skip and limit.
+        Search chats without loading their bodies, with pagination applied in SQL.
         """
         search_text = sanitize_text_for_db(search_text).lower().strip()
 
@@ -2524,7 +2959,9 @@ class ChatTable:
         search_terms = [term for term in chat_search_terms(phrase_query) if term != phrase_query]
 
         async with get_async_db_context(db) as session:
-            stmt = select(Chat).filter(Chat.user_id == user_id)
+            stmt = select(
+                Chat.id, Chat.title, Chat.updated_at, Chat.created_at, Chat.last_read_at, Chat.archived
+            ).filter(Chat.user_id == user_id)
             stmt = stmt.where(Chat.meta['internal'].as_boolean().is_not(True))
 
             if is_archived is not None:
@@ -2652,12 +3089,21 @@ class ChatTable:
             # Perform pagination at the SQL level
             stmt = stmt.offset(skip).limit(limit)
             result = await session.execute(stmt)
-            all_chats = result.scalars().all()
+            all_chats = result.mappings().all()
 
             log.info('The number of chats: %s', len(all_chats))
 
             # Validate and return chats
-            return [ChatModel.model_validate(chat) for chat in all_chats]
+            return [ChatTitleIdResponse.model_validate(chat) for chat in all_chats]
+
+    async def get_chat_search_snippets(
+        self, ids: list[str], user_id: str, search_text: str, db: AsyncSession | None = None
+    ) -> dict[str, str | None]:
+        if not ids or not chat_search_content_query(search_text):
+            return {}
+        async with get_async_db_context(db) as session:
+            result = await session.execute(select(Chat.id, Chat.chat).where(Chat.id.in_(ids), Chat.user_id == user_id))
+            return {id: chat_search_snippet(body, search_text) for id, body in result.all()}
 
     async def get_chats_by_folder_id_and_user_id(
         self,
@@ -2851,10 +3297,9 @@ class ChatTable:
             async with get_async_db_context(db) as session:
                 chat = await session.get(Chat, id)
                 chat.folder_id = folder_id
-                chat.updated_at = int(time.time())
                 if chat.user_id == user_id:
                     chat.last_read_at = int(time.time())
-                chat.pinned = False
+                    chat.pinned = False
                 if folder_id is not None:
                     # Folder listings only show unarchived chats, so moving an archived
                     # chat into a folder would otherwise have no visible effect: the chat
@@ -3041,122 +3486,94 @@ class ChatTable:
     ) -> bool:
         try:
             async with get_async_db_context(db) as session:
-                chat = await session.get(Chat, id)
-                tags = chat.meta.get('tags', [])
+                row = (await session.execute(select(Chat.meta).filter_by(id=id))).one_or_none()
+                if row is None:
+                    return False
+
+                meta = row[0]
+                tags = meta.get('tags', [])
                 tag_id = tag_name.replace(' ', '_').lower()
 
                 tags = [tag for tag in tags if tag != tag_id]
-                chat.meta = {
-                    **chat.meta,
-                    'tags': list(set(tags)),
-                }
+                await session.execute(update(Chat).filter_by(id=id).values(meta={**meta, 'tags': list(set(tags))}))
                 await session.commit()
                 return True
         except Exception:
             return False
 
+    async def _delete_chats(self, session, chat_ids):
+        from open_webui.models.shared_chats import SharedChat as SharedChatTable
+
+        # Use the same row lock as Agent admission so deletion cannot race a claim.
+        if session.bind.dialect.name == 'sqlite':
+            await session.execute(update(Chat).where(Chat.id.in_(chat_ids)).values(updated_at=Chat.updated_at))
+        else:
+            await session.execute(select(Chat.id).where(Chat.id.in_(chat_ids)).with_for_update())
+        if await session.scalar(
+            select(ChatMessage.id)
+            .where(
+                ChatMessage.chat_id.in_(chat_ids),
+                ChatMessage.meta['agent_execution']['state'].as_string().in_(UNCONFIRMED_AGENT_STATES),
+            )
+            .limit(1)
+        ):
+            await session.rollback()
+            raise HTTPException(409, 'An agent execution has not confirmed completion.')
+        recipients = await delete_resource_comments('chat', chat_ids, db=session)
+        await session.execute(update(AutomationRun).where(AutomationRun.chat_id.in_(chat_ids)).values(chat_id=None))
+        for model in (
+            ChatMessage,
+            ChatToolResultSelection,
+            ChatToolResultContext,
+            ChatToolResult,
+            ChatContextCheckpoint,
+            ChatViewState,
+            SharedChatTable,
+        ):
+            await session.execute(delete(model).where(model.chat_id.in_(chat_ids)))
+        result = await session.execute(delete(Chat).where(Chat.id.in_(chat_ids)))
+        await session.commit()
+        await emit_changes(recipients)
+        return result.rowcount
+
     async def delete_chat_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as session:
-                await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
-                await session.execute(delete(ChatMessage).filter_by(chat_id=id))
-                await session.execute(delete(ChatToolResultSelection).filter_by(chat_id=id))
-                await session.execute(delete(ChatToolResultContext).filter_by(chat_id=id))
-                await session.execute(delete(ChatToolResult).filter_by(chat_id=id))
-                await session.execute(delete(ChatContextCheckpoint).filter_by(chat_id=id))
-                await session.execute(delete(Chat).filter_by(id=id))
-                await session.commit()
-
-                return True and await self.delete_shared_chat_by_chat_id(id, db=session)
+                return bool(await self._delete_chats(session, select(Chat.id).filter_by(id=id)))
+        except HTTPException:
+            raise
         except Exception:
             return False
 
     async def delete_chat_by_id_and_user_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as session:
-                await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
-                await session.execute(delete(ChatMessage).filter_by(chat_id=id))
-                owned_chat_ids = select(Chat.id).filter_by(id=id, user_id=user_id)
-                await session.execute(
-                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(owned_chat_ids))
-                )
-                await session.execute(
-                    delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(owned_chat_ids))
-                )
-                await session.execute(delete(ChatToolResult).where(ChatToolResult.chat_id.in_(owned_chat_ids)))
-                await session.execute(
-                    delete(ChatContextCheckpoint).where(
-                        ChatContextCheckpoint.chat_id.in_(select(Chat.id).filter_by(id=id, user_id=user_id))
-                    )
-                )
-                await session.execute(delete(Chat).filter_by(id=id, user_id=user_id))
-                await session.commit()
-
-                return True and await self.delete_shared_chat_by_chat_id(id, db=session)
+                chat_ids = select(Chat.id).filter_by(id=id, user_id=user_id)
+                return bool(await self._delete_chats(session, chat_ids))
+        except HTTPException:
+            raise
         except Exception:
             return False
 
     async def delete_chats_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as session:
-                await self.delete_shared_chats_by_user_id(user_id, db=session)
-
-                chat_id_subquery = select(Chat.id).filter_by(user_id=user_id).scalar_subquery()
-                await session.execute(
-                    update(AutomationRun)
-                    .filter(AutomationRun.chat_id.in_(select(Chat.id).filter_by(user_id=user_id)))
-                    .values(chat_id=None)
-                )
-                await session.execute(
-                    delete(ChatMessage).filter(ChatMessage.chat_id.in_(select(Chat.id).filter_by(user_id=user_id)))
-                )
-                owned_chat_ids = select(Chat.id).filter_by(user_id=user_id)
-                await session.execute(
-                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(owned_chat_ids))
-                )
-                await session.execute(
-                    delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(owned_chat_ids))
-                )
-                await session.execute(delete(ChatToolResult).where(ChatToolResult.chat_id.in_(owned_chat_ids)))
-                await session.execute(
-                    delete(ChatContextCheckpoint).where(
-                        ChatContextCheckpoint.chat_id.in_(select(Chat.id).filter_by(user_id=user_id))
-                    )
-                )
-                await session.execute(delete(Chat).filter_by(user_id=user_id))
-                await session.commit()
-
+                await self._delete_chats(session, select(Chat.id).filter_by(user_id=user_id))
                 return True
+        except HTTPException:
+            raise
         except Exception:
             return False
 
     async def delete_chats_by_user_id_and_folder_id(
         self, user_id: str, folder_id: str, db: AsyncSession | None = None
     ) -> bool:
-        from open_webui.models.shared_chats import SharedChat as SharedChatTable
-
         try:
             async with get_async_db_context(db) as session:
-                chat_ids_stmt = select(Chat.id).filter_by(user_id=user_id, folder_id=folder_id)
-                await session.execute(
-                    update(AutomationRun).filter(AutomationRun.chat_id.in_(chat_ids_stmt)).values(chat_id=None)
-                )
-                await session.execute(delete(ChatMessage).filter(ChatMessage.chat_id.in_(chat_ids_stmt)))
-                await session.execute(
-                    delete(ChatToolResultSelection).where(ChatToolResultSelection.chat_id.in_(chat_ids_stmt))
-                )
-                await session.execute(
-                    delete(ChatToolResultContext).where(ChatToolResultContext.chat_id.in_(chat_ids_stmt))
-                )
-                await session.execute(delete(ChatToolResult).where(ChatToolResult.chat_id.in_(chat_ids_stmt)))
-                await session.execute(
-                    delete(ChatContextCheckpoint).where(ChatContextCheckpoint.chat_id.in_(chat_ids_stmt))
-                )
-                await session.execute(delete(SharedChatTable).filter(SharedChatTable.chat_id.in_(chat_ids_stmt)))
-                await session.execute(delete(Chat).filter_by(user_id=user_id, folder_id=folder_id))
-                await session.commit()
-
+                await self._delete_chats(session, select(Chat.id).filter_by(user_id=user_id, folder_id=folder_id))
                 return True
+        except HTTPException:
+            raise
         except Exception:
             return False
 

@@ -157,3 +157,41 @@ async def test_optional_auth_preserves_retryable_failure():
     with pytest.raises(HTTPException) as caught:
         await ns['get_optional_verified_user_from_request'](request)
     assert caught.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_renewable_access_token_binds_current_session_and_fails_closed(monkeypatch):
+    redis = SimpleNamespace(get=AsyncMock(side_effect=RedisError('unavailable')))
+    ns, decoded, _ = auth_runtime(redis)
+    decoded['sid'] = 'renewable-session'
+    module = ModuleType('open_webui.models.auth_sessions')
+    session = SimpleNamespace(user_id='someone-else', refresh_token_id='token', expires_at=4_000_000_000)
+    module.AuthSessions = SimpleNamespace(get=AsyncMock(return_value=session))
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert not await ns['is_valid_token'](decoded, redis)
+    redis.get.assert_not_awaited()
+    session.user_id = decoded['id']
+    with pytest.raises(HTTPException) as caught:
+        await ns['is_valid_token'](decoded, redis)
+    assert caught.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_signout_preserves_renewable_session_on_retryable_redis_failure(monkeypatch):
+    module = ModuleType('open_webui.models.auth_sessions')
+    module.AuthSessions = SimpleNamespace(revoke=AsyncMock())
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    ns = {
+        'decode_token': lambda _: {'id': 'user-1', 'typ': 'session', 'sid': 'renewable-session'},
+        'Users': SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='user-1'))),
+        'invalidate_token': AsyncMock(side_effect=HTTPException(503, 'retry')),
+        'RedisError': RedisError,
+    }
+    load_functions('routers/auths.py', {'signout'}, ns)
+    request = SimpleNamespace(headers={}, cookies={'token': 'synthetic'})
+    response = Mock()
+    with pytest.raises(HTTPException) as caught:
+        await ns['signout'](request, response)
+    assert caught.value.status_code == 503
+    module.AuthSessions.revoke.assert_not_awaited()
+    response.delete_cookie.assert_not_called()

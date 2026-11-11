@@ -7,16 +7,18 @@ AGENTS.md instructions, and the current user request govern implementation.
 
 | Upstream release | Design and upgrade record                                                      |
 | ---------------- | ------------------------------------------------------------------------------ |
-| v0.12.4          | [Current decisions, compatibility and validation](v0.12.4-decisions.md)        |
+| v0.13.3          | [Current decisions, compatibility and validation](v0.13.3-decisions.md)        |
+| v0.12.4          | [Historical decisions, compatibility and validation](v0.12.4-decisions.md)     |
 | v0.12.2          | [Historical decisions, compatibility and validation](v0.12.2-decisions.md)     |
 | v0.12.0          | [Historical decisions, compatibility and validation](v0.12.0-decisions.md)     |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
-The current integrated release is v0.12.4. Read its [decision record](v0.12.4-decisions.md),
-[temporary V2 contracts](../temporary-context-v2.md), [complete audit](v0.12.4-fork-audit.md),
-[file inventory](v0.12.4-fork-files.md) and [actual validation with limits](v0.12.4-validation.md).
-The genuine merge is `f98e0230559427611699aa8f7504fe7b27981fab`; the final runtime code is
-`a09b68687c54aaaef1116bb002eedee004d2ba68`. The integration is local, with no push, release or deployment.
+The current integrated release is v0.13.3, targeting official commit
+`b0e6098e940942281d9c83f3529ea117287a3a22`. Read its [decision record](v0.13.3-decisions.md),
+[temporary V2 contracts](../temporary-context-v2.md), [complete audit](v0.13.3-fork-audit.md),
+[file inventory](v0.13.3-fork-files.md) and [actual validation with limits](v0.13.3-validation.md).
+The audit records the genuine two-parent merge and the exact code cutoff. The integration is local,
+with no push, release or deployment.
 These records are dated snapshots; recompute tree/history comparisons for later work. Earlier
 release records and validation numbers remain historical evidence.
 

@@ -1,0 +1,18 @@
+# Replace both domains. No access-log directive: preview URLs carry capabilities.
+chat.example.com {
+	reverse_proxy webui:8080
+}
+
+preview.example.com {
+	@preview path /p/*
+	handle @preview {
+		reverse_proxy webui:8080 {
+			header_up -Cookie
+			header_up -Authorization
+			header_up -Referer
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

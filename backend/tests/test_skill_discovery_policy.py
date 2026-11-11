@@ -180,6 +180,11 @@ def skill_block(monkeypatch):
             value=ast.Name(id='mentioned_skill_ids', ctx=ast.Load()),
         ),
         *process.body[start:end],
+        next(
+            node
+            for node in process.body
+            if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == 'skill_tools_enabled'
+        ),
         block,
         metadata_update,
         ast.Return(value=ast.Name(id='available_skills', ctx=ast.Load())),
@@ -191,6 +196,9 @@ def skill_block(monkeypatch):
         user=SimpleNamespace(id='user', role='user', model_dump=lambda: {'id': 'user'}),
         model={},
         model_builtin_tools={},
+        payload_tools=None,
+        private_context_output=[],
+        hidden_tool_result=lambda name, content, **kwargs: [{'name': name, 'content': content, **kwargs}],
         skill_versions={},
         HTTPException=HTTPException,
         request=SimpleNamespace(state=SimpleNamespace()),
@@ -329,6 +337,7 @@ def test_source_metadata_is_filtered_escaped_and_attribute_names_are_safe():
 @pytest.fixture
 def terminal_runtime(monkeypatch):
     from types import ModuleType
+    import aiohttp
 
     config = ModuleType('open_webui.models.config')
     config.Config = SimpleNamespace(get=AsyncMock(return_value=[]), get_many=AsyncMock(return_value={}))
@@ -354,10 +363,21 @@ def terminal_runtime(monkeypatch):
     stub('open_webui.models.users', UserModel=TerminalUser)
     stub('open_webui.models.groups', Groups=SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])))
     stub('open_webui.utils.access_control', has_connection_access=AsyncMock(return_value=True))
-    stub('open_webui.utils.tools', build_tool_server_headers=AsyncMock(return_value=({}, {})))
+    stub('open_webui.utils.tools', build_tool_server_headers=AsyncMock(side_effect=lambda *args, **kwargs: ({}, {})))
+    stub('open_webui.utils.headers', bearer_auth_header=lambda key: {'Authorization': f'Bearer {key}'})
+
+    async def connections(user):
+        return await config.Config.get('terminal_server.connections')
+
+    stub(
+        'open_webui.utils.tether',
+        get_terminal_connections=connections,
+        get_terminal_client=lambda url, user_id=None, **kwargs: aiohttp.ClientSession(**kwargs),
+    )
     ns = dict(
         asyncio=asyncio,
         ENABLE_TOOL_SERVERS=True,
+        AIOHTTP_CLIENT_TIMEOUT_TERMINAL=5,
         quote=quote,
         hashlib=hashlib,
         ntpath=ntpath,
@@ -372,12 +392,13 @@ def terminal_runtime(monkeypatch):
         terminal_context_available=lambda *args: True,
         get_terminal_server_url=lambda connection: connection['url'],
         log=logging.getLogger(__name__),
-        _get_terminal_request_info=AsyncMock(side_effect=TimeoutError('unavailable')),
     )
     compile_nodes(
         'utils/terminals.py',
         {
             'get_terminal_request_info',
+            '_get_terminal_request_info',
+            'resolve_terminal_connection',
             'get_terminal_json',
             'get_terminal_skills',
             'get_terminal_skill',
@@ -395,7 +416,7 @@ async def test_terminal_resolution_listing_and_content_fail_softly(terminal_runt
     assert await ns['get_terminal_request_info'](object(), {}, {'terminal_id': 't'}) is None
     assert await ns['get_terminal_skills'](object(), {}, {'terminal_id': 't'}) == []
     assert await ns['get_terminal_skill'](object(), {}, {'terminal_id': 't'}, 'skill') is None
-    ns['get_terminal_request_info'] = AsyncMock(side_effect=TimeoutError('unavailable'))
+    ns['resolve_terminal_connection'] = AsyncMock(side_effect=TimeoutError('unavailable'))
     assert await ns['get_terminal_skills'](object(), {}, {'terminal_id': 't'}) == []
     assert await ns['get_terminal_skill'](object(), {}, {'terminal_id': 't'}, 'skill') is None
 
@@ -561,10 +582,10 @@ async def test_selected_terminal_skills_are_fetched_fresh_and_names_are_encoded(
     port = runner.addresses[0][1]
     config.get.return_value = [{'id': 'one', 'url': f'http://127.0.0.1:{port}'}]
     try:
-        first = await ns['get_terminal_skills'](object(), {}, {'terminal_id': 'one'})
-        second = await ns['get_terminal_skills'](object(), {}, {'terminal_id': 'one'})
+        first = await ns['get_terminal_skills'](object(), {'id': 'owner'}, {'terminal_id': 'one'})
+        second = await ns['get_terminal_skills'](object(), {'id': 'owner'}, {'terminal_id': 'one'})
         assert first == second == [{'id': 'terminal:one', 'name': 'one'}]
-        loaded = await ns['get_terminal_skill'](object(), {}, {'terminal_id': 'one'}, 'one/variant')
+        loaded = await ns['get_terminal_skill'](object(), {'id': 'owner'}, {'terminal_id': 'one'}, 'one/variant')
         assert loaded['directory'] == '/home/.agents/skills/one'
         assert loaded['resources'] == ['run.py']
         assert requests == [('/skills', 'owner'), ('/skills', 'owner'), ('/skills/read?name=one/variant', 'owner')]
@@ -599,9 +620,15 @@ async def test_home_agents_md_reloads_per_turn_without_skill_discovery(terminal_
     port = runner.addresses[0][1]
     config.get.return_value = [{'id': 'one', 'url': f'http://127.0.0.1:{port}'}]
     try:
-        assert await ns['get_terminal_agents_md'](object(), {}, {'terminal_id': 'one'}) == '# AGENTS.md\n\nfirst turn'
+        assert (
+            await ns['get_terminal_agents_md'](object(), {'id': 'owner'}, {'terminal_id': 'one'})
+            == '# AGENTS.md\n\nfirst turn'
+        )
         state['content'] = 'next turn'
-        assert await ns['get_terminal_agents_md'](object(), {}, {'terminal_id': 'one'}) == '# AGENTS.md\n\nnext turn'
+        assert (
+            await ns['get_terminal_agents_md'](object(), {'id': 'owner'}, {'terminal_id': 'one'})
+            == '# AGENTS.md\n\nnext turn'
+        )
         assert all(call.args[0] == 'terminal_server.connections' for call in config.get.await_args_list)
     finally:
         await runner.cleanup()

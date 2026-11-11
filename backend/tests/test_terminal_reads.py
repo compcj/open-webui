@@ -18,19 +18,35 @@ from open_webui.utils.skill_files import SKILL_CONTENT_MAX_CHARS, skill_overview
 
 @pytest.fixture
 def runtime(monkeypatch):
-    config = SimpleNamespace(get=AsyncMock(return_value=[]), get_many=AsyncMock(return_value={}))
-    config.get.side_effect = lambda key, *args: None if key.startswith('skills.') else config.get.return_value
+    config = SimpleNamespace(get=AsyncMock(return_value=[]), get_many=AsyncMock(return_value={}), direct=True)
+
+    def config_value(key, default=None):
+        if key == 'terminal_server.connections':
+            return config.get.return_value
+        if key == 'direct.integrations.enable':
+            return config.direct
+        return default
+
+    config.get.side_effect = config_value
+
+    async def get_terminal_connections(user):
+        return await config.get('terminal_server.connections', [])
+
     access = AsyncMock(return_value=False)
     for name, values in {
         'open_webui.env': {
             'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': True,
-            'AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA': 5,
+            'AIOHTTP_CLIENT_TIMEOUT_TERMINAL': 5,
         },
         'open_webui.models.config': {'Config': config},
         'open_webui.models.groups': {'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[]))},
         'open_webui.models.users': {'UserModel': SimpleNamespace},
         'open_webui.utils.access_control': {'has_connection_access': access},
         'open_webui.utils.tools': {'build_tool_server_headers': AsyncMock(return_value=({}, {}))},
+        'open_webui.utils.tether': {
+            'get_terminal_connections': get_terminal_connections,
+            'get_terminal_client': AsyncMock(side_effect=AssertionError('Unexpected terminal network request')),
+        },
         'open_webui.utils.headers': {
             'bearer_auth_header': lambda key: {'Authorization': f'Bearer {key}'} if key else {}
         },
@@ -46,6 +62,7 @@ def runtime(monkeypatch):
         'posixpath': posixpath,
         'quote': quote,
         'ENABLE_TOOL_SERVERS': True,
+        'AIOHTTP_CLIENT_TIMEOUT_TERMINAL': 5,
         'MAX_AGENTS_MD_BYTES': 32768,
         'SKILL_CONTENT_MAX_CHARS': SKILL_CONTENT_MAX_CHARS,
         'skill_overview': skill_overview,
@@ -61,6 +78,7 @@ def runtime(monkeypatch):
         'utils/terminals.py',
         {
             'get_terminal_json',
+            'resolve_terminal_connection',
             'get_terminal_request_info',
             '_get_terminal_request_info',
             'get_terminal_skills',
@@ -109,6 +127,22 @@ async def test_denied_admin_connection_never_falls_back_to_browser(runtime):
     )
     call.assert_not_awaited()
     runtime.access.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_id,direct', [('tether:offline-device', True), ('https://personal.test', False)])
+async def test_unavailable_tether_and_disabled_direct_do_not_call_the_browser(runtime, terminal_id, direct):
+    runtime.config.direct = direct
+    call = AsyncMock()
+    result = await runtime.ns['get_terminal_json'](
+        object(),
+        SimpleNamespace(id='owner'),
+        {'terminal_id': terminal_id, 'session_id': 'own-socket'},
+        '/files/cwd',
+        {'__event_call__': call},
+    )
+    assert result is None
+    call.assert_not_awaited()
 
 
 @pytest.mark.asyncio

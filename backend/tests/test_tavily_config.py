@@ -111,7 +111,11 @@ async def runtime(monkeypatch):
         'USE_SLIM': False,
         'asyncio': asyncio,
     }
-    execute_nodes('models/config.py', {'_json_value', 'Config'}, namespace)
+    execute_nodes(
+        'models/config.py',
+        {'PREVIEW_PRIVATE_PREFIX', 'PREVIEW_BASE_KEY', 'MAIN_URL_KEY', '_json_value', 'Config'},
+        namespace,
+    )
     execute_nodes(
         'routers/retrieval.py',
         {

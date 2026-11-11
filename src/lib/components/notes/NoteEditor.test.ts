@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
+import { ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
 // Exercise the actual title handler without mounting the full editor/socket stack.
@@ -8,7 +9,12 @@ const ast = parse(source);
 const declaration = ast.instance?.content.body
 	.flatMap((node: any) => node.declarations ?? [])
 	.find((node: any) => node.id?.name === 'generateTitleHandler');
-const handlerSource = source.slice(declaration.init.start, declaration.init.end);
+const handlerSource = transpileModule(
+	`(${source.slice(declaration.init.start, declaration.init.end)})`,
+	{ compilerOptions: { target: ScriptTarget.ES2022 } }
+)
+	.outputText.trimEnd()
+	.replace(/;$/, '');
 
 const setup = (generateTitle: ReturnType<typeof vi.fn>) => {
 	const note = { title: 'Original title', data: { content: { md: 'Note content' } } };
@@ -23,6 +29,7 @@ const setup = (generateTitle: ReturnType<typeof vi.fn>) => {
 		const selectedModelId = 'test-model';
 		const $i18n = { t: (text) => text };
 		const tick = async () => {};
+		const document = { activeElement: null, body: {} };
 		const console = { error: () => {} };
 		let titleGenerating = false;
 		return async () => {

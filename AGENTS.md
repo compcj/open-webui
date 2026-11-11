@@ -39,11 +39,11 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 ## Upstream integration decisions
 
 Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
-[active v0.12.4 decisions](docs/upstream/v0.12.4-decisions.md). Verify official commit IDs and actual
+[active v0.13.3 decisions](docs/upstream/v0.13.3-decisions.md). Verify official commit IDs and actual
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
-For a full fork audit, use the [v0.12.4 difference inventory](docs/upstream/v0.12.4-fork-audit.md)
+For a full fork audit, use the [v0.13.3 difference inventory](docs/upstream/v0.13.3-fork-audit.md)
 as the last dated snapshot, then recompute both the complete upstream-to-HEAD tree diff and all
 reachable fork-only commits, including merged side branches and the dirty working-tree diff.
 Record exact SHAs and shallow-history limits; verify missing history through read-only remote commit
@@ -74,7 +74,7 @@ current rules in scoped guides, rationale in the decision record, and commands i
   Only a server-registered builtin identity receives exact-result processing; snapshot pins do not grant access.
 - Apps default off. Private interactions allow read-only channel members; public replies and message
   updates require live write permission after the App responds. Apply channel feature and group-member checks.
-- The migration head is `a122d15e0001`, joining `a120d13e0003` and `0bd252b206fb`; do not rewrite old revisions.
+- The migration head is `a133d11e0001`, joining `a122d15e0001` and `9f6c2a8d1b43`; do not rewrite old revisions.
 
 ## Reply lifecycle and concurrent models
 
@@ -283,8 +283,8 @@ and [verification](docs/DEVELOPMENT.md#native-model-connection-verification).
   Pub/Sub, TTL, missing keys or an expired lease. Redis failures remain retryable 503 without memory
   fallback; memory mode requires one worker/instance. Promotion reserves an idle scope, saves raw
   history idempotently and releases only after success. Export strips derived context identities.
-- Encrypted channels default off globally and for ordinary users. Retain migration head
-  `a122d15e0001`; v0.12.4 adds no revision. Use coordinated drained-worker upgrades, not unverified
+- Encrypted channels default off globally and for ordinary users. The historical v0.12.4 head
+  `a122d15e0001` remains unchanged beneath the v0.13.3 merge head. Use coordinated drained-worker upgrades, not unverified
   mixed-reader rolling updates. See [temporary contexts](docs/temporary-context-v2.md) and
   [version decisions](docs/upstream/v0.12.4-decisions.md).
 
@@ -292,3 +292,49 @@ Temporary control records may retire only after executor-confirmed completion an
 publication. Preserve a server-only, byte-charged task-ID retirement ledger against reuse, and keep
 all raw history and selected versions. Control count caps must not become a fixed conversation
 turn limit; unsettled work and active-task retry protection remain intact.
+
+## v0.13.3 integration contracts
+
+- Use upstream attachment/retrieval defaults (preloading off, Top K and reranker K 10,
+  chunk 1024, full-text threshold 50000), 1024 tool rounds and unlimited default subagent limits.
+  Explicit saved settings win; do not rebuild existing knowledge indices during upgrade.
+- Model mentions switch subsequent chat turns; regeneration uses the current slot model. Preserve
+  remembered controls, reset, precedence and account isolation. Use upstream tabs/split views and
+  Controls/+ menu, with Show Input Selections off by default and all fork controls retained.
+- Each Chat instance owns models, task IDs and temporary scope. Layout persistence contains no
+  temporary history, scope identity or preview capability. Side chats use raw history projections,
+  stripping execution/checkpoint/selection/Agent resume identities before creating a new chat.
+- Automatic private/memory/skill-runtime/terminal hidden context stays request-local and frozen
+  across a reply's continuations. Count it in final budgets, never persist it in output/shared
+  summaries or treat it as a newly executed tool result. Approval resumes require the server's
+  ephemeral snapshot; expiry/source changes fail explicitly without executing tools again.
+- Batch tool calls retain stable child identities, original provider functions and batch boundaries.
+  Resolve real targets before permission, original-schema validation, approval and execution. Keep
+  failures in native continuations; retry is replay, never duplicate execution.
+- `ENABLE_TETHER` / `tether.enable` is an independent default-off admin switch. Old-client omitted
+  fields preserve saved values. Disable handshake, discovery and new HTTP/WS/automation operations
+  and close channels when disabled. Manual personal connections still require Direct Integrations;
+  Tether never inherits admin skill-discovery opt-in or knowledge terminal-import authorization.
+- Native Agents use saved chats, a single Agent and their own context (no WebUI V2). Preserve offline
+  model identity. Bind sessions to author/chat/terminal/working directory; copies/shares never inherit
+  resumable identity. Persist start before effects and stop intent before cancellation. Only confirmed
+  remote termination plus complete raw publication releases the durable execution record. Timeout,
+  404, lost response, coroutine exit, expired lease or missing registry entry is not confirmation.
+  Persist exact sequenced Agent output before ACK; keep its private journal out of public projections.
+  Capacity refusal keeps the current frame unacknowledged and stop pending. Resume signatures also
+  bind the actual terminal URL. Never equate a missing worker with complete output publication.
+- Independent preview uses `TERMINAL_PREVIEW_BASE_URL` / `terminal.preview.base_url` (empty disables),
+  a distinct hostname and HTTPS except explicit loopback development. The preview Host only serves
+  preview HTTP/WS; main-site APIs/auth/Socket.IO and same-origin port/HTML proxy remain inaccessible.
+  Tickets are opaque, server-held, user/login/terminal/target/context bound, five minutes long and
+  reauthorized every minute. Redis failure is retryable without memory fallback; memory requires one
+  worker/instance. Recheck live access during streams. Never persist capabilities or credentials in
+  layouts, chat output or logs. Keep sandbox without allow-same-origin/top navigation/storage, exact
+  postMessage origin/source/ticket checks, no-referrer/no-store and main-site credential rejection.
+  Retired preview hosts remain reserved across configuration resets. Reuse verified port sessions;
+  durable create claims prevent duplicates after ambiguous responses. Recheck actor-visible `/ports`.
+  The terminal may retain its internal target Cookie jar while DOM storage stays inaccessible.
+  Port WebSocket opening targets are checked, but terminal-internal redirects use upstream browser
+  network permissions; do not claim end-to-end port confinement.
+- Consult [Tether and Agents](docs/tether-agents.md), [preview deployment](docs/terminal-preview.md),
+  [current decisions](docs/upstream/v0.13.3-decisions.md) and [verification](docs/DEVELOPMENT.md#v0133-integration-verification).

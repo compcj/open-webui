@@ -1,0 +1,30 @@
+# Optional standalone example. Build the fork image locally; adapt domains before use.
+services:
+  webui:
+    image: open-webui-fork:0.13.3
+    environment:
+      WEBUI_URL: https://chat.example.com
+      TERMINAL_PREVIEW_BASE_URL: https://preview.example.com
+      ENABLE_TETHER: 'false'
+      # Caddy is the only published entry; trust just this deployment's proxy network.
+      FORWARDED_ALLOW_IPS: 172.30.133.0/24
+    volumes:
+      - webui-data:/app/backend/data
+    networks: [preview-example]
+  caddy:
+    image: caddy:2-alpine
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [preview-example]
+networks:
+  preview-example:
+    ipam:
+      config:
+        - subnet: 172.30.133.0/24
+volumes:
+  webui-data:
+  caddy-data:
+  caddy-config:

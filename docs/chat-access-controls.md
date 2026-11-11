@@ -35,6 +35,8 @@ The personal **Integrations** entry for tool/terminal connections has a separate
 and terminal connections for every user, including administrators; configuration is retained for
 re-enabling. Model **Direct Connections**, administrator server connections and context-free Direct
 API Chat remain independent. Cookie forwarding is a separate, default-off connection option.
+Tether has its own administrator switch, defaults off and uses a registered device with a
+user-bound login session. See [Tether and Terminal Agents](tether-agents.md).
 
 ## Shared conversations and reply ownership
 
@@ -58,6 +60,12 @@ Shared V2 summaries and selected tool results belong to a chat, model and valida
 saved shared history enters a shared summary; personal instructions and terminal context stay in the
 current request. Old summaries without proven shared provenance replay raw history. See
 [context compaction](context-compaction.md) for modes, status and exact result access.
+
+Saved layouts belong to individual viewers of a chat and require current chat access. A side chat
+keeps its own model, branch, tasks and context. A new side chat may inherit the original transcript
+and raw tool results. Server execution records, checkpoint and selection IDs, and Agent resume state
+are omitted from copies and share snapshots. The saved layout contains tab settings and saved chat
+references. Temporary scope IDs and epochs, chat history and preview tickets stay outside it.
 
 ## Stopping and interrupted responses
 
@@ -85,6 +93,22 @@ Parallel model comparisons use separate mutable payloads and request state for e
 when the same model is selected twice. Tool results, branch identity, retry state and V2 bookkeeping
 must stay with their originating reply. This preserves the upstream comparison feature while fixing
 cross-reply interference.
+
+### Terminal Agent turns
+
+Select one Agent in a saved chat. Send a new message to continue that conversation in its bound
+terminal and working directory. Regenerating, continuing an old reply and branching in place are
+unavailable for Agent replies. A fork or side chat can use the raw transcript to start a separate
+conversation. If the selected Agent goes offline, its identity stays selected until it returns or
+you choose another model. Agent approvals and stops belong to the reply author.
+
+Stop waits for the executing terminal to confirm process termination. Once the output has been
+saved and the terminal has confirmed the stop, the server commits final reply state and releases
+the execution record together. A timeout, lost response or missing remote session leaves the state
+unconfirmed and blocks the next turn. Reconnect the original terminal and retry Stop for the same
+reply. If the start request lost its response before WebUI obtained a remote session ID, WebUI
+keeps the execution unconfirmed even if its worker restarts.
+See [Tether and Terminal Agents](tether-agents.md).
 
 ## Validation and related policies
 

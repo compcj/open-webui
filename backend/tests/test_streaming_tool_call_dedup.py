@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from open_webui.utils.tool_calling import INCOMPLETE_CALL_ERROR, tool_repetition_error
 
 from test_web_tool_citations import BACKEND, load_functions
 
@@ -50,16 +51,30 @@ def runtime():
         'tool_calls': [],
         'emit_response_completion_event': AsyncMock(),
         'save_to_chat': False,
-        'metadata': {},
+        'metadata': {
+            'tools': {
+                'write_record': {'type': 'external', 'spec': {'parameters': {'type': 'object'}}},
+                'fetch_url': {'type': 'builtin', 'tool_id': 'builtin:fetch_url'},
+            }
+        },
+        'incomplete': False,
+        'INCOMPLETE_CALL_ERROR': INCOMPLETE_CALL_ERROR,
+        'tool_repetition_error': tool_repetition_error,
+        'max_tool_call_iterations': None,
+        'final_answer_requested': False,
+        'tool_history': [],
         'form_data': {},
         'event_caller': None,
         'execute_tool_call': AsyncMock(return_value=({}, {}, {}, '', False)),
         'stage_ask_user_tool_calls': Mock(return_value=(False, None)),
         'emit_output': AsyncMock(),
     }
-    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call'})
+    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call', 'split_tool_call_batches'})
+    load_functions(ns, 'utils/tool_permissions.py', {'tool_permission_fingerprint'})
     tree = load_functions(
-        ns, 'utils/middleware.py', {'_split_tool_calls', '_deduplicate_tool_calls', 'append_to_text_field'}
+        ns,
+        'utils/middleware.py',
+        {'_split_tool_calls', '_deduplicate_tool_calls', 'append_to_text_field', 'prepare_tool_execution'},
     )
 
     def calls(node, name):
@@ -114,7 +129,7 @@ def runtime():
     extraction = copy.deepcopy(loop)
     extraction.test = ast.Name(id='tool_calls', ctx=ast.Load())
     extraction.body = extraction.body[: end + 1]
-    wrapper = ast.parse('async def execute_queued_calls():\n    tool_call_iterations = 0\n')
+    wrapper = ast.parse('async def execute_queued_calls():\n    tool_call_iterations = 0\n    stop_reason = None\n')
     wrapper.body[0].body.append(extraction)
     exec(compile(ast.fix_missing_locations(wrapper), 'streaming_tool_call_execution', 'exec'), ns)
     delta_block = next(
@@ -141,8 +156,14 @@ async def test_same_batch_duplicate_id_executes_once(runtime, api):
         ns['response_tool_calls'] = [call('A'), call('A', '{"different":true}')]
     else:
         ns['output'] = [
-            {'type': 'function_call', 'call_id': 'A', 'name': 'write_record', 'arguments': '{}'},
-            {'type': 'function_call', 'call_id': 'A', 'name': 'write_record', 'arguments': '{"different":true}'},
+            {'type': 'function_call', 'call_id': 'A', 'name': 'write_record', 'arguments': '{}', 'status': 'completed'},
+            {
+                'type': 'function_call',
+                'call_id': 'A',
+                'name': 'write_record',
+                'arguments': '{"different":true}',
+                'status': 'completed',
+            },
         ]
     await ns['queue_stream_calls']()
     await ns['execute_queued_calls']()
@@ -197,7 +218,7 @@ async def test_concatenated_arguments_have_stable_distinct_ids_and_never_repeat_
                 'call_id': 'provider-A',
                 'name': 'write_record',
                 'arguments': arguments,
-                'status': 'in_progress',
+                'status': 'completed',
             }
         ]
         ns['response_tool_calls'] = [call('provider-A', arguments), call('provider-A', arguments)]
@@ -208,14 +229,14 @@ async def test_concatenated_arguments_have_stable_distinct_ids_and_never_repeat_
                 'call_id': 'provider-A',
                 'name': 'write_record',
                 'arguments': arguments,
-                'status': 'in_progress',
+                'status': 'completed',
             }
         ]
     await ns['queue_stream_calls']()
     await ns['execute_queued_calls']()
     executed = [item.args[-1] for item in ns['execute_tool_call'].call_args_list]
     assert len(executed) == 2 and len({item['id'] for item in executed}) == 2
-    assert [item['function']['arguments'] for item in executed] == ['{"record":1}', '{"record":2}']
+    assert [json.loads(item['function']['arguments']) for item in executed] == [{'record': 1}, {'record': 2}]
     for item in ns['output']:
         if item['type'] == 'function_call' and item.get('call_id') in {call['id'] for call in executed}:
             item['status'] = 'completed'
@@ -354,7 +375,7 @@ async def test_live_fragmented_new_provider_call_keeps_two_intended_split_effect
     await ns['queue_stream_calls']()
     await ns['execute_queued_calls']()
     executed = [entry.args[-1] for entry in ns['execute_tool_call'].call_args_list]
-    assert [entry['function']['arguments'] for entry in executed] == ['{"record":1}', '{"record":2}']
+    assert [json.loads(entry['function']['arguments']) for entry in executed] == [{'record': 1}, {'record': 2}]
     assert len({entry['id'] for entry in executed}) == 2
 
 
@@ -385,7 +406,9 @@ async def test_split_fetch_url_retires_streamed_placeholder_before_execution(run
         ns['Chats'] = SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock())
         ns['is_saved_chat_id'] = lambda chat_id: chat_id == 'saved-chat'
         ns['event_emitter'] = AsyncMock()
+        ns['get_event_emitter'] = AsyncMock(return_value=ns['event_emitter'])
         ns['metadata'] = {
+            **ns['metadata'],
             'chat_id': 'saved-chat',
             'message_id': 'reply',
             'params': {'tool_approval_mode': 'ask'},
@@ -419,7 +442,7 @@ async def test_split_fetch_url_retires_streamed_placeholder_before_execution(run
 @pytest.mark.parametrize('mode', ['default', 'gemini'])
 async def test_tool_round_freezes_its_actual_model_validation_before_execution(runtime, api, mode):
     ns = runtime.ns
-    ns['metadata'] = {'_tool_schema_validation': {'initial': 'default', 'later': mode}}
+    ns['metadata']['_tool_schema_validation'] = {'initial': 'default', 'later': mode}
     ns['form_data'] = {'model': 'later'}
     ns['output'] = [
         {
@@ -429,6 +452,7 @@ async def test_tool_round_freezes_its_actual_model_validation_before_execution(r
             'arguments': '{"record":1}{"record":2}',
             # A provider-supplied marker must not opt into a different profile.
             'tool_schema_compatibility': 'gemini',
+            'status': 'completed',
         }
     ]
     if api == 'chat':

@@ -63,6 +63,10 @@ for the task. This requirements-based route does not reproduce `uv.lock` exactly
 `backend/requirements-slim.txt` describes the reduced slim image. It replaces the old WIP minimum list;
 do not treat it as the full development environment. Standard images remain the main fork target.
 
+The v0.13.3 frontend build does not need onnxruntime-node CUDA binaries. For a development install
+that must avoid its optional CUDA download, set `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` before `npm ci`;
+the Docker build already does so. This does not change runtime CUDA/PyTorch dependencies.
+
 For only the current lightweight helper tests, a separate supported-Python virtual environment can
 use `python -m pip install pytest pytest-asyncio aiohttp`. This is not a full application environment.
 
@@ -179,10 +183,10 @@ repository-wide cleanup solely to make an unrelated check green.
 ## Fork regression map
 
 Read [the upstream merge index](upstream/README.md) and the
-[v0.12.4 decisions](upstream/v0.12.4-decisions.md) before comparing or merging upstream.
+[v0.13.3 decisions](upstream/v0.13.3-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
-The [dated fork audit](upstream/v0.12.4-fork-audit.md) inventories current behavior and all
+The [dated fork audit](upstream/v0.13.3-fork-audit.md) inventories current behavior and all
 fork-only commits. Its historical verification numbers do not establish current runtime health.
 
 | Behavior                              | Implementation boundary                                                                | Regression starting point                                                                                                                                                                    |
@@ -233,10 +237,10 @@ git status --short
 git branch --show-current
 git rev-parse HEAD
 git rev-parse --is-shallow-repository
-git ls-remote https://github.com/open-webui/open-webui.git refs/tags/v0.12.4
-git merge-base HEAD 33c1978d5bad52a31df75ea55143025dfad18d16
-git diff --name-status 33c1978d5bad52a31df75ea55143025dfad18d16 HEAD
-git log --topo-order --format="%H %s" 33c1978d5bad52a31df75ea55143025dfad18d16..HEAD
+git ls-remote https://github.com/open-webui/open-webui.git refs/tags/v0.13.3
+git merge-base HEAD b0e6098e940942281d9c83f3529ea117287a3a22
+git diff --name-status b0e6098e940942281d9c83f3529ea117287a3a22 HEAD
+git log --topo-order --format="%H %s" b0e6098e940942281d9c83f3529ea117287a3a22..HEAD
 git diff
 ```
 
@@ -894,5 +898,55 @@ temporary full budgets/raw reads/manual compaction, stop timeout, expiry while t
 uncertain outcomes, CAS/quota races, stale epoch, account changes and promotion. Check that ordinary
 chat/chat_message and the four V2 SQL tables have no temporary-context rows. Test saved chats and all
 native transports too. A synthetic provider or fake ACL must be identified as such in the report.
-The sole migration head remains `a122d15e0001`; use the existing SQLite/PostgreSQL fixture suite.
-See [current evidence and remaining checks](upstream/v0.12.4-validation.md).
+The sole migration head is now `a133d11e0001`; the old `a122d15e0001` revision is unchanged.
+See [current evidence and remaining checks](upstream/v0.13.3-validation.md).
+
+## v0.13.3 integration verification
+
+Use Node 22 and supported Python 3.12/3.11, isolated DATA_DIR/STATIC_DIR/DATABASE_URL and synthetic
+fixtures. Record the exact fork/upstream revisions and environment before testing. Full-suite test
+counts change; the [version validation report](upstream/v0.13.3-validation.md) records actual results.
+
+```sh
+python -m pytest backend/tests -q
+npm run test:frontend -- --run
+npm run check
+npm run crypto:verify
+npm run build
+uv lock --check
+git diff --check
+```
+
+| Boundary                                                            | Targeted starting points                                                                                                                       |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hidden context, batch dispatch, original provider replay            | `backend/tests/test_v0133_tool_context.py`, `test_tool_citation_replay.py`, `test_context_compaction_dispatch.py`                              |
+| First-output retry and redacted diagnostics                         | `backend/tests/test_chat_stream_retry.py`, `test_context_compaction_v2.py`                                                                     |
+| Agent stop/publication fence                                        | `backend/tests/test_v0133_agents.py`, `test_v0133_agent_runner.py`, `test_v0133_agent_execution_store.py`                                      |
+| Tether gate and connection routing                                  | `backend/tests/test_v0133_tether.py`, `test_terminal_reads.py`, `test_temporary_terminal_context.py`                                           |
+| Preview Host, authorization, redirect/body rewriting and revocation | `backend/tests/test_v0133_preview.py`, `test_v0133_preview_response.py`, `test_v0133_preview_routes.py`, `test_v0133_preview_establishment.py` |
+| Saved views, side chats and transient state                         | `backend/tests/test_v0133_chat_views.py`, `src/lib/components/chat/ChatTabs/tabs.test.ts`, `src/lib/utils/chat-context-copy.test.ts`           |
+| Preview UI and ticket renewal                                       | `src/lib/apis/terminal/preview.test.ts`, browser component tests under `src/lib/components/chat/ChatControls/`                                 |
+| SQLite/PostgreSQL ancestry and repeated upgrades                    | `backend/tests/test_v0122_migrations.py` (includes the v0.13.3 matrix)                                                                         |
+
+For real migration checks, set `TEST_POSTGRES_URL` to a disposable administrator connection,
+preferably `postgresql+psycopg://…` when psycopg v3 is installed. Each case creates and drops its own
+random database; never point it at a production service. Run the matrix on both supported Python
+versions, including empty, fork and official upgrade paths. Verify one head `a133d11e0001` with parents
+`a122d15e0001` and `9f6c2a8d1b43`; old revisions remain immutable.
+
+Real preview tests opt in with `TERMINAL_PREVIEW_TEST_REDIS_URL`; temporary-context tests use
+`REDIS_TEST_URL` or `TEMPORARY_CONTEXT_TEST_SERVICES_JSON`. Use an isolated Redis service and unique key
+prefixes. Missing opt-in is a skipped real-service test. Test a second store/worker, revoked sessions,
+Redis loss during a stream, scope closing, expiry and no memory fallback.
+
+Build the standard image with `docker build -t open-webui-fork:0.13.3 .`, then run it against disposable
+data. Exercise a real Open Terminal and browser: separate Host rejects API/login/Socket.IO; main Host
+rejects same-origin port proxy; frames cannot access DOM cookies/storage or top navigation; HTTP,
+forms, redirects, SSE and WS/HMR work; ticket renewal, terminal/actor/epoch changes and revocation close
+the right pane. Test Tether on/off independently of Direct Integrations and saved Agent offline/stop
+recovery. Keep external provider/Agent credentials out of fixtures and logs.
+
+Use installed Prettier/Ruff for changed paths and validate local Markdown links, environment/API names,
+and example proxy configuration. Inspect `static/pyodide/pyodide-lock.json` after asset preparation.
+An exit-1 type check remains failing even when every diagnostic matches the fork/official baselines;
+record that comparison separately from passing unit tests or a production build.

@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 ROOT = Path(__file__).resolve().parents[1] / 'open_webui'
 
@@ -121,6 +121,7 @@ def model_controls_schema():
         'ModelControl',
         'ModelParams',
         'ModelVoice',
+        'ModelSubagents',
         'ModelAvatarAnimation',
         'ModelAvatarGesture',
         'ModelVoiceAvatar',
@@ -653,8 +654,14 @@ def model_default_helpers():
     merge = helper('utils/misc.py', ['merge_model_params'])['merge_model_params']
     return helper(
         'utils/models.py',
-        ['effective_reasoning_effort', 'stamp_default_reasoning_effort', 'public_model_params', 'get_all_models'],
-        {'merge_model_params': merge, 'apply_model_controls': apply, 'UserModel': object},
+        [
+            'effective_reasoning_effort',
+            'stamp_default_reasoning_effort',
+            'public_model_params',
+            'publish_model_availability_events',
+            'get_all_models',
+        ],
+        {'merge_model_params': merge, 'apply_model_controls': apply, 'Request': Request, 'UserModel': object},
     )
 
 
@@ -700,7 +707,9 @@ def test_actual_pipe_model_list_reports_the_effective_canonical_default(default_
         ENABLE_FUNCTIONS=False,
         RedisDict=type('RedisDict', (dict,), {}),
     )
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(MODELS={}, BASE_MODELS=[])))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(MODELS={}, BASE_MODELS=[], BASE_MODELS_SNAPSHOT=None))
+    )
     listed = asyncio.run(scope['get_all_models'](request))
     descriptor = next(model for model in listed if model['id'] == stored.id)
     control = descriptor['info']['params']['model_controls']['reasoning']
