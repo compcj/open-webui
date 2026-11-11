@@ -6806,6 +6806,19 @@ async def streaming_chat_response_handler(response, ctx):
                         and not incomplete
                         and current_form_data.get('tool_choice') != 'none'
                         and current_form_data.get('response_format') in (None, {'type': 'text'})
+                        # Signed native blocks bind the original assistant text; changing it
+                        # would invalidate provider replay after a recovered tool executes.
+                        and not any(
+                            block.get('thoughtSignature') or block.get('type') in {'thinking', 'redacted_thinking'}
+                            for item in output
+                            for detail in item.get('reasoning_details') or []
+                            if isinstance(detail, dict)
+                            and detail.get('type') == 'reasoning.native'
+                            and detail.get('format') == 'open-webui-native-v1'
+                            and isinstance(detail.get('data'), dict)
+                            for block in detail['data'].get('blocks') or []
+                            if isinstance(block, dict)
+                        )
                     ):
                         text_items = [item for item in output if item.get('type') == 'message']
                         text = ''.join(

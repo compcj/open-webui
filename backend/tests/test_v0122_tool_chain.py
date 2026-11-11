@@ -119,6 +119,7 @@ async def test_search_dispatch_saved_approval_execution_and_json_reload(pipeline
     message = json.loads(json.dumps(stored))
     install_approval_store(ns, message)
     ns['Chats'].get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(user_id='owner'))
+    ns['Chats'].get_agent_execution = AsyncMock(return_value=None)
     ns['Chats'].get_message_by_id_and_message_id = AsyncMock(return_value=message)
     message['user_id'] = 'owner'
     load_functions(ns, 'utils/tool_approval.py', {'resolve_tool_call_output'})

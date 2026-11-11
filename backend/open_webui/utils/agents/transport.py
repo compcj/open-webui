@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import time
 
@@ -9,8 +10,10 @@ import aiohttp
 from fastapi import HTTPException
 
 from open_webui.env import AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
-from open_webui.utils.terminals import get_terminal_server_url, resolve_terminal_connection
+from open_webui.utils.terminals import TERMINAL_CONTEXT_HEADER, get_terminal_server_url, resolve_terminal_connection
 from open_webui.utils.tether import get_terminal_client
+
+from .access import authorize_agent_terminal
 
 
 class RemoteCompletionUnconfirmed(RuntimeError):
@@ -25,6 +28,9 @@ class TerminalTransport:
     def __init__(self, connection, headers, cookies, user_id):
         self.url = get_terminal_server_url(connection)
         self.headers, self.cookies, self.user_id = headers, cookies, user_id
+        self.terminal_identity = hashlib.sha256(self.url.encode()).hexdigest()
+        self.terminal_context = headers.get(TERMINAL_CONTEXT_HEADER)
+        self.authorization = None
         self.session_id = None
         self.socket = None
         self.task = None
@@ -49,7 +55,28 @@ class TerminalTransport:
         resolved = await resolve_terminal_connection(request, user, metadata)
         if not resolved:
             raise ValueError('Select an accessible server or Tether terminal to use agents')
-        return cls(*resolved, user.id)
+        transport = cls(*resolved, user.id)
+        authorization_metadata = dict(metadata)
+        if isinstance(metadata.get('user_message'), dict):
+            authorization_metadata['user_message'] = dict(metadata['user_message'])
+        transport.authorization = (
+            request,
+            user,
+            authorization_metadata,
+        )
+        return transport
+
+    async def authorize_input(self):
+        if self.authorization is None or self.recovering_output:
+            raise HTTPException(403, 'This agent transport cannot accept new input.')
+        _, headers, cookies = await authorize_agent_terminal(
+            *self.authorization,
+            self.terminal_identity,
+            terminal_context=self.terminal_context,
+        )
+        # Use current credentials only after checking the original URL and context.
+        # If access is later revoked, retained credentials still allow bound cleanup.
+        self.headers, self.cookies = headers, cookies
 
     async def request(self, method, path, body=None):
         async with get_terminal_client(
@@ -70,6 +97,7 @@ class TerminalTransport:
                 return data
 
     async def start(self, provider, options):
+        await self.authorize_input()
         # A lost POST response may still have started a remote process.
         self.start_attempted = True
         session = await self.request('POST', f'/agents/{provider}/sessions', options)
@@ -113,6 +141,10 @@ class TerminalTransport:
             raise ValueError('Agent protocol frame is too large')
         if self.socket is None:
             raise ConnectionError('Agent socket disconnected')
+        if frame.get('type') == 'input':
+            # Covers ordinary input, automatic approval and each replayed frame.
+            # ACKs and EOF retain output / stop input; they do not authorize work.
+            await self.authorize_input()
         await self.socket.send_str(encoded)
 
     async def _pump(self):
@@ -120,6 +152,8 @@ class TerminalTransport:
         try:
             while not self.closed:
                 try:
+                    if not self.recovering_output:
+                        await self.authorize_input()
                     async with get_terminal_client(
                         self.url,
                         self.user_id,
@@ -135,11 +169,14 @@ class TerminalTransport:
                             heartbeat=20,
                         ) as ws:
                             async with self.lock:
+                                if not self.recovering_output:
+                                    await self.authorize_input()
                                 self.socket = ws
                                 token = self.headers.get('Authorization', '').removeprefix('Bearer ')
                                 await self._send({'type': 'auth', 'token': token, 'cursor': self.cursor})
-                                for sequence, (data, _) in self.pending.items():
-                                    await self._send({'type': 'input', 'sequence': sequence, 'data': data})
+                                if not self.recovering_output:
+                                    for sequence, (data, _) in self.pending.items():
+                                        await self._send({'type': 'input', 'sequence': sequence, 'data': data})
                                 self.ready.set()
                             async for message in ws:
                                 if message.type != aiohttp.WSMsgType.TEXT:

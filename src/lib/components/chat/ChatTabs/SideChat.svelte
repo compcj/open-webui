@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolveToolApprovalMode } from '$lib/utils/toolPermissions';
-	import { getContext, onMount, tick } from 'svelte';
+	import { getContext, onMount, setContext, tick } from 'svelte';
+	import type { TerminalCredential } from '$lib/apis/terminal';
 	import { v4 as uuidv4 } from 'uuid';
 	import {
 		socket,
@@ -401,6 +402,40 @@
 			busy = state.uncertain || (state.tasks ?? []).some((task: any) => task.status !== 'done');
 		}
 	});
+	let temporaryTerminalCredential: TerminalCredential | null = null;
+	setContext('temporary-context', {
+		controller: temporaryController,
+		get identity() {
+			return temporaryController.identity;
+		},
+		get chatId() {
+			return temporaryController.chatId;
+		},
+		terminalCredential: (token: string, chatId: string) => {
+			const identity = temporaryController.identity;
+			if (!identity || temporaryController.chatId !== chatId) return token;
+			if (
+				!temporaryTerminalCredential ||
+				typeof temporaryTerminalCredential === 'string' ||
+				temporaryTerminalCredential.token !== token ||
+				temporaryTerminalCredential.temporaryContext.id !== identity.id ||
+				temporaryTerminalCredential.temporaryContext.epoch !== identity.epoch
+			) {
+				const actor = $user?.id;
+				const captured = { id: identity.id, epoch: identity.epoch };
+				temporaryTerminalCredential = {
+					token,
+					temporaryContext: captured,
+					isCurrent: () =>
+						$user?.id === actor &&
+						localStorage.token === token &&
+						temporaryController.identity?.id === captured.id &&
+						temporaryController.identity?.epoch === captured.epoch
+				};
+			}
+			return temporaryTerminalCredential;
+		}
+	});
 	let messages: any[] = [];
 	let draft = initialView?.draft ?? '';
 	let error = '';
@@ -709,6 +744,7 @@
 					return {
 						id: message.id,
 						role: message.role,
+						model: message.model,
 						output: message.output,
 						contextSummary: message.contextSummary
 					};

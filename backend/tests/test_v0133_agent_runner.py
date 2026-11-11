@@ -372,6 +372,125 @@ async def test_agent_resume_rejects_unproven_or_changed_terminal_url(runner, old
     runner.transport.request.assert_not_awaited()
 
 
+CONTEXT_BINDINGS = [
+    pytest.param({'terminal_context': 'chat:chat'}, None, False, id='chat-to-default'),
+    pytest.param({'terminal_context': None}, 'chat:chat', False, id='default-to-chat'),
+    pytest.param({'terminal_context': 'chat:chat'}, 'chat:other', False, id='different-chat'),
+    pytest.param({'terminal_context': 'chat:chat'}, 'chat:chat', True, id='same-chat'),
+    pytest.param({'terminal_context': None}, None, True, id='same-default'),
+    pytest.param({}, 'chat:chat', True, id='legacy-unbound'),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('binding_source', ['signed', 'execution'])
+@pytest.mark.parametrize('binding,resolved_context,allowed', CONTEXT_BINDINGS)
+async def test_agent_resume_context_binding(runner, binding_source, binding, resolved_context, allowed):
+    agent = {'provider': 'codex', 'terminal_id': 'terminal', 'model': 'agent-model'}
+    previous = {
+        **agent,
+        'purpose': 'terminal-agent',
+        'user': 'author',
+        'chat': 'chat',
+        'session_id': 'private-provider-session',
+        'cwd': '/original-workspace',
+        'terminal_identity': runner.record['terminal_identity'],
+    }
+    prior_execution = None
+    if binding_source == 'signed':
+        previous.update(binding)
+    else:
+        # Old signed state may obtain its URL binding from the completed execution.
+        previous.pop('terminal_identity')
+        prior_execution = {
+            **runner.record,
+            **agent,
+            'message_id': 'previous',
+            'cwd': previous['cwd'],
+            'state': 'completed',
+            **binding,
+        }
+    runner.transport.terminal_context = resolved_context
+    runner.transport.start = AsyncMock()
+    runner.transport.request = AsyncMock()
+    runner.transport.start_receiving = lambda _journal: None
+    provider, claim, upload, directory, finalize = (AsyncMock() for _ in range(5))
+    claim.return_value = True
+    runner.namespace.update(
+        PROVIDERS={'codex': provider},
+        is_saved_chat_id=lambda _: True,
+        decode_token=lambda _: previous,
+        Output=lambda *args: runner.output,
+        copy=copy,
+        upload_files_to_terminal=upload,
+        get_terminal_json=directory,
+        confirm_remote_completion=finalize,
+    )
+    runner.namespace['Chats'].get_message_by_id_and_message_id = AsyncMock(
+        return_value={'meta': {'agent': 'signed'}, 'childrenIds': ['next-user']}
+    )
+    runner.namespace['Chats'].get_agent_execution = AsyncMock(return_value=prior_execution)
+    runner.namespace['Chats'].claim_agent_execution = claim
+    runner.namespace['Chats'].update_agent_execution = AsyncMock(return_value=True)
+    load_functions(runner.namespace, 'utils/agents/runner.py', {'run'})
+    metadata = {
+        **runner.record,
+        'message_id': 'next-reply',
+        'user_message_id': 'next-user',
+        'user_message': {'parentId': 'previous'},
+    }
+
+    if allowed:
+        result = await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
+        assert result['status'] is True
+        claim.assert_awaited_once()
+        runner.transport.start.assert_awaited_once()
+        assert runner.transport.start.await_args.args[1]['resume'] == previous['session_id']
+        provider.assert_awaited_once()
+        finalize.assert_awaited_once_with(runner.transport, runner.output, metadata, succeeded=True)
+    else:
+        with pytest.raises(ValueError, match='terminal (connection|context)'):
+            await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
+        claim.assert_not_awaited()
+        runner.transport.start.assert_not_awaited()
+        provider.assert_not_awaited()
+        upload.assert_not_awaited()
+        finalize.assert_not_awaited()
+    directory.assert_not_awaited()
+    runner.transport.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('binding,resolved_context,allowed', CONTEXT_BINDINGS)
+async def test_recovered_stop_context_binding(runner, published, binding, resolved_context, allowed):
+    runner.record.update(output_journal_version=1, output_cursor=3, output_published=published, **binding)
+    runner.transport.terminal_context = resolved_context
+    runner.transport.request = AsyncMock(return_value={'status': True})
+    acquire = AsyncMock(wraps=runner.namespace['Chats'].acquire_agent_stop)
+    runner.namespace['Chats'].acquire_agent_stop = acquire
+
+    result = await runner.namespace['retry_agent_stop'](object(), SimpleNamespace(id='author'), dict(runner.record))
+
+    assert result['status'] is allowed
+    if allowed:
+        runner.transport.request.assert_awaited_once_with('DELETE', '/agents/sessions/remote-session')
+        assert runner.record['state'] == 'completed'
+        assert runner.record['remote_completed'] is True
+        assert runner.record['output_published'] is True
+        if not published:
+            runner.transport.drain_available_output.assert_awaited_once()
+    else:
+        acquire.assert_not_awaited()
+        runner.transport.drain_available_output.assert_not_awaited()
+        runner.transport.request.assert_not_awaited()
+        assert runner.record['state'] == 'stopping'
+        assert runner.record['output_published'] is published
+        assert runner.record.get('remote_completed') is not True
+        assert runner.record.get('complete_reply') is not True
+        assert not runner.transport.completion_confirmed
+
+
 @pytest.mark.asyncio
 async def test_output_publication_retries_after_background_save_failure():
     namespace = {'asyncio': asyncio, 'copy': copy, 'time': time}

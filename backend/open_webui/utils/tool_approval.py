@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from open_webui.constants import ERROR_MESSAGES
@@ -163,6 +164,60 @@ async def resolve_tool_call_output(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    # Resolve credentials outside the chat write transaction: OAuth refresh or
+    # Redis coordination may perform network/SQL work. Only server-owned execution
+    # state selects the target; the locked write below fences changes during I/O.
+    try:
+        authorized_execution = await Chats.get_agent_execution(chat_id, message_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            503, 'Agent terminal authorization is temporarily unavailable.', headers={'Retry-After': '2'}
+        ) from None
+    authorized_binding = None
+    if authorized_execution is not None:
+        from open_webui.utils.agents.access import authorize_agent_terminal
+
+        if (
+            authorized_execution.get('user_id') != user.id
+            or authorized_execution.get('chat_id') != chat_id
+            or authorized_execution.get('message_id') != message_id
+            or not authorized_execution.get('task_id')
+            or not authorized_execution.get('terminal_id')
+            or not authorized_execution.get('terminal_identity')
+        ):
+            raise HTTPException(403, 'Invalid agent execution binding')
+        if authorized_execution.get('state') != 'running':
+            raise HTTPException(409, 'Agent request is no longer active')
+        authorized_binding = {
+            key: authorized_execution.get(key)
+            for key in (
+                'user_id',
+                'chat_id',
+                'message_id',
+                'task_id',
+                'session_id',
+                'terminal_id',
+                'provider',
+                'model',
+                'cwd',
+                'terminal_identity',
+                'terminal_context',
+                'automation_id',
+                'state',
+            )
+        }
+        await authorize_agent_terminal(
+            request,
+            user,
+            {key: authorized_binding[key] for key in ('terminal_id', 'chat_id', 'automation_id')},
+            authorized_binding['terminal_identity'],
+            **(
+                {'terminal_context': authorized_binding['terminal_context']}
+                if 'terminal_context' in authorized_execution
+                else {}
+            ),
+        )
+
     async with Chats.edit_message_output(chat_id, message_id) as message:
         if not message:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
@@ -205,6 +260,26 @@ async def resolve_tool_call_output(
                 raise HTTPException(400, 'Invalid response for this agent request')
             if form_data.action == 'answer' and not isinstance(form_data.answers, dict):
                 raise HTTPException(400, 'Answers must be keyed by question')
+            execution = (message.get('meta') or {}).get('agent_execution') or {}
+            if authorized_binding is None:
+                raise HTTPException(403, 'Invalid agent execution binding')
+            if any(execution.get(key) != value for key, value in authorized_binding.items()):
+                raise HTTPException(409, 'Agent execution changed during authorization. Retry the request.')
+            expected = {
+                'user_id': user.id,
+                'chat_id': chat_id,
+                **{key: binding.get(key) for key in ('terminal_id', 'provider', 'model', 'cwd')},
+            }
+            if not expected['terminal_id'] or any(execution.get(key) != value for key, value in expected.items()):
+                raise HTTPException(403, 'Invalid agent execution binding')
+            terminal_identity = binding.get('terminal_identity') or execution.get('terminal_identity')
+            if not terminal_identity or terminal_identity != execution.get('terminal_identity'):
+                raise HTTPException(403, 'Invalid agent terminal binding')
+            context = {}
+            if 'terminal_context' in binding or 'terminal_context' in execution:
+                context['terminal_context'] = binding.get('terminal_context', execution.get('terminal_context'))
+                if 'terminal_context' in execution and context['terminal_context'] != execution['terminal_context']:
+                    raise HTTPException(403, 'Invalid agent terminal context')
             function_call['agent_resolution'] = form_data.model_dump()
             function_call['status'] = 'queued'
             # The running native client consumes this persisted response. Do not start a model/tool loop.

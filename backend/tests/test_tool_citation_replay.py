@@ -747,6 +747,7 @@ async def test_saved_tool_approval_requires_current_write_access_and_message_aut
     install_approval_store(ns, message)
     chat = SimpleNamespace(user_id='owner')
     ns['Chats'].get_accessible_chat_by_id = AsyncMock(return_value=chat if actor in {'member', 'owner'} else None)
+    ns['Chats'].get_agent_execution = AsyncMock(return_value=None)
     ns.update(
         HTTPException=HTTPException,
         status=status,

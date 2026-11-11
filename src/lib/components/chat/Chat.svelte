@@ -389,7 +389,7 @@
 		return projectRawChat({ history, params, files: chatFiles });
 	};
 
-	setContext('temporary-context', {
+	const temporaryContext = {
 		controller: temporaryController,
 		get identity() {
 			return temporaryController.identity;
@@ -422,7 +422,8 @@
 			}
 			return temporaryTerminalCredential;
 		}
-	});
+	};
+	setContext('temporary-context', temporaryContext);
 	let temporaryActorId: string | undefined;
 	$: if ($user?.id !== temporaryActorId) {
 		if (temporaryActorId !== undefined) {
@@ -4944,7 +4945,10 @@
 			localStorage.token
 		);
 		if (!connection) throw new Error($i18n.t('Terminal Not Found'));
-		const result = await setCwd(connection.baseUrl, connection.key, context.currentDirectory, id);
+		const credential = connection.system
+			? temporaryContext.terminalCredential(localStorage.token, id)
+			: connection.key;
+		const result = await setCwd(connection.baseUrl, credential, context.currentDirectory, id);
 		if (!result?.cwd)
 			throw new Error(
 				$i18n.t('Working directory is unavailable. Check the terminal connection and path.')

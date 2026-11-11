@@ -121,6 +121,10 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   branches under the chat transaction. A matching empty automation placeholder can be reused.
   Continuing a signed provider session requires the same actor, chat, provider, model, and actual
   terminal URL identity. Legacy signed state needs the normalized execution record to prove that binding.
+- Recheck live terminal access before accepting native Agent approvals and before starting or sending
+  input to the remote session, including reconnect replay. A grant at session creation is not continuing
+  authorization. Preserve the bound terminal/context identity; revocation must not block retaining
+  received output or confirming termination of that existing session.
 - Commit each exact sequenced terminal output frame before acknowledging it or giving it to a provider
   reader. Keep this journal server-owned and separate from user-visible chat output, copies, and model input.
   A duplicate sequence can only confirm the same bytes for the same execution and terminal session.

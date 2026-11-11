@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import contextlib
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -22,14 +23,19 @@ def transport():
         'HTTPException': HTTPException,
         'asyncio': asyncio,
         'contextlib': contextlib,
+        'hashlib': hashlib,
         'json': json,
         'time': time,
         'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': False,
         'get_terminal_server_url': lambda connection: connection['url'],
+        'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), ns)
     value = ns['TerminalTransport']({'url': 'http://synthetic-terminal'}, {}, {}, 'actor')
     value.session_id = 'remote-session'
+    # These carrier/retention tests assume authorization. The live resolver and
+    # approval/send races are exercised in test_v0133_agent_terminal_access.py.
+    value.authorize_input = AsyncMock()
     return value
 
 

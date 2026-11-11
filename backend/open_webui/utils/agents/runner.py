@@ -150,7 +150,11 @@ async def run(request, form_data, user, metadata, model):
     transport = await TerminalTransport.resolve(request, user, metadata)
     terminal_identity = hashlib.sha256(transport.url.encode()).hexdigest()
     output = Output(metadata, user, transport.raise_if_failed, form_data)
-    output.state = {**agent, 'terminal_identity': terminal_identity}
+    output.state = {
+        **agent,
+        'terminal_identity': terminal_identity,
+        'terminal_context': transport.terminal_context,
+    }
     previous = None
     parent = (metadata.get('user_message') or {}).get('parentId')
     if parent:
@@ -165,6 +169,8 @@ async def run(request, form_data, user, metadata, model):
         ):
             previous = None
         if previous:
+            if 'terminal_context' in previous and previous['terminal_context'] != transport.terminal_context:
+                raise ValueError('The agent terminal context changed. Start a new chat.')
             previous_identity = previous.get('terminal_identity')
             if previous_identity is None:
                 # Existing signed provider sessions may use their original normalized
@@ -181,6 +187,11 @@ async def run(request, form_data, user, metadata, model):
                     'state': 'completed',
                 }
                 if prior_execution and all(prior_execution.get(key) == value for key, value in expected.items()):
+                    if (
+                        'terminal_context' in prior_execution
+                        and prior_execution['terminal_context'] != transport.terminal_context
+                    ):
+                        raise ValueError('The agent terminal context changed. Start a new chat.')
                     previous_identity = prior_execution.get('terminal_identity')
             if previous_identity != terminal_identity:
                 raise ValueError('The agent terminal connection changed or could not be verified. Start a new chat.')
@@ -206,6 +217,7 @@ async def run(request, form_data, user, metadata, model):
         'model': agent['model'],
         'cwd': cwd,
         'terminal_identity': terminal_identity,
+        'terminal_context': transport.terminal_context,
         'automation_id': metadata.get('automation_id'),
     }
     if not await Chats.claim_agent_execution(metadata['chat_id'], metadata['message_id'], execution):
@@ -327,7 +339,9 @@ async def retry_agent_stop(request, user, execution):
                 'automation_id': execution.get('automation_id'),
             },
         )
-        if hashlib.sha256(transport.url.encode()).hexdigest() != execution.get('terminal_identity'):
+        if hashlib.sha256(transport.url.encode()).hexdigest() != execution.get('terminal_identity') or (
+            'terminal_context' in execution and execution['terminal_context'] != transport.terminal_context
+        ):
             return pending
         transport.session_id = execution['session_id']
         execution = await Chats.acquire_agent_stop(*identity, attempt_id, recover_unpublished=recover_output)
