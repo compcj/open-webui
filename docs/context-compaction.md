@@ -399,6 +399,22 @@ chat compaction. Cancellation
 and conflicting writes preserve raw history and the last valid checkpoint. `/compact` follows the
 selected mode, requires chat ownership and is unavailable while a response is active.
 
+诊断“压缩失败后继续生成，再断流”时，先查看后端 `V2 compaction failed` 日志中的 `reason`、
+`cause`、`summary_model` 和 `timeout_seconds`，再比较 `input_tokens` 与 `input_budget`。
+`tool_budget_pending=True` 表示还需完成工具结果预算校验，不能仅凭这条日志认定请求可以发送。
+摘要超时的底层异常类型为 `TimeoutError`；空摘要、无有效缩减等原因由 `reason` 区分。
+随后出现的 `ClientPayloadError` 表示响应传输不完整，本身不能证明上下文超限。
+Chat Completions 停止自动重试时，`reason=stream_committed` 表示已收到阻止重发的事件或缓冲达到上限；
+这包括思考、正文、工具、用量、结束及未知事件。`reason=retry_exhausted` 表示第二次请求也失败；
+同时记录 `attempt` 和 `stream_committed`。这些诊断不记录请求正文、上游错误正文或异常链正文。
+
+For a compaction warning followed by a stream interruption, inspect the V2 log's reason, cause type,
+summary model, timeout and input budget first. Pending tool budgeting still needs to pass before
+transport. A later incomplete-transfer error alone does not establish context overflow. Chat
+Completions logs distinguish a committed stream from an exhausted retry; commitment includes
+substantive or unknown events and the prelude buffer limit. Diagnostic fields exclude request,
+provider-error and exception-chain bodies.
+
 ## 共享状态与精确工具读取 / Shared state and exact tools
 
 多人续写共用同一聊天、模型及有效分支的 V2 检查点和工具结果选用版本，不按参与者另建状态。

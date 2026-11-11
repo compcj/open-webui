@@ -126,6 +126,27 @@ async def test_second_payload_failure_is_reported_without_third_attempt(router):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('committed', [True, False])
+async def test_terminal_failure_explains_retry_boundary_without_logging_payload(router, caplog, committed):
+    caplog.set_level(logging.WARNING, logger='open_webui.utils.chat_stream_retry')
+    attempts = (
+        [Response([event(chat_chunk('private model output')), aiohttp.ClientPayloadError('private provider body')])]
+        if committed
+        else [Response([aiohttp.ClientPayloadError('private provider body')]) for _ in range(2)]
+    )
+    response = await router.invoke(attempts)
+    with pytest.raises(aiohttp.ClientPayloadError, match='private provider body'):
+        _ = [chunk async for chunk in response.body_iterator]
+    reason = 'stream_committed' if committed else 'retry_exhausted'
+    assert f'reason={reason}' in caplog.text
+    assert f'attempt={1 if committed else 2}' in caplog.text
+    assert 'private model output' not in caplog.text
+    assert 'private provider body' not in caplog.text
+    assert len(router.requests) == (1 if committed else 2)
+    assert all(response.closed for response in attempts)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'chunk',
     [

@@ -294,6 +294,68 @@ class EngineTests(IsolatedCase):
                 asyncio.run(m.prepare_v2_request(request, object(), payload, {}, 'model', {'model': {}}, force=True))
         self.assertEqual(error.exception.status_code, 400)
 
+    def test_failure_log_preserves_summary_reason_and_redacts_provider_exception(self):
+        from unittest.mock import AsyncMock
+
+        m, request, payload, store, events = self.setup_engine(context=40000)
+        reason = 'Summary request timed out or failed; retry or select another summary model'
+
+        async def fail(*args, **kwargs):
+            try:
+                raise TimeoutError('private provider response and credentials')
+            except TimeoutError as exc:
+                raise m.CompactionFailure(reason) from exc
+
+        with patch.object(m, 'generate_summary', AsyncMock(side_effect=fail)):
+            with self.assertLogs(m.log, level='WARNING') as logs:
+                result = asyncio.run(
+                    m.prepare_v2_request(request, object(), payload, {}, 'model', {'model': {}}, force=True)
+                )
+        diagnostic = '\n'.join(logs.output)
+        self.assertIn(reason, diagnostic)
+        self.assertIn('cause=TimeoutError', diagnostic)
+        self.assertIn('input_within_budget=True', diagnostic)
+        self.assertIn('input_budget=', diagnostic)
+        self.assertIn('summary_model=', diagnostic)
+        self.assertIn('timeout_seconds=60', diagnostic)
+        self.assertNotIn('private provider', diagnostic)
+        self.assertNotIn(payload['messages'][-1]['content'], diagnostic)
+        self.assertEqual(result, payload)
+        store.save_checkpoint.assert_not_awaited()
+
+    def test_over_budget_failure_is_logged_without_raw_unexpected_exception(self):
+        from unittest.mock import AsyncMock
+
+        m, request, payload, store, events = self.setup_engine(context=1000)
+        with patch.object(m, 'generate_summary', AsyncMock(side_effect=ValueError('private provider response'))):
+            with self.assertLogs(m.log, level='WARNING') as logs:
+                with self.assertRaises(Exception) as error:
+                    asyncio.run(
+                        m.prepare_v2_request(request, object(), payload, {}, 'model', {'model': {}}, force=True)
+                    )
+        diagnostic = '\n'.join(logs.output)
+        self.assertIn('failure=ValueError', diagnostic)
+        self.assertIn('input_within_budget=False', diagnostic)
+        self.assertNotIn('private provider', diagnostic)
+        self.assertEqual(error.exception.status_code, 400)
+        store.save_checkpoint.assert_not_awaited()
+
+    def test_summary_context_limit_log_does_not_copy_provider_error_body(self):
+        from unittest.mock import AsyncMock
+
+        m, request, payload, store, events = self.setup_engine(context=40000)
+        error = m.SummaryContextLimitError('context_length_exceeded: private prompt echoed by provider')
+        with patch.object(m, 'generate_summary', AsyncMock(side_effect=error)):
+            with self.assertLogs(m.log, level='WARNING') as logs:
+                result = asyncio.run(
+                    m.prepare_v2_request(request, object(), payload, {}, 'model', {'model': {}}, force=True)
+                )
+        diagnostic = '\n'.join(logs.output)
+        self.assertIn('Summary request exceeds the context limit', diagnostic)
+        self.assertNotIn('private prompt', diagnostic)
+        self.assertEqual(result, payload)
+        store.save_checkpoint.assert_not_awaited()
+
     def test_cancelled_summary_and_stale_write_preserve_checkpoint(self):
         from unittest.mock import AsyncMock
 

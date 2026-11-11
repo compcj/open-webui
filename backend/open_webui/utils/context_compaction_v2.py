@@ -1553,6 +1553,28 @@ async def prepare_v2_request(
                     'before_tokens': before,
                 },
             )
+            # Context-limit errors can contain the provider body. Log a fixed
+            # reason for those and only the type of any underlying exception.
+            log_reason = (
+                'Summary request exceeds the context limit'
+                if isinstance(exc, SummaryContextLimitError)
+                else description
+            )
+            cause = exc.__cause__ or exc.__context__
+            log.warning(
+                'V2 compaction failed: failure=%s cause=%s reason=%r '
+                'input_tokens=%d input_budget=%d input_within_budget=%s tool_budget_pending=%s '
+                'summary_model=%r timeout_seconds=%s',
+                type(exc).__name__,
+                type(cause).__name__ if cause is not None else 'none',
+                log_reason,
+                before,
+                budget.input_budget,
+                before <= budget.input_budget,
+                bool(tool_plan),
+                settings.summary_model or model_id,
+                settings.timeout_seconds,
+            )
             if before > budget.input_budget and not tool_plan:
                 from fastapi import HTTPException
 
@@ -1560,7 +1582,6 @@ async def prepare_v2_request(
                     status_code=400,
                     detail=f'Context exceeds the input budget ({before}/{budget.input_budget} tokens). {description}',
                 ) from exc
-            log.warning('V2 compaction failed within input budget; preserving request: %s', type(exc).__name__)
     if tool_plan and admit_tools:
         try:
             original = await tool_plan.finish(original)

@@ -86,6 +86,12 @@ async def stream_chat_with_retry(source, retry_stream):
             return
         except aiohttp.ClientPayloadError:
             if attempt or committed:
+                log.warning(
+                    'Chat Completions payload interrupted; not retrying: reason=%s attempt=%d stream_committed=%s',
+                    'retry_exhausted' if attempt else 'stream_committed',
+                    attempt + 1,
+                    committed,
+                )
                 for chunk in pending + event:
                     yield chunk
                 raise
