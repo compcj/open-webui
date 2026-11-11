@@ -4,6 +4,12 @@
 实施时确认的补充决策与实际结果分别记录在[本版 decisions](../../upstream/v0.13.3-decisions.md)
 和[validation](../../upstream/v0.13.3-validation.md)，不能用计划中的验收要求代替实际通过证据。
 
+执行结果：已在 `codex/merge-upstream-v0.13.3` 完成本地双亲合并
+`3241fa15a81db4fb43bcda51df74570e59c0ee5d`。实现包含下面阶段 A–D 及文档交付；真实检查结果和未覆盖项
+以 validation 为准。实施期间用户确认保留终端 Cookie jar、允许终端内部 WS 重定向，以及强制停止可标记
+尾部输出不完整但必须等待远端终止确认；这些补充决策替代原计划对应的宽泛表述，详见 decisions。
+原始 main 工作区保留在 `35daa1ae8c1315c102e044d530636dbb98b3c16c`，未推送、发布或部署。
+
 ## 目标与基线
 
 完整合入官方 v0.13.3，覆盖 v0.12.5 至 v0.13.3，保留 fork 的有效扩展，增加 Tether 独立开关和独立来源预览。

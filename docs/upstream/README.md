@@ -17,8 +17,9 @@ The current integrated release is v0.13.3, targeting official commit
 `b0e6098e940942281d9c83f3529ea117287a3a22`. Read its [decision record](v0.13.3-decisions.md),
 [temporary V2 contracts](../temporary-context-v2.md), [complete audit](v0.13.3-fork-audit.md),
 [file inventory](v0.13.3-fork-files.md) and [actual validation with limits](v0.13.3-validation.md).
-The audit records the genuine two-parent merge and the exact code cutoff. The integration is local,
-with no push, release or deployment.
+The genuine two-parent merge and runtime code cutoff is `3241fa15a81db4fb43bcda51df74570e59c0ee5d`.
+Its second parent is the official target above; the following documentation commit archives final
+reports and audits. The integration is local, with no push, release or deployment.
 These records are dated snapshots; recompute tree/history comparisons for later work. Earlier
 release records and validation numbers remain historical evidence.
 
