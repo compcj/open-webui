@@ -372,7 +372,7 @@ async def test_atomic_membership_insert_refuses_an_upload_deleted_before_associa
     from contextlib import asynccontextmanager
     from typing import Optional
     from pydantic import BaseModel, ConfigDict
-    from sqlalchemy import Column, Integer, String, insert, literal, select
+    from sqlalchemy import JSON, Column, Integer, String, func, insert, literal, select, update
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
     from sqlalchemy.orm import declarative_base
 
@@ -381,6 +381,12 @@ async def test_atomic_membership_insert_refuses_an_upload_deleted_before_associa
     class File(base):
         __tablename__ = 'file'
         id = Column(String, primary_key=True)
+
+    class Knowledge(base):
+        __tablename__ = 'knowledge'
+        id = Column(String, primary_key=True)
+        meta = Column(JSON)
+        updated_at = Column(Integer)
 
     class KnowledgeFile(base):
         __tablename__ = 'knowledge_file'
@@ -418,15 +424,22 @@ async def test_atomic_membership_insert_refuses_an_upload_deleted_before_associa
         get_async_db_context=context,
         AsyncSession=AsyncSession,
         KnowledgeFile=KnowledgeFile,
+        Knowledge=Knowledge,
+        Config=SimpleNamespace(get=AsyncMock(return_value=None)),
         File=File,
         insert=insert,
         literal=literal,
         select=select,
+        func=func,
+        update=update,
     )
     exec(compile(ast.Module(body=[model, method], type_ignores=[]), str(path), 'exec'), ns)
     async with engine.begin() as connection:
         await connection.run_sync(base.metadata.create_all)
     try:
+        async with sessions() as session:
+            session.add(Knowledge(id='kb', meta={}, updated_at=1))
+            await session.commit()
         assert await ns['add_file_to_knowledge_by_id'](None, 'kb', 'deleted-file', 'actor') is None
         async with sessions() as session:
             assert (await session.execute(select(KnowledgeFile))).scalars().all() == []

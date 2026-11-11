@@ -69,6 +69,22 @@ async def test_live_call_rechecks_shared_chat_and_model_access(runtime):
 
 
 @pytest.mark.asyncio
+async def test_live_agent_call_rechecks_terminal_and_never_requires_global_model(runtime):
+    model_id = 'agent:terminal:codex:model'
+    discover = AsyncMock(return_value={'id': model_id})
+    runtime.ns['get_realtime_agent_model'] = discover
+    ws = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(MODELS={})))
+    check = runtime.ns['check_realtime_access']
+    assert await check(ws, 'synthetic', None, 'chat-1', model_id, terminal_id='terminal') == runtime.user
+    discover.assert_awaited_once_with(ws, runtime.user, 'chat-1', model_id, 'terminal')
+    runtime.ns['check_model_access'].assert_not_awaited()
+    discover.side_effect = HTTPException(503, 'retry')
+    with pytest.raises(HTTPException) as caught:
+        await check(ws, 'synthetic', None, 'chat-1', model_id, terminal_id='terminal')
+    assert caught.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_live_permission_and_token_revocation_fail_closed(runtime):
     ws = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(MODELS={})))
     runtime.ns['has_permission'].return_value = False

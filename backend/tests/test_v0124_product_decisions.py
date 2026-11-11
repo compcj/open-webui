@@ -85,8 +85,8 @@ async def test_controls_and_advanced_params_are_not_authorized_by_panel_permissi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('lazy,expected', [(False, {'selected', 'mentioned'}), (True, {'mentioned'})])
-async def test_selected_skills_eager_by_default_mentions_stay_eager(lazy, expected):
+@pytest.mark.parametrize('lazy,expected', [(False, {'selected', 'mentioned', 'preset'}), (True, {'mentioned'})])
+async def test_selected_and_preset_skills_eager_by_default_mentions_stay_eager(lazy, expected):
     tree = ast.parse((ROOT / 'utils/middleware.py').read_text(encoding='utf-8'))
     process = next(
         node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'process_chat_payload'

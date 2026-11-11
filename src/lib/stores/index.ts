@@ -5,20 +5,19 @@ import {
 	type Visibility
 } from '$lib/utils/ui-visibility';
 import { APP_NAME } from '$lib/constants';
-import { type Writable, derived, writable } from 'svelte/store';
+import { type Writable, derived, get, writable } from 'svelte/store';
+import type { CommentTarget } from '$lib/apis/comments';
 import type { ModelConfig } from '$lib/apis';
 import type { Banner } from '$lib/types';
 import type { Socket } from 'socket.io-client';
-import type { AudioQueue } from '$lib/utils/audio';
+import type { AudioQueue, NotificationSoundStyle } from '$lib/utils/audio';
 import { canUseTemporaryChat } from '$lib/utils/chat-access';
 import type { ToolFeaturesByModel } from '$lib/utils/tool-feature-preferences';
 import type { I18nOverrides } from '$lib/utils/translationDictionary';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
 
-// What is held here is the only truth the house knows.
-// When it changes, let every room hear at once.
-// Backend
+// Backend identity and session state
 export const WEBUI_NAME = writable(APP_NAME);
 
 export const WEBUI_VERSION = writable(null);
@@ -92,6 +91,10 @@ export type SelectedFolder = {
 export const selectedFolder: Writable<SelectedFolder | null> = writable(null);
 
 export const models: Writable<Model[]> = writable([]);
+
+export const baseModels = derived(models, ($models) =>
+	$models.filter((model) => model.owned_by !== 'terminal')
+);
 
 export const knowledge: Writable<null | Document[]> = writable(null);
 export const tools = writable(null);
@@ -194,7 +197,14 @@ export const showSearch = writable(false);
 export const showSettings: Writable<boolean | string | SettingsModalRequest> = writable(false);
 export const showChangelog = writable(false);
 
-export const showControls = writable(false);
+export const showTabs = writable<
+	| boolean
+	| 'comments'
+	| 'files'
+	| 'side'
+	| 'voice'
+	| (CommentTarget & { tab: 'comments'; comment_id?: string })
+>(false);
 export const showEmbeds = writable(false);
 export const showOverview = writable(false);
 export const showArtifacts = writable(false);
@@ -204,9 +214,6 @@ export type FileNavOpenRequest = string | { path: string; page?: number | null }
 export const showFileNavPath: Writable<FileNavOpenRequest | null> = writable(null);
 export const showFileNavDir: Writable<string | null> = writable(null);
 export const selectedTerminalId: Writable<string | null> = writable(null);
-export const connectedUserTerminals = writable(
-	new Map<symbol, { terminalId: string; chatId: string }>()
-);
 
 export const artifactCode = writable(null);
 export const artifactContents = writable(null);
@@ -221,26 +228,42 @@ export const temporaryChatAllowed = derived([config, user], ([$config, $user]) =
 		$user?.permissions?.chat?.temporary
 	)
 );
+export const openSideChatIds = writable<Set<string>>(new Set());
+export const sideChatRequest = writable<{ parentId: string; prompt: string } | null>(null);
 
-// Transient one-shot event from the desktop shell (Spotlight, drag-and-drop, etc.).
-// Set by +layout.svelte, consumed and cleared by Chat.svelte.
-export type DesktopEventFile = { name: string; mimeType: string; dataUrl: string };
-export type DesktopEvent = {
-	type: string;
-	data?: any;
+export type QueryData = {
+	query: string;
+	files: { name: string; mimeType: string; dataUrl: string }[];
 };
+export type TetherEvent = { type: 'query'; data: QueryData } | { type: 'voice' };
+// The legacy call shortcut is separate from acknowledged Tether events.
+export type DesktopEvent =
+	| { type: 'call'; handoff?: never }
+	| (TetherEvent & {
+			handoff: { isCurrent: () => boolean; complete: (error?: string) => void };
+	  });
 export const desktopEvent: Writable<DesktopEvent | null> = writable(null);
 
 export const isLastActiveTab = writable(true);
-export const playingNotificationSound = writable(false);
 
-export type Model = OpenAIModel | OllamaModel | ArenaModel;
+export type Model = OpenAIModel | OllamaModel | ArenaModel | AgentModel;
+
+export interface AgentModel extends BaseModel {
+	owned_by: 'terminal';
+	agent: {
+		terminal_id: string;
+		provider: 'codex' | 'claude-code' | 'cursor' | 'grok' | 'opencode' | 'cline' | 'gemini' | 'pi';
+		model: string;
+	};
+}
 
 type BaseModel = {
 	id: string;
 	name: string;
 	info?: ModelConfig;
-	owned_by: 'ollama' | 'openai' | 'arena';
+	tags?: { name: string }[];
+	connection_type?: 'local' | 'external';
+	owned_by: 'ollama' | 'openai' | 'arena' | 'terminal';
 	preset?: boolean;
 	arena?: boolean;
 	direct?: boolean;
@@ -316,6 +339,7 @@ type Settings = {
 	collapseCodeBlocks?: boolean;
 	expandDetails?: boolean;
 	notificationSound?: boolean;
+	notificationSoundType?: NotificationSoundStyle;
 	notificationSoundAlways?: boolean;
 	stylizedPdfExport?: boolean;
 	notifications?: any;
@@ -329,6 +353,7 @@ type Settings = {
 	hapticFeedback?: boolean;
 	responseAutoCopy?: any;
 	richTextInput?: boolean;
+	showInputSelections?: boolean;
 	params?: any;
 	userLocation?: any;
 	webSearch?: any;
@@ -342,10 +367,9 @@ type Settings = {
 	iframeSandboxAllowForms?: boolean;
 	iframeSandboxAllowSameOrigin?: boolean;
 	iframeSandboxAllowDownloads?: boolean;
-	terminalPreviewAllowSameOrigin?: boolean;
+	showFilesOnTerminalSelect?: boolean;
 	scrollOnBranchChange?: boolean;
 	scrollOnResponseGeneration?: boolean;
-	showFilesOnTerminalSelect?: boolean;
 	terminalFileDisplay?: 'sidebar' | 'inline';
 	directConnections?: null;
 	chatBubble?: boolean;
@@ -418,6 +442,17 @@ type Document = {
 };
 
 type Config = {
+	file?: {
+		max_size?: number | null;
+		max_count?: number | null;
+		full_context?: boolean;
+		full_text_char_threshold?: number;
+		image_compression?: { width?: number | null; height?: number | null };
+	};
+	metadata?: {
+		auth_logo_position?: 'center' | 'top-right';
+		login_footer?: string;
+	};
 	audio?: {
 		realtime?: { enabled: boolean; model: string; voice: string };
 		stt: { engine: string };
@@ -473,9 +508,12 @@ type Config = {
 		context_compaction_mode?: 'off' | 'legacy' | 'v2';
 		context_compaction_default_context_window?: number;
 		enable_tool_permissions?: boolean;
+		enable_tool_permissions_auto?: boolean;
 		enable_community_sharing: boolean;
 		enable_memories: boolean;
 		enable_notes?: boolean;
+		enable_comments?: boolean;
+		enable_notifications?: boolean;
 		enable_subagents?: boolean;
 		enable_plugins?: boolean;
 		enable_tools?: boolean;
@@ -489,6 +527,8 @@ type Config = {
 		enable_tags_generation: boolean;
 		enable_direct_connections: boolean;
 		enable_direct_integrations?: boolean;
+		enable_tether?: boolean;
+		terminal_preview_base_url?: string;
 		enable_version_update_check: boolean;
 		enable_pyodide_file_persistence?: boolean;
 		folder_max_file_count?: number;

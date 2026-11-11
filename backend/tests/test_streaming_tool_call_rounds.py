@@ -2,6 +2,7 @@
 
 import ast
 import copy
+import json
 from uuid import uuid4
 
 import pytest
@@ -47,7 +48,7 @@ async def test_fresh_round_repeated_id_and_fragmented_arguments_share_one_remapp
     ns['execute_tool_call'].assert_awaited_once()
     executed = ns['execute_tool_call'].call_args.args[-1]
     assert executed['id'] == new_id
-    assert executed['function']['arguments'] == '{"record":2}'
+    assert json.loads(executed['function']['arguments']) == {'record': 2}
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_first_provider_response_after_approval_or_continue_is_a_new_round
     frozen = completed('call_0')
     ns['prior_output'] = copy.deepcopy(frozen)
     ns['continuing'] = True
-    ns['metadata'] = {'assistant_message_id': 'reply', 'tool_approval_resume': resume}
+    ns['metadata'].update(assistant_message_id='reply', tool_approval_resume=resume)
     ns['response'] = object()
 
     async def provider_stream(response, form_data, *, new_tool_round=False):

@@ -98,7 +98,8 @@ def pipeline(citation_runtime, output_runtime):
     wrapper = ast.parse(
         'async def project_approved_response(request, form_data, user, model, metadata, pending_assistant_message):\n    pass'
     )
-    wrapper.body[0].body = copy.deepcopy(pending.body[1:])
+    resume_index = next(index for index, node in enumerate(pending.body) if isinstance(node, ast.If))
+    wrapper.body[0].body = copy.deepcopy(pending.body[resume_index + 1 :])
     exec(compile(ast.fix_missing_locations(wrapper), 'approved_response_projection', 'exec'), ns)
     ns['form_data'] = copy.deepcopy(citation_runtime.ns['form_data'])
     ns['form_data']['tools'] = [
@@ -746,6 +747,7 @@ async def test_saved_tool_approval_requires_current_write_access_and_message_aut
     install_approval_store(ns, message)
     chat = SimpleNamespace(user_id='owner')
     ns['Chats'].get_accessible_chat_by_id = AsyncMock(return_value=chat if actor in {'member', 'owner'} else None)
+    ns['Chats'].get_agent_execution = AsyncMock(return_value=None)
     ns.update(
         HTTPException=HTTPException,
         status=status,

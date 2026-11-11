@@ -33,7 +33,8 @@ async def test_callable_enriches_display_result_with_authenticated_owner(wrapped
     ns = {
         'asyncio': asyncio,
         'copy': copy,
-        'Config': SimpleNamespace(get=AsyncMock(return_value=[{'id': 't'}])),
+        'ENABLE_TOOL_SERVERS': True,
+        'get_terminal_connections': AsyncMock(return_value=[{'id': 't'}]),
         'build_terminal_request_context': AsyncMock(return_value=(server, {'X-Terminal-Context-Id': 'chat:c'}, {})),
         'get_terminal_cwd': AsyncMock(return_value='/work'),
         'get_terminal_system_prompt': AsyncMock(return_value=None),

@@ -110,6 +110,19 @@ async def test_basic_html_parser_reuses_the_bounded_response_without_refetch(sou
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_id', ['tether:personal-device', 'unsaved-terminal'])
+async def test_terminal_import_rejects_targets_outside_saved_admin_connections(source, monkeypatch, terminal_id):
+    config = sys.modules['open_webui.models.config'].Config
+    config.get = AsyncMock(return_value=[{'id': 'configured-terminal'}])
+    router = ModuleType('open_webui.routers.terminals')
+    router._http_terminal_context = AsyncMock(return_value=('https://example.test', {}, {}, None))
+    monkeypatch.setitem(sys.modules, router.__name__, router)
+    with pytest.raises(source.module.ImportSourceError, match='administrator'):
+        await source.module.terminal_access(None, SimpleNamespace(id='owner'), {'terminal_id': terminal_id})
+    router._http_terminal_context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_url_uses_ssrf_session_without_webui_headers_or_cookies(source):
     result = await source.module.fetch_url_source(
         SimpleNamespace(headers={'Authorization': 'secret'}, cookies={'token': 'secret'}),

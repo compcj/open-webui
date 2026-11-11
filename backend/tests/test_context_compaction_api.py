@@ -26,7 +26,13 @@ def load_nodes(path, names, namespace):
 def chat_form():
     from typing import Literal
 
-    ns = {'BaseModel': BaseModel, 'Field': Field, 'Literal': Literal}
+    ns = {
+        'BaseModel': BaseModel,
+        'Field': Field,
+        'Literal': Literal,
+        'field_validator': field_validator,
+        'model_validator': model_validator,
+    }
     return load_nodes('backend/open_webui/routers/chats.py', {'ChatConfigForm'}, ns)['ChatConfigForm']
 
 
@@ -70,7 +76,7 @@ def test_model_context_window_is_metadata_and_round_trips():
     )
     meta = load_nodes(
         'backend/open_webui/models/models.py',
-        {'ModelVoice', 'ModelAvatarAnimation', 'ModelAvatarGesture', 'ModelVoiceAvatar', 'ModelMeta'},
+        {'ModelVoice', 'ModelAvatarAnimation', 'ModelAvatarGesture', 'ModelVoiceAvatar', 'ModelSubagents', 'ModelMeta'},
         ns,
     )['ModelMeta']
     assert meta().context_window is None
@@ -120,10 +126,21 @@ def config_app():
             raise HTTPException(status_code=403)
         return user
 
+    async def auto_config():
+        return {
+            'prompt': '',
+            'api_base_url': 'https://api.example.test/v1',
+            'api_key': '',
+            'model': 'synthetic',
+            'threshold': 0.5,
+        }
+
     router = APIRouter()
     namespace = dict(
         BaseModel=BaseModel,
         Field=Field,
+        field_validator=field_validator,
+        model_validator=model_validator,
         Literal=Literal,
         ValidationError=ValidationError,
         Config=Storage,
@@ -133,6 +150,9 @@ def config_app():
         Depends=Depends,
         get_admin_user=admin,
         HTTPException=HTTPException,
+        get_tool_permissions_auto_config=auto_config,
+        DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT='',
+        DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT='',
     )
     namespace['CHAT_CONFIG_KEYS'] = {
         **{field: spec[1] for field, spec in CONFIG_FIELDS.items()},
@@ -145,7 +165,14 @@ def config_app():
     }
     load_nodes(
         'backend/open_webui/routers/chats.py',
-        {'ChatConfigForm', 'get_chat_config_values', 'chat_config_updates', 'get_chat_config', 'set_chat_config'},
+        {
+            'ChatConfigForm',
+            'ChatConfigResponse',
+            'get_chat_config_values',
+            'chat_config_updates',
+            'get_chat_config',
+            'set_chat_config',
+        },
         namespace,
     )
     app = FastAPI()

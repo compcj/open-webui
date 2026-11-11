@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException, status
 from pydantic import BaseModel, field_validator
 
+from open_webui.utils.chat_context_copy import copy_chat_without_context_state
 from open_webui.utils.chat_fork import build_fork_history
 
 ROOT = Path(__file__).parents[1] / 'open_webui'
@@ -103,8 +104,9 @@ def api(monkeypatch):
             'filter_allowed_access_grants': AsyncMock(return_value=[]),
             'validate_access_grants': AsyncMock(return_value=[]),
             'AccessGrants': SimpleNamespace(set_access_grants=AsyncMock()),
-            'stop_item_tasks': AsyncMock(),
+            'stop_item_tasks': AsyncMock(return_value={'status': True}),
             'build_fork_history': build_fork_history,
+            'copy_chat_without_context_state': copy_chat_without_context_state,
             'uuid4': lambda: 'new-chat',
             'is_open_shared_chat': AsyncMock(return_value=True),
             'can_read_shared_chat': AsyncMock(return_value=True),

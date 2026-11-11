@@ -1,5 +1,4 @@
 import base64
-import difflib
 import json
 import logging
 import mimetypes
@@ -38,6 +37,7 @@ from open_webui.utils.skills_runtime import (
     resolve_github_skill_url,
 )
 from open_webui.utils.skill_compat import canonical_snapshot
+from open_webui.utils.misc import unified_text_diff
 from open_webui.utils.skill_files import (
     MAX_IMPORT_BYTES,
     file_bytes,
@@ -57,9 +57,7 @@ PAGE_ITEM_COUNT = 30
 router = APIRouter()
 
 
-############################
-# GetSkills
-############################
+# Get Skills
 
 
 @router.get('/', response_model=list[SkillUserResponse])
@@ -81,9 +79,7 @@ async def get_skills(
     return skills
 
 
-############################
-# GetSkillList
-############################
+# Get Skill List
 
 
 @router.get('/list', response_model=SkillAccessListResponse)
@@ -143,9 +139,7 @@ async def get_skill_list(
     )
 
 
-############################
-# ExportSkills
-############################
+# Export Skills
 
 
 async def authorized_skill(id, user, permission='read', db=None):
@@ -391,9 +385,7 @@ async def install_skill_deps(
     return await run_install_specs(request, user, form_data.terminal_id, skill)
 
 
-############################
-# CreateNewSkill
-############################
+# Create New Skill
 
 
 @router.post('/create', response_model=Optional[SkillResponse])
@@ -470,9 +462,7 @@ async def create_new_skill(
         )
 
 
-############################
-# GetSkillById
-############################
+# Get Skill By Id
 
 
 @router.get('/id/{id}', response_model=Optional[SkillDetailResponse])
@@ -517,9 +507,7 @@ async def get_skill_by_id(id: str, user=Depends(get_verified_user), db: AsyncSes
         )
 
 
-############################
-# UpdateSkillById
-############################
+# Update Skill By Id
 
 
 @router.post('/id/{id}/update', response_model=Optional[SkillModel])
@@ -583,9 +571,7 @@ async def update_skill_by_id(
         )
 
 
-############################
-# UpdateSkillAccessById
-############################
+# Update Skill Access By Id
 
 
 class SkillAccessGrantsForm(BaseModel):
@@ -644,9 +630,7 @@ async def update_skill_access_by_id(
     return skill
 
 
-############################
-# ToggleSkillById
-############################
+# Toggle Skill By Id
 
 
 @router.post('/id/{id}/toggle', response_model=Optional[SkillModel])
@@ -697,9 +681,7 @@ async def toggle_skill_by_id(
         )
 
 
-############################
-# DeleteSkillById
-############################
+# Delete Skill By Id
 
 
 @router.delete('/id/{id}/delete', response_model=bool)
@@ -833,15 +815,7 @@ async def diff_skill_file(
     if any(f and f.get('encoding') for f in files):
         return {'binary': True}
     before, after = ((file or {}).get('content', '') for file in files)
-    diff = '\n'.join(
-        difflib.unified_diff(
-            before.splitlines(),
-            after.splitlines(),
-            fromfile=f'{from_id[:7]}/{path}',
-            tofile=f'{to_id[:7]}/{path}',
-            lineterm='',
-        )
-    )
+    diff = '\n'.join(unified_text_diff(before, after, f'{from_id[:7]}/{path}', f'{to_id[:7]}/{path}'))
     return {
         'binary': False,
         'diff': diff,

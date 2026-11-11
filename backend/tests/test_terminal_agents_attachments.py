@@ -2,8 +2,11 @@
 
 import ast
 import copy
+import html
+import json
 import logging
 import sys
+from uuid import uuid4
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +17,14 @@ from test_web_tool_citations import load_functions
 
 @pytest.fixture
 def runtime(monkeypatch):
-    ns = {'log': logging.getLogger(__name__), 'is_saved_chat_id': lambda chat_id: chat_id == 'saved-chat'}
+    ns = {
+        'log': logging.getLogger(__name__),
+        'is_saved_chat_id': lambda chat_id: chat_id == 'saved-chat',
+        'html': html,
+        'JSONCodec': json,
+        'uuid4': uuid4,
+        'private_context_output': [],
+    }
     load_functions(
         ns,
         'utils/misc.py',
@@ -25,7 +35,15 @@ def runtime(monkeypatch):
         ns, 'utils/misc.py', {'convert_output_to_messages', 'reconcile_tool_pairs', 'get_paired_tool_call_ids'}
     )
     tree = load_functions(
-        ns, 'utils/middleware.py', {'add_file_context', 'process_messages_with_output', 'normalize_messages_for_model'}
+        ns,
+        'utils/middleware.py',
+        {
+            'add_file_context',
+            'process_messages_with_output',
+            'normalize_messages_for_model',
+            'hidden_tool_result',
+            'output_id',
+        },
     )
     agents_loader = AsyncMock(return_value='# AGENTS.md\n\nTerminal instructions')
     terminal = ModuleType('open_webui.utils.terminals')
@@ -122,13 +140,19 @@ async def test_terminal_agents_preserve_attachment_pairing_and_image_context(
     )
     await ns['prepare_context']()
     enriched = ns['form_data']['messages']
-    agents = next(message for message in enriched if '# AGENTS.md' in text(message))
+    # Automatic runtime instructions are a private provider pair, outside saved history.
+    private = ns['private_context_output']
+    assert len(private) == 2 and private[0]['name'] == 'read_terminal_instructions'
+    assert private[0]['call_id'] == private[1]['call_id']
+    private_messages = ns['convert_output_to_messages'](private, raw=True)
+    agents = next(message for message in private_messages if '# AGENTS.md' in text(message))
+    assert all('# AGENTS.md' not in text(message) for message in enriched)
     first_request = next(message for message in enriched if 'first-user' in text(message))
     second_request = next(message for message in enriched if 'second-user' in text(message))
     assert '<attached_files>' not in text(agents)
     assert 'file-a' in text(first_request) and 'file-b' not in text(first_request)
     assert 'file-b' in text(second_request) and 'file-a' not in text(second_request)
-    assert enriched.index(agents) < enriched.index(first_request)
+    assert all('file-a' not in text(message) and 'file-b' not in text(message) for message in private_messages)
     if image_context:
         tool_image = next(message for message in enriched if message.get('_tool_image_context'))
         assert text(tool_image) == ''

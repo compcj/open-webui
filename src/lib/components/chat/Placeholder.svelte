@@ -58,6 +58,11 @@
 	) => void = () => {};
 	export let reasoningEffortByModel: Record<string, string> = {};
 	export let onReasoningEffortChange: (modelId: string, value: string) => void = () => {};
+	export let onModelMention: ((model: import('$lib/stores').Model) => void) | null = null;
+	export let onModelSelect: (models: string[]) => void = () => {};
+	export let chatFiles: any[] = [];
+	export let params: Record<string, any> = {};
+	export let onParamChange: (key: string, value: unknown) => void = () => {};
 
 	export let history;
 	export let chatId = '';
@@ -144,7 +149,7 @@
 		!$selectedFolder.write_access;
 </script>
 
-<div class="m-auto w-full max-w-[58rem] px-1 @2xl:px-20 translate-y-6 py-24 text-center">
+<div class="m-auto w-full max-w-[58rem] px-1 md:@3xl:px-20 translate-y-6 py-24 text-center">
 	{#if $temporaryChatEnabled}
 		<Tooltip
 			content={$i18n.t("This chat won't appear in history and your messages will not be saved.")}
@@ -281,7 +286,7 @@
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
 						{chatId}
-						{terminalContext}
+						bind:terminalContext
 						{callActive}
 						{callEnabled}
 						bind:this={messageInput}
@@ -292,6 +297,11 @@
 						{modelControlAdvancedParams}
 						{onModelControlChange}
 						{onReasoningEffortChange}
+						{onModelSelect}
+						{onModelMention}
+						bind:chatFiles
+						bind:params
+						{onParamChange}
 						bind:files
 						bind:prompt
 						bind:autoScroll

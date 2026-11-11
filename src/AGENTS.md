@@ -39,8 +39,10 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
 - Shared participants use their own preferences and variables. Do not load/save the owner's private
   advanced settings as participant defaults. Approval/stop UI belongs to the reply author; `/compact`
   is owner-only. Shared V2 counts are scoped to the chat/model/branch, with no participant dimension.
-- Preserve the fork composer layout and remembered controls when adding upstream interactions.
-  Check follow-up suggestions with Tab, IME composition, and narrow screens.
+- Preserve remembered controls in the tabbed workspace, split panes, Controls menu and + menu.
+  Selecting an @ model switches the chat's model for subsequent turns. Regenerate with the
+  current model in the selected column. Show Input Selections defaults to off and never clears
+  the selected tools, skills, filters or capabilities. Check Tab suggestions, IME and narrow screens.
 - Submit only changed top-level UI settings: omission preserves a value, explicit `null` resets it.
   Nested preference maps remain whole fields. Keep ordered saves, account isolation, and error
   feedback; do not send a stale snapshot of every setting.
@@ -70,6 +72,10 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   [verification](../docs/DEVELOPMENT.md#search1api-endpoint-verification).
 - Personal `direct.integrations.enable` is a hard switch: hide configuration and omit saved personal
   tools/terminals when disabled, including admins. Retain settings for re-enable; keep Direct API Chat independent.
+- Tether uses the separate `enable_tether` capability from the server. Integrations writes
+  `ENABLE_TETHER` and `TERMINAL_PREVIEW_BASE_URL` as partial admin Connections updates.
+  Tether terminal operations also require tool servers. The presence of a desktop bridge grants
+  no connection capability.
 - Image verification uses `POST /api/v1/images/verify` with `{engine, url, key?}`. Keep named engine
   generation/edit settings, descriptions, edit disablement, attachment deduplication, and compact
   image context for replay.
@@ -78,16 +84,19 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   save/load, output updates and temporary-chat requests. The backend owns frozen model citation
   text; the frontend must not regenerate it or reorder sources. See the
   [citation follow-up](../docs/upstream/v0.11.4-tool-citation-cache-followup.md).
-- Terminal previews remain isolated regardless of remembered user preferences; the backend rejects
-  same-origin port proxies. System-terminal HTML displays source; SVG images use signed delivery.
-  Do not restore a setting that grants terminal HTML the WebUI origin.
+- Proxy browser and port previews require a backend ticket for an independently configured
+  hostname. Renew active tickets every minute and clear the iframe on failure or expiry. Sandbox
+  the iframe without same-origin or top-level navigation and omit referrers. Validate bridge
+  messages against the current frame, opaque origin and ticket nonce. Chrome uses a separate
+  authorized control stream and renews it every minute. System-terminal HTML displays source and
+  SVG images use signed delivery. Keep preview URLs, credentials and temporary IDs out of layouts.
 - When stopping backend tasks, end local generation and release a queued prompt only after acknowledgement.
   Preserve retryable state on failure and reject results after navigating to another chat. Only an
   explicit stream `error: null` clears a prior error. Hide superseded split-tool placeholders only
   in rendered output; preserve their raw replay data. Show Thinking for pending empty output,
   including empty native envelopes, but not while waiting for `ask_user` or after completion.
 
-See [version decisions](../docs/upstream/v0.12.4-decisions.md) for rationale and future merge checks.
+See [version decisions](../docs/upstream/v0.13.3-decisions.md) for rationale and future merge checks.
 
 ## v0.12.2 UI boundaries
 
@@ -199,11 +208,11 @@ approvals and reload; display text must not replace exact signed blocks. See the
 
 ## Temporary V2 and v0.12.4 controls
 
-Own `TemporaryContextController` in the mounted Chat page. Never persist its identity or raw history
+Own a separate `TemporaryContextController` in each mounted Chat and SideChat. Never persist its identity or raw history
 to account/localStorage stores. Sync the full raw parent graph before generation; every model owns
 its reply/task. Validate actor, id, epoch, model, task and sequence before applying events; callbacks
 also require the current socket generation and an unclaimed live RPC. Rebinding cancels old callbacks.
-Manual compact may target a user leaf; its callback identity is local to that request.
+Manual compact may target a user leaf. Its callback identity is local to that request.
 
 State reconciliation may recover buffered raw output, never repeat tools or resume temporary
 approvals. New chat/navigation/account changes invalidate pending results. Close and stop wait for
@@ -211,9 +220,43 @@ executor acknowledgement; keep page history on failure. Promotion and JSON expor
 projection, preserving provider functions, citations and native signatures while stripping derived
 identities. Retry promotion with the same idempotency key; a lost response must not create duplicates.
 
+Side chats project inherited messages through the same raw copy rules. Strip execution, checkpoint,
+selection and Agent resume state. Keep temporary side drafts and history in memory only. Agent
+models require a saved chat and a single selection. An unavailable Agent keeps its saved identity
+and offers a manual model switch. Agents own their context and disable WebUI compaction,
+regeneration, continuation of old replies and in-place branching.
+
 Controls/Params permissions hide panels but retain valid values. Skills eagerly load selected/model
 preset entries by default; mentions remain eager with lazy enabled. Access saves immediately through
 dedicated endpoints. Shared regeneration creates a branch without taking another viewer's selection.
 Register `knowledge_write` among visible composer controls; hiding it never clears the saved choice.
 See [temporary V2](../docs/temporary-context-v2.md) and
-[current decisions](../docs/upstream/v0.12.4-decisions.md).
+[current decisions](../docs/upstream/v0.13.3-decisions.md).
+
+## v0.13.3 workspace and preview controls
+
+Keep the upstream tabs/split view, Controls and plus-menu interactions. Show Input Selections defaults
+off. A model mention changes subsequent turns; regenerate with the current slot model while preserving
+explicit choices, remembered settings, reset and account isolation. Each mounted Chat owns its tasks,
+models and temporary controller; persisted layouts contain neither temporary raw history nor scope,
+execution, selection, Agent resume or preview capability identities.
+
+Admin Connections exposes default-off Tether independently of Direct Integrations. Omitted fields
+must not clear saved configuration. Saved manual personal terminals/tools still obey Direct Integrations;
+server terminals and server-authorized Tether discovery have their own permissions.
+
+Proxy previews require the configured independent host. Request opaque tickets from the main API,
+renew active views every 60 seconds, and invalidate stale asynchronous callbacks on terminal/context,
+actor or pane changes. Port requests pass the Browser tab's existing session ID, including renewal;
+normal tab closure deletes that same session. Do not create a hidden duplicate session per port tab.
+Chrome control tickets remain separate. Never use same-origin terminal HTML or port proxies as fallback.
+
+Keep both iframe sandbox and response CSP without allow-same-origin, top navigation or DOM storage.
+Use no-referrer and check postMessage source window, opaque origin, ticket identity and message shape.
+The terminal's private Cookie jar and internal WS redirects follow the confirmed upstream browser
+semantics; a frame still cannot access WebUI storage or credentials. Report proxy failures explicitly.
+
+Native Agents retain their saved identity when offline. Forced stop may preserve partial output and
+mark a missing remote tail; do not clear its pending state or advance the queue until the backend has
+confirmed remote termination. Never infer completion from a local socket close, 404 or timeout.
+See [preview deployment](../docs/terminal-preview.md) and [Agent lifecycle](../docs/tether-agents.md).

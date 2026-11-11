@@ -51,7 +51,7 @@
 	const toStr = (s: string[] | string | undefined): string =>
 		Array.isArray(s) ? s.join('') : (s ?? '');
 
-	// ── Syntax highlighting ──────────────────────────────────────────────
+	// Syntax highlighting
 	let highlightedCells: Record<number, string> = {};
 
 	const highlightCell = async (index: number, code: string, language: string) => {
@@ -78,7 +78,7 @@
 		});
 	}
 
-	// ── Markdown / output helpers ────────────────────────────────────────
+	// Markdown / output helpers
 	const renderMarkdown = (src: string): string =>
 		DOMPurify.sanitize(marked.parse(src, { async: false }) as string);
 
@@ -107,7 +107,7 @@
 		return null;
 	};
 
-	// ── Cell editing ─────────────────────────────────────────────────────
+	// Cell editing
 	let editingCell: Record<number, boolean> = {};
 	let editedSources: Record<number, string> = {};
 
@@ -125,7 +125,7 @@
 		highlightCell(index, toStr(cells[index].source), lang);
 	};
 
-	// ── Session / kernel ─────────────────────────────────────────────────
+	// Session / kernel
 	let sessionId: string | null = null;
 	let kernelReady = false;
 	let kernelStarting = false;
@@ -304,7 +304,7 @@
 
 		{#if kernelError}
 			<div
-				class="px-2 py-1 text-[0.65rem] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 whitespace-pre-wrap font-mono"
+				class="px-2 py-1 text-[0.65rem] text-gray-500 dark:text-gray-400 bg-red-50 dark:bg-red-950/30 whitespace-pre-wrap font-mono"
 			>
 				{kernelError}
 			</div>
@@ -316,7 +316,9 @@
 		<div class="nb-cell nb-cell-{cell.cell_type}">
 			{#if cell.cell_type === 'markdown'}
 				{#if editingCell[i]}
+					<!-- svelte-ignore a11y-autofocus -->
 					<textarea
+						aria-label={$i18n.t('Markdown')}
 						class="nb-edit-textarea text-sm"
 						bind:value={editedSources[i]}
 						on:input={autoResize}
@@ -324,6 +326,7 @@
 						on:keydown={(e) => {
 							if (e.key === 'Escape') cancelEditing(i);
 						}}
+						autofocus
 					></textarea>
 				{:else}
 					<!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -332,6 +335,12 @@
 						role="textbox"
 						tabindex="0"
 						on:dblclick={() => startEditing(i)}
+						on:keydown={(e) => {
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								startEditing(i);
+							}
+						}}
 					>
 						{@html renderMarkdown(toStr(cell.source))}
 					</div>
@@ -390,6 +399,12 @@
 								role="textbox"
 								tabindex="0"
 								on:dblclick={() => startEditing(i)}
+								on:keydown={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										startEditing(i);
+									}
+								}}
 							>
 								{#if highlightedCells[i]}
 									<div class="nb-code-source shiki-preview">

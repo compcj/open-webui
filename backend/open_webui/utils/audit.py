@@ -129,11 +129,11 @@ def log_model_usage(request: Request, user: UserModel, model_id: str, usage: Opt
                 user=user.model_dump(include={'id', 'name', 'email', 'role'}),
                 audit_level=request.state.audit_level,
                 verb=request.method,
-                request_uri=str(request.url),
+                request_uri=request.scope.get('safe_log_path') or str(request.url),
                 source_ip=request.client.host if request.client else None,
                 user_agent=request.headers.get('user-agent'),
                 model_id=model_id,
-                usage={key: usage[key] for key in ('input_tokens', 'output_tokens', 'total_tokens')},
+                usage={key: usage[key] for key in ('input_tokens', 'output_tokens', 'total_tokens') if key in usage},
             ),
             extra={'event': 'model_usage', 'request_id': request_id},
         )
@@ -141,11 +141,11 @@ def log_model_usage(request: Request, user: UserModel, model_id: str, usage: Opt
         logger.error('Failed to log model usage: {}', e)
 
 
-def redact_passwords(body: str) -> str:
-    if 'password' not in body.lower():
-        return body
+def redact_secrets(body: str) -> str:
+    # Secrets cut off by the size limit have no closing quote.
+    quoted = r'"(?:[^"\\]|\\.)*\\?(?:"|$)'
     return re.sub(
-        r'"(\w*password)"\s*:\s*"(?:[^"\\]|\\.)*"',
+        rf'"(\w*(?:password|secret|token|key|authorization)s?)"\s*:\s*(?:{quoted}|\[(?:{quoted}|[^\]"])*(?:\]|$))',
         r'"\1": "********"',
         body,
         flags=re.IGNORECASE,
@@ -214,7 +214,13 @@ class AuditLoggingMiddleware:
 
         request.state.audit_request_id = str(uuid.uuid4())
         request.state.audit_level = self.audit_level.value
-        capture_body = not (request.url.path.startswith('/api/v1/auths') or request.url.path.startswith('/oauth/'))
+        # Preview ticket URLs are bearer capabilities, including previous_url
+        # during renewal. Keep the audit metadata but never capture these bodies.
+        capture_body = not (
+            request.url.path.startswith('/api/v1/auths')
+            or request.url.path.startswith('/oauth/')
+            or re.fullmatch(r'/api/v1/terminals/[^/]+/preview-tickets', request.url.path)
+        )
         async with self._audit_context(request) as context:
 
             async def send_wrapper(message: ASGISendEvent) -> None:
@@ -330,15 +336,15 @@ class AuditLoggingMiddleware:
             response_body = context.response_body.decode('utf-8', errors='replace')
 
             # Redact sensitive information
-            request_body = redact_passwords(request_body)
-            response_body = redact_passwords(response_body)
+            request_body = redact_secrets(request_body)
+            response_body = redact_secrets(response_body)
 
             entry = AuditLogEntry(
                 id=request.state.audit_request_id,
                 user=user,
                 audit_level=self.audit_level.value,
                 verb=request.method,
-                request_uri=str(request.url),
+                request_uri=request.scope.get('safe_log_path') or str(request.url),
                 response_status_code=context.metadata.get('response_status_code', None),
                 source_ip=request.client.host if request.client else None,
                 user_agent=request.headers.get('user-agent'),

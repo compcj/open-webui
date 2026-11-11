@@ -518,3 +518,23 @@ selected tool results, exact raw reads, status and `/compact`. Refresh does not 
 Its cache does not write chat or V2 SQL tables; Redis persistence remains a deployment choice.
 Reconnection reconciles state without replaying unknown effects. Saving waits for completion and
 preserves original history. See [temporary context contracts](temporary-context-v2.md).
+
+## v0.13.3 隐藏上下文与工具批次 / Hidden context and batches
+
+自动加载的私人指令、记忆、技能运行时及终端上下文使用请求内隐藏消息。它们计入最终发送预算，
+但不写入持久 `output`、共享摘要来源或新工具结果选用表。已保存的真实工具调用/结果、原始签名和
+冻结引用仍照常回放。客户端伪造隐藏标记不能建立可信执行来源。
+
+同一回复的工具续接保持隐藏前缀不变。保存聊天的审批恢复使用服务端短期快照：默认 30 分钟、
+每回复最多 2 MiB；无 Redis 的单 worker 缓存最多 64 项。审批时重新检查访问与来源；过期、来源改变
+或存储不可用时明确失败并要求重新生成，不重建不同前缀后继续执行，也不重复已完成工具。
+这不是聊天历史持久化机制；临时审批仍在断线后取消。
+
+批量 `call_tool` 保留外层 provider function 和每个子调用身份；混合成功、失败和待审批结果各自
+按原始来源与配对进入续接。只有服务器登记的新结果进入 V2 新结果预算，隐藏上下文和固定历史
+不参与新批次额度竞争。Legacy 采用上游缓存优化；V2 摘要仍使用独立窗口与最终发送保护。
+
+Native Agent sessions manage their own context and do not use WebUI V2. Hidden request context is
+budgeted but excluded from persisted output and shared summary provenance. Approval resumes require
+the unchanged server-side snapshot; expiry or changed sources fail explicitly without re-execution.
+See [Tether and Agents](tether-agents.md) and the [v0.13.3 decisions](upstream/v0.13.3-decisions.md).

@@ -1266,12 +1266,18 @@ async def generate_summary(
     )
 
 
-def _protected_indices(messages: list[dict], raw: list[dict], latest: int) -> set[int]:
+def _protected_indices(
+    messages: list[dict], raw: list[dict], latest: int, private_tool_call_ids: frozenset[str] = frozenset()
+) -> set[int]:
     raw_source_ids = {m['id'] for m in raw}
     real_text = {text_content(m) for m in raw if m.get('role') == 'user' and text_content(m)}
     protected = {latest}
     for i, message in enumerate(messages):
-        if message.get('role') in {'system', 'developer'}:
+        if (
+            message.get('role') in {'system', 'developer'}
+            or message.get('tool_call_id') in private_tool_call_ids
+            or any(call.get('id') in private_tool_call_ids for call in message.get('tool_calls') or [])
+        ):
             protected.add(i)
         if message.get('role') != 'user' or i == latest:
             continue
@@ -1398,7 +1404,12 @@ async def prepare_v2_request(
                 raise CompactionFailure(
                     'Cannot identify the saved user turn; save or reload the chat before compacting'
                 )
-            protected = _protected_indices(messages, raw, latest)
+            private_tool_call_ids = frozenset(
+                call['id']
+                for message in getattr(request.state, 'private_tool_context', [])
+                for call in message.get('tool_calls', [])
+            )
+            protected = _protected_indices(messages, raw, latest, private_tool_call_ids)
             if tool_plan:
                 protected.update(tool_plan.indices(original, incoming_only=True))
             groups = atomic_groups(messages)
@@ -1652,7 +1663,7 @@ async def prepare_v2_request(
 
 async def _history_payload(snapshot: dict, model_id: str, models: dict | None = None) -> tuple[dict, list[dict]]:
     from open_webui.utils.middleware import get_reasoning_format, process_messages_with_output
-    from open_webui.utils.payload import convert_messages_openai_to_ollama
+    from open_webui.utils.payload import convert_chat_completions_messages_to_ollama
 
     chain = model_chain(model_id, models or {})
     model = dict(chain[0]) if chain else {}
@@ -1694,7 +1705,7 @@ async def _history_payload(snapshot: dict, model_id: str, models: dict | None = 
         for message in messages
     ]
     if model.get('owned_by') == 'ollama':
-        messages = convert_messages_openai_to_ollama(messages)
+        messages = convert_chat_completions_messages_to_ollama(messages)
     params = {} if snapshot.get('shared_history') else as_dict(snapshot.get('chat', {}).get('params'))
     payload = {'model': model_id, 'messages': messages, **params}
     return payload, raw

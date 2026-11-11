@@ -387,6 +387,7 @@ async def test_approval_refresh_replays_native_blocks_without_executing_tool_twi
         ),
     )
     install_approval_store(ns, message)
+    load_functions(ns, 'utils/middleware.py', {'strip_tool_images'})
     metadata = {'chat_id': 'chat', 'assistant_message_id': 'assistant', 'sources': []}
     for _ in range(2):
         await ns['resume_tool_calls'](None, form, ns['user'], ns['model'], metadata, message)

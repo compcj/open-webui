@@ -146,6 +146,20 @@ native replay, media, tools and protocol framing before tool-result selections a
 Gemini defaults to `parametersJsonSchema`; the manual restricted-schema compatibility profile is a
 separate explicit choice. See the linked compaction and schema guides.
 
+v0.13.3 会用供应商原始调用 ID 和参数回放批量工具调用，并按原顺序附上各子调用的结果与冻结引用。
+审批和预算检查以实际解析出的目标为准。服务端普通 Chat Completions 流在首次实质输出前发生负载中断时，
+最多以相同序列化请求重试一次。已保存的工具结果会参与回放，重试不重新执行工具。
+
+In v0.13.3, batch replay preserves the original provider call ID and arguments, ordered child results
+and frozen citations. Approval and budget checks use the resolved target. An ordinary server Chat
+Completions stream can retry a payload interruption once before substantive output, using identical
+serialized request bytes. Retries reuse completed tool results.
+
+终端 Agents 使用已保存聊天和自己的会话状态。复制、分支和分享保留原始对话，清除可续跑的 Agent 状态。
+Terminal Agents use a saved chat and their own conversation state. Copies, forks and share snapshots
+retain the original transcript with Agent resume state removed.
+See [Tether and Terminal Agents](tether-agents.md) for selection, continuation and confirmed stopping.
+
 ## 排错与验证 / Troubleshooting and verification
 
 - 认证错误：检查所选认证类型、网关要求和显式 Header 覆盖。 / Authentication errors: check auth type, gateway requirements and explicit header overrides.

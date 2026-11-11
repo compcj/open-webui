@@ -36,6 +36,7 @@ def test_native_image_tool_forwards_the_selected_engine(engine_id):
         'UserModel': SimpleNamespace,
         'CreateImageForm': SimpleNamespace,
         'image_generations': generate,
+        'upload_files_to_terminal': AsyncMock(),
         'JSONCodec': json,
         'is_saved_chat_id': lambda value: False,
         'log': logging.getLogger(__name__),
@@ -62,6 +63,7 @@ def test_native_edit_tool_forwards_the_same_selected_pair(engine_id):
         'UserModel': SimpleNamespace,
         'EditImageForm': SimpleNamespace,
         'image_edits': edit,
+        'upload_files_to_terminal': AsyncMock(),
         'JSONCodec': json,
         'is_saved_chat_id': lambda value: False,
         'log': logging.getLogger(__name__),
@@ -211,7 +213,7 @@ def test_chat_metadata_consumes_engine_id_before_calling_text_provider():
         'request_params': {},
         'model_controls': {},
         'user': SimpleNamespace(id='account-1'),
-        'request': SimpleNamespace(headers={}, state=SimpleNamespace()),
+        'request': SimpleNamespace(headers={}, state=SimpleNamespace(), client=None),
         'chat_id': 'chat-1',
         'user_message': None,
         'automation_id': None,
@@ -240,6 +242,7 @@ def test_tool_approval_round_trip_preserves_the_original_engine_selection(tool_n
 
     namespace = {
         'copy': copy,
+        'get_event_emitter': AsyncMock(return_value=None),
         'Users': SimpleNamespace(
             get_user_by_id=AsyncMock(return_value=SimpleNamespace(settings=SimpleNamespace(ui={})))
         ),
@@ -255,6 +258,7 @@ def test_tool_approval_round_trip_preserves_the_original_engine_selection(tool_n
     resume = extract('utils/tool_approval.py', 'build_tool_approval_resume_payload', namespace)
     asyncio.run(
         pause(
+            SimpleNamespace(state=SimpleNamespace()),
             'chat-1',
             'assistant-1',
             [{'type': 'function_call', 'call_id': 'call-1', 'name': tool_name}],

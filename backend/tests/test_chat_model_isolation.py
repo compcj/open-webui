@@ -7,6 +7,8 @@ import importlib
 import json
 import logging
 import sys
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
@@ -17,6 +19,7 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 from test_tool_result_storage import database, edit
 from open_webui.utils.context_scope import ContextScope, temporary_request_store
+from open_webui.utils.context_store_errors import ContextStoreError
 from open_webui.utils.temporary_context_runtime import abort_temporary_reservations
 
 
@@ -48,8 +51,15 @@ def fanout(monkeypatch, settings, payload_handler, provider):
     config.load_compaction_settings = AsyncMock(return_value=settings)
     monkeypatch.setitem(sys.modules, config.__name__, config)
     writes = AsyncMock()
+    replies = {}
+
+    @asynccontextmanager
+    async def edit_message_output(chat_id, message_id):
+        yield replies.setdefault((chat_id, message_id), {})
+
     namespace = {
         'asyncio': asyncio,
+        'time': time,
         'temporary_reservations': {},
         'temporary_request_store': temporary_request_store,
         'ContextScope': ContextScope,
@@ -63,10 +73,15 @@ def fanout(monkeypatch, settings, payload_handler, provider):
         'model_id': 'model-a',
         'model_info': None,
         'fallback_model': None,
+        'agent_model': None,
+        'is_new_chat': False,
+        'ContextStoreError': ContextStoreError,
         'model_controls': {},
         'request_params': {},
         'Models': SimpleNamespace(get_model_by_id=AsyncMock(return_value=None)),
-        'Chats': SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=writes),
+        'Chats': SimpleNamespace(
+            upsert_message_to_chat_by_id_and_message_id=writes, edit_message_output=edit_message_output
+        ),
         'TASKS': SimpleNamespace(TITLE_GENERATION='title', TAGS_GENERATION='tags'),
         'is_saved_chat_id': lambda chat_id: chat_id == 'chat',
         'apply_model_controls': lambda params, *args, **kwargs: params,

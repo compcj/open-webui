@@ -1,4 +1,31 @@
-# Open WebUI 👋
+<h2>Open WebUI</h2>
+
+<p>Open WebUI is <a href="https://docs.openwebui.com/"><strong>a home for AI</strong></a>: an extensible, easy-to-use, self-hosted platform built to run entirely offline. Connect local models through Ollama or use OpenAI-compatible APIs for local and cloud models.</p>
+
+[English](README.md) |
+[简体中文](README.zh.md) |
+[繁體中文](README.zht.md) |
+[한국어](README.ko.md) |
+[Deutsch](README.de.md) |
+[Español](README.es.md) |
+[Français](README.fr.md) |
+[Italiano](README.it.md) |
+[Dansk](README.da.md) |
+[日本語](README.ja.md) |
+[Polski](README.pl.md) |
+[Русский](README.ru.md) |
+[Bosanski](README.bs.md) |
+[العربية](README.ar.md) |
+[Norsk](README.no.md) |
+[Português (Brasil)](README.br.md) |
+[ไทย](README.th.md) |
+[Türkçe](README.tr.md) |
+[Українська](README.uk.md) |
+[বাংলা](README.bn.md) |
+[Ελληνικά](README.gr.md) |
+[Tiếng Việt](README.vi.md)
+
+[![Open WebUI Demo](https://cdn.openwebui.com/open-webui-demo.gif)](https://docs.openwebui.com/)
 
 ![GitHub stars](https://img.shields.io/github/stars/open-webui/open-webui?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/open-webui/open-webui?style=social)
@@ -8,34 +35,54 @@
 ![GitHub top language](https://img.shields.io/github/languages/top/open-webui/open-webui)
 ![GitHub last commit](https://img.shields.io/github/last-commit/open-webui/open-webui?color=red)
 [![Discord](https://img.shields.io/badge/Discord-Open_WebUI-blue?logo=discord&logoColor=white)](https://discord.gg/5rJgQTnV4s)
-[![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/open-webui)
+[![](https://img.shields.io/static/v1?label=Sponsor&message=Support&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/open-webui)
 
-Open WebUI is **a home for AI**, a self-hosted AI platform that's **[extensible](https://docs.openwebui.com/features/extensibility/plugin/)**, **[feature-rich](https://docs.openwebui.com/features/)**, user-friendly, and built to run **[entirely offline](https://openwebui.com/sovereign-ai)**. With support for **Ollama**, **OpenAI-compatible APIs**, and administrator-configured **native Gemini and Anthropic APIs**, it gives you a powerful, provider-agnostic interface for both local and cloud-based models.
-
-Passionate about open-source AI? [Join our team →](https://careers.openwebui.com/)
-
-![Open WebUI Demo](https://community.s3.openwebui.com/uploads/users/6d849fdd-b93f-411e-a611-eb25c73f1154/2026/10/25aebd3e-1d1c-4177-98b3-317ce60f75e9.gif)
-
-> [!TIP]  
-> **Looking for an [Enterprise Plan](https://docs.openwebui.com/enterprise)?** – **[Speak with Our Sales Team Today!](https://docs.openwebui.com/enterprise)**
-
-For more information, be sure to check out our [Open WebUI Documentation](https://docs.openwebui.com/).
-
-For development in this checkout, see [CONTRIBUTING.md](CONTRIBUTING.md),
-[development commands](docs/DEVELOPMENT.md), and the shared [agent guide](AGENTS.md).
+[Explore Open WebUI →](https://docs.openwebui.com/)
 
 ## 与上游的差异 / Differences from upstream
 
-本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 是 Open WebUI 的分支，已完整合入官方 **[v0.12.4](https://github.com/open-webui/open-webui/tree/33c1978d5bad52a31df75ea55143025dfad18d16)**。以下介绍保留的分支能力和已实现的产品策略；验收结果、限制和完整提交基线见[版本设计决策记录](docs/upstream/v0.12.4-decisions.md)。未来合并参阅[上游合并索引](docs/upstream/README.md)。
+本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 在官方 **[v0.13.3](https://github.com/open-webui/open-webui/tree/b0e6098e940942281d9c83f3529ea117287a3a22)** 上保留以下扩展与产品策略。本次整合覆盖 v0.12.5 至 v0.13.3 的累计变化。实际提交、验收结果及未覆盖项见[设计决策](docs/upstream/v0.13.3-decisions.md)、[验证报告](docs/upstream/v0.13.3-validation.md)与[完整差异审计](docs/upstream/v0.13.3-fork-audit.md)。
 
-本轮整合包含 v0.12.3 的累计变化。真实合并提交为 `f98e0230559427611699aa8f7504fe7b27981fab`，临时 V2 在后续提交实现；实际检查与覆盖边界见[本版验证报告](docs/upstream/v0.12.4-validation.md)，完整树差异与可达分支提交见[差异审计](docs/upstream/v0.12.4-fork-audit.md)。
+This fork integrates official **v0.13.3**, including cumulative changes since v0.12.4, while retaining the extensions and policies below. The [decision record](docs/upstream/v0.13.3-decisions.md), [validation report](docs/upstream/v0.13.3-validation.md), and [complete audit](docs/upstream/v0.13.3-fork-audit.md) identify exact revisions and verification limits. See the [development guide](docs/DEVELOPMENT.md) and [collaboration guide](docs/agents/README.md) when working on this source.
 
-This fork of Open WebUI integrates the official **[v0.12.4](https://github.com/open-webui/open-webui/tree/33c1978d5bad52a31df75ea55143025dfad18d16)** release while retaining the capabilities and product policies below. See the [version decision record](docs/upstream/v0.12.4-decisions.md) for implementation status, validation limits, and exact revisions, and the [merge index](docs/upstream/README.md) for future upgrades.
+### v0.13.3 升级要点 / Upgrade behavior
+
+标签页、分屏、Controls 与“+”菜单、侧聊、评论、通知收件箱、分析、Notes、多种文件编辑、Git、MCP Apps、批量工具调用及原生 Agents 来自上游，不能算作分支独有功能。分支适配保留参数记忆、共享与临时上下文、工具执行身份、权限和文件隔离。完整发布变化见 [CHANGELOG](CHANGELOG.md)。
+
+Tabs, split views, Controls and the plus menu, side chats, comments, notifications, analytics, Notes, file editing, Git, MCP Apps, batch tool dispatch and native Agents are upstream capabilities. Fork adaptations preserve remembered choices, shared/temporary contexts, execution identity, permissions and file isolation.
+
+| 项目 / Setting              | 新安装默认与升级行为 / Defaults and upgrades                                                                                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 附件与检索 / Retrieval      | 附件预加载关闭；Top K / Reranker Top K 10；chunk 1024；小文件全文阈值 50000 字符。保留已存显式设置，不自动重建索引。 / Preloading off, K 10, chunks 1024, full-text threshold 50000 characters; saved settings and existing indices remain.              |
+| 执行限制 / Execution        | 默认最多 1024 工具轮；四项子代理限制默认不限；显式限制保留，达到工具轮次上限后生成最终答复。 / 1024 tool rounds, unlimited default subagent limits, explicit limits retained, final response after the round limit.                                      |
+| 模型 / Models               | `@模型` 切换后续聊天模型，重新生成使用当前栏位模型；保持显式选择、按用户/模型记忆与重置。 / Mentions switch subsequent turns; regeneration uses the current slot model and preserves remembered choices/reset.                                           |
+| 布局 / Layout               | 采用上游布局；Show Input Selections 默认关闭。每个 Chat 有独立任务、模型和临时 scope；布局不保存临时正文或票据。 / Upstream layout with input selections off; each Chat owns its state and transient data stays out of saved layouts.                    |
+| 隐藏上下文 / Hidden context | 私人指令、技能运行时和终端自动上下文仅用于当前请求及其冻结续接，计入预算，不进入共享摘要或持久聊天输出。真实工具结果照常保存。 / Automatic private/runtime context is request-local and budgeted; explicit tool results retain their normal persistence. |
+
+V2、知识写入、自动技能发现、Auto 工具审批等既有默认关闭能力不会因升级开启。升级需要排空 worker、备份数据库/上传/配置，再协调切换；回滚恢复整套升级前备份，见[升级记录](docs/upstream/v0.13.3-decisions.md)。
+
+The upgrade does not opt users into V2, knowledge writes, automatic skill discovery or Auto tool approval. Drain workers and back up the database, uploads and configuration before coordinated upgrade. Restore the complete pre-upgrade backup when rolling back.
+
+### Tether、Agents 与独立预览 / Tether, Agents and preview
+
+管理员在 Integrations 中独立开启 **Tether**（`ENABLE_TETHER=false`，存储键 `tether.enable`）。开启 Tether 不要求开启个人 Direct Integrations；手工保存的个人工具与终端仍受原开关控制。Tether 不自动获得管理员终端的技能发现或知识导入资格。
+
+原生 Agent 仅用于已保存聊天，每次单 Agent，由 Agent 管理自身上下文；不支持重新生成、继续旧回复或原地分支。离线时保留模型身份，等待恢复或手工切换。停止只有远端执行确认结束才完成；确认丢失时保留未确认状态并阻止下一轮。详见 [Tether/Agents 指南](docs/tether-agents.md)。
+
+强制停止保留已接受的原文并标记输出可能不完整，终端尚未传回的尾部可能丢失。预览保留终端服务端 Cookie，且端口 WebSocket 可沿用上游浏览器权限跟随内部重定向；这些不赋予页面 DOM 存储或主站凭据访问。
+
+Forced Agent stops preserve accepted output and mark a potentially missing remote tail. Proxy previews retain terminal-side cookies and upstream WebSocket redirect permissions; sandboxed pages still cannot access DOM storage or main-site credentials.
+
+**独立来源预览默认关闭**。配置 `TERMINAL_PREVIEW_BASE_URL` 为独立主机名后，通过同一后端的预览专用入口显示 Proxy 网页/端口；仅换端口不构成隔离。生产使用 HTTPS；票据默认 5 分钟，每分钟重新授权续期。严格沙箱不提供网页 Cookie/localStorage，完整浏览器能力使用 Chrome 模式。部署条件、代理示例及当前边界见[独立预览指南](docs/terminal-preview.md)。
+
+Tether has an independent admin switch, off by default. Saved personal tool/terminal connections remain governed by Direct Integrations. Tether does not grant admin terminal discovery or knowledge-import privileges. Native Agents require a saved chat and a single Agent, manage their own context, retain their identity while offline, and require confirmed remote completion before stopping. See the [Agent guide](docs/tether-agents.md).
+
+Isolated Proxy preview requires a separate hostname configured through `TERMINAL_PREVIEW_BASE_URL`, HTTPS outside explicit local development, and a preview-only reverse-proxy route. It defaults off. Tickets last five minutes and active panels renew authorization every minute. Sandboxed pages cannot use DOM cookies/localStorage; use Chrome for full browser capabilities. See [deployment and limits](docs/terminal-preview.md).
 
 ### 新增功能与扩展 / Fork additions and extensions
 
-以下是相对官方 v0.12.4 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
-完整源码、测试和提交索引见[差异审计](docs/upstream/v0.12.4-fork-audit.md)。
+以下是相对官方 v0.13.3 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
+完整源码、测试和提交索引见[差异审计](docs/upstream/v0.13.3-fork-audit.md)。
 The inventory covers current additions and extensions to upstream features, with source/test evidence in the audit.
 
 | 功能 / Feature                                 | 本分支新增或扩展的行为 / Added behavior                                                                                                                                                                  |
@@ -70,7 +117,7 @@ The inventory covers current additions and extensions to upstream features, with
 | 知识写入范围         | 有模型/文件夹/聊天挂载时仅写挂载库，否则限当前可写库；挂载和读取不授予写权限，外部库不支持，终端导入只使用当前操作者的管理员连接。                                                                                    |
 | 压缩与回放           | 升级只保留 off/legacy，不自动开 V2；原文永不删除。V2 只给新结果分配预算，发送前原子固定选用；重试不重复执行工具，旧历史不随新任务或设置重写。                                                                         |
 | 共享聊天隐私         | 共用的 V2 摘要只来自保存的共享历史，个人指令/变量/终端留在当前请求；按回复作者过滤私有元数据、审批和停止，手动 `/compact` 仅所有者使用。                                                                              |
-| 终端内容隔离         | 下载强制附件，SVG/HTML 隔离，拒绝 WebUI 同源端口预览；签名链接不因分享聊天转移授权，文件操作始终携带正确聊天上下文。                                                                                                  |
+| 终端内容隔离         | 下载强制附件，SVG/HTML 隔离，拒绝 WebUI 同源端口预览；可选独立主机名预览需短期授权；签名链接不因分享聊天转移授权，文件操作始终携带正确聊天上下文。                                                                    |
 | 默认暴露面           | 个人 Integrations 默认关闭，关闭时停用已有个人工具/终端连接（含管理员），保留配置；模型 Direct Connections 独立。Cookie 转发默认关闭，Apps/Tool Search/Realtime 等沿用原有默认，不因整合主动开启。                    |
 | 权限失败与 App 写入  | Redis 撤权检查不可用时返回可重试拒绝并保留登录 Cookie。App 私有交互与公开写入分开，App 返回后重新检查写权限，频道/私有群组权限仍适用。                                                                                |
 | 原生协议和工具信任   | 协议、Gemini Schema 模式不按 URL/模型名推测；签名思考绑定协议/连接/模型/原文。仅服务器注册的内置身份可做分发和精确结果处理，外部同名工具不获得特权。                                                                  |
@@ -116,7 +163,7 @@ also apply, and write access is checked again after the App responds.
 
 也可让模型直接导入网页、文件链接或当前服务器终端内的文件，支持部署已有解析器能够处理的 PDF、Word 等格式。
 来源由后端获取并入库，正文无需经过模型上下文，因此可导入超过模型上下文的文档。一次处理一个来源，
-等待结果；沿用部署的文件大小和格式限制。终端导入限管理员配置的终端，个人直连和目录批量导入暂不支持。
+等待结果；沿用部署的文件大小和格式限制。终端导入限管理员配置的终端，个人直连、Tether 和目录批量导入暂不支持。
 
 有模型、文件夹或当前聊天挂载的知识库时，只能写入这些库；没有挂载时，可选择有写权限的库。
 挂载不授予写权限，外部知识库不支持写入。编辑保留原始上传文件，关联同一文件的知识库沿用现有索引同步。
@@ -130,7 +177,7 @@ documents or replace, edit and append to existing retrieval text.
 Models can also directly import a web page, document URL or file from the currently selected admin
 terminal. Source contents stay outside model context, allowing documents larger than that context;
 existing upload limits and configured document loaders still apply. Each call waits for one import.
-Personal browser-direct terminals and directory imports are unsupported.
+Personal browser-direct terminals, Tether and directory imports are unsupported.
 
 When the model, folder or chat has attached knowledge bases, those collections define the write scope;
 otherwise choose a collection you can write to. Attachments do not grant write permission, and external
@@ -300,7 +347,7 @@ Under **Settings → Connections → Edit Connection → Advanced**, admins can 
 
 **Send Session ID** is off by default. When enabled, it sends the chat ID under a selectable/custom header name (default `x-session-id`), stable across turns, retries and tool continuations. Temporary chats use their first root user-message ID instead of the shared browser socket ID. Verification and requests without chat context do not automatically add an ID. Explicit UA/session controls override matching entries in Headers; cache benefits depend on provider support.
 
-### v0.12.4 整合与临时 V2 / Integration and temporary V2
+### 保留的整合行为与临时 V2 / Retained integration and temporary V2
 
 完整合入 v0.12.3/v0.12.4 的模型自定义工具、MCP 2.3.0、流式存储及互动恢复、逐键聊天参数、共享新分支、可见控件、文档批注与选区询问，以及加密频道。加密频道全局与普通用户权限默认关闭；Apps、Tool Search、Realtime、V2 不因升级启用。上游完整发布记录保留在 [CHANGELOG](CHANGELOG.md)。
 
@@ -314,7 +361,7 @@ Controls/Params permissions govern panel visibility; valid options and saved per
 
 Temporary chats support V2 history compaction, tool-result budgets, exact raw reads, status and `/compact`. Conversation state lives in the current page; refresh, navigation and new chats do not restore it. Cache defaults are 30 minutes idle, 5 minutes disconnected and 24 hours maximum, with 64 MiB per context, 128 MiB/four contexts per user and 512 MiB per store. Configured Redis failures return retryable 503; deployments without Redis require a single instance and worker. Redis persistence follows deployment policy. Saving or closing waits for executor completion, and storage failures never authorize repeating tools. See the [temporary V2 guide](docs/temporary-context-v2.md).
 
-### v0.12.4 配置默认值 / Configuration defaults
+### 保留的配置默认值 / Retained configuration defaults
 
 Apps 默认关闭；Tool Search、强制 MFA 和 Realtime 通话采用上游默认，升级不主动开启，也不自动启用 V2。新增知识文件浏览、资源版本历史和独立插件开关来自上游。<br>Apps default off. Tool Search, mandatory MFA and Realtime calls retain upstream defaults; the upgrade does not enable them or V2. Knowledge file browsing, resource history and independent plugin switches are upstream capabilities.
 
@@ -326,8 +373,8 @@ Apps 默认关闭；Tool Search、强制 MFA 和 Realtime 通话采用上游默�
 
 ### 重要 BUG 修复 / Important fixes
 
-以下列出相对官方 v0.12.4 仍有实现差异的重要修复，包括合并时发现的回归。
-源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.12.4-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
+以下列出相对官方 v0.13.3 仍有实现差异的重要修复，包括合并时发现的回归。
+源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.13.3-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
 These are retained fixes against the pinned upstream baseline; the audit links their implementation and tests.
 
 | 场景 / Scenario          | 修复后的行为 / Result                                                                                                                                            |
@@ -363,242 +410,91 @@ Upstream already supplies the base terminal identity forwarding, Tavily depth co
 version history, skill overviews, `.skill`, revision comparison and multi-model pairing. Their retained
 fork adaptations are listed separately; historical fork contributions remain traceable in the commit index.
 
-升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.12.4-decisions.md#迁移与验收)。
-Read the [upgrade and rollback checks](docs/upstream/v0.12.4-decisions.md#迁移与验收) before upgrading.
+升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.13.3-decisions.md#数据升级与回滚)。
+Read the [upgrade and rollback checks](docs/upstream/v0.13.3-decisions.md#数据升级与回滚) before upgrading.
 
 > [!NOTE]
 > 下方的 `pip install open-webui` 和 `ghcr.io/open-webui/open-webui` 示例安装上游发行物。使用本分支功能需从本仓库源码构建；参见[开发指南](docs/DEVELOPMENT.md)。
 >
 > The `pip install open-webui` and `ghcr.io/open-webui/open-webui` examples below install upstream releases. Build this repository's source to use the fork's capabilities; see the [development guide](docs/DEVELOPMENT.md).
 
-## Key Features of Open WebUI ⭐
+### Installation
 
-- 🚀 **Effortless Setup**: Install seamlessly via pip, uv, Docker, or Kubernetes (kubectl, kustomize, or helm), with `:ollama` and `:cuda` tagged images available for container deployments.
-
-- 🤝 **Broad Model & API Integration**: Connect OpenAI-compatible APIs, native **Gemini GenerateContent** and **Anthropic Messages**, alongside local Ollama models. Admin Connections supports official APIs and compatible gateways with explicit protocol selection. OpenAI-compatible examples include **LMStudio, GroqCloud, Mistral, OpenRouter and vLLM**. See the [native connection guide](docs/native-model-connections.md) for setup and boundaries.
-
-- 🔐 **Granular RBAC & User Groups**: Administrators define detailed roles, groups, and permissions, giving each user exactly the access they need. Secure by default, with tailored experiences per group.
-
-- 🧩 **Plugin Support**: Extend Open WebUI with **Filters**, **Actions**, **Pipes**, **Tools**, and **Skills**. Connect external services through **MCP**, **MCPO**, and **OpenAPI tool servers**. Build custom integrations, rate limits, approval flows, data connections, and more.
-
-- 🤖 **Models & Agents**: Wrap any base model with custom instructions, tools, and knowledge to build specialized agents. Supports dynamic variables, per-user/group access control, and community preset imports via [Open WebUI Community](https://openwebui.com/).
-
-- ⚡ **Agentic Execution with [Open Terminal](https://github.com/open-webui/open-terminal)**: Give your agents a terminal and filesystem to carry out multi-step tasks. Let them analyze data, run scripts, fix errors, and produce files directly in chat. Scale to teams with **[Terminals (Enterprise)](https://github.com/open-webui/terminals)** for per-user isolated environments, resource limits, and automatic lifecycle management.
-
-- 📝 **Notes**: A dedicated workspace for content outside conversations. Draft with a rich editor, use AI to rewrite selected text, and attach notes to any chat for full-context injection.
-
-- 📢 **Channels**: Real-time shared spaces where your team and AI models collaborate in one timeline. Tag models to draft or critique, with threads, reactions, pins, and access control.
-
-- 🧠 **Persistent Memory**: The AI remembers facts about you across conversations, carrying context from one chat to the next.
-
-- ✅ **Live Workflow & Message Flow**: Watch the AI build and work through checklists in real time. Queue messages while the AI is still responding; they send automatically when it's ready.
-
-- 📅 **Calendar & AI Scheduling**: Built-in personal and shared calendars with month/week/day views, recurring events, color coding, attendees, and reminders. Models manage your schedule conversationally through native function calling.
-
-- ⏱️ **Automations**: Schedule prompts to run on recurring schedules, with runs surfaced on your calendar and each completed run linking back to the chat it produced.
-
-- 📱 **Responsive Design & PWA**: Seamless experience across desktop, laptop, and mobile, with a Progressive Web App for native app-like feel and offline access on localhost.
-
-- ✒️🔢 **Full Markdown and LaTeX Support**: Comprehensive Markdown and LaTeX capabilities for enriched interaction.
-
-- 🎤📹 **Hands-Free Voice/Video Call**: Integrated voice and video calls with multiple Speech-to-Text providers (Local Whisper, OpenAI, Deepgram, Azure) and Text-to-Speech engines (Azure, ElevenLabs, OpenAI, Transformers, WebAPI).
-
-- 💾 **Persistent Artifact Storage**: Built-in key-value storage API for artifacts, enabling journals, trackers, leaderboards, and collaborative tools with personal and shared data scopes.
-
-- 📚 **Local RAG Integration**: Retrieval Augmented Generation backed by 9 vector databases and multiple content-extraction engines (Tika, Docling, Document Intelligence, Mistral OCR, PaddleOCR-vl, external loaders). Supports hybrid search (BM25 + vector) with reranking and full-context mode. Load documents into chat or pull them from your library with the `#` command.
-
-- 🔍 **Web Search for RAG**: Search the web through dozens of providers including `SearXNG`, `Google PSE`, `Brave Search`, `Kagi`, `Mojeek`, `Tavily`, `Perplexity`, `Firecrawl`, `serpstack`, `serper`, `Serply`, `DuckDuckGo`, `SearchApi`, `SerpApi`, `Bing`, `Jina`, `Exa`, `Sougou`, `Azure AI Search`, and `Ollama Cloud`, injecting results directly into the conversation.
-
-- 🌐 **Web Browsing Capability**: Pull websites into chat with the `#` command followed by a URL, or let the model fetch them on its own when needed.
-
-- 🎨 **Image Generation & Editing**: Create and edit images with multiple engines including OpenAI DALL·E, Gemini, ComfyUI (local), and AUTOMATIC1111 (local), supporting both generation and prompt-based editing.
-
-- ⚙️ **Multi-Model Conversations**: Engage several models at once, harnessing their individual strengths in parallel for the best possible responses.
-
-- 📊 **Usage Analytics & Model Evaluation**: Admin dashboards track message volume, token consumption, and cost across users and models. Evaluate models with a built-in arena, A/B testing, and ELO-based leaderboards.
-
-- 🗄️ **Flexible Database & Storage**: Choose SQLite (with optional encryption) or PostgreSQL, and store files locally or on S3, Google Cloud Storage, or Azure Blob Storage.
-
-- 🧬 **Advanced Vector Database Support**: Pick from 9 vector databases: ChromaDB, PGVector, Qdrant, Milvus, Elasticsearch, OpenSearch, Pinecone, S3Vector, and Oracle 23ai.
-
-- 🪪 **Enterprise Authentication & Provisioning**: Full LDAP/Active Directory integration, SSO via trusted headers and OAuth providers, and SCIM 2.0 automated provisioning for identity providers like Okta, Azure AD, and Google Workspace.
-
-- ☁️ **Cloud-Native File Integration**: Native Google Drive and OneDrive/SharePoint file picking for seamless document import from enterprise cloud storage.
-
-- 🔭 **Production Observability**: Built-in OpenTelemetry support for traces, metrics, and logs, plugging into your existing monitoring stack.
-
-- ⚖️ **Horizontal Scalability**: Redis-backed session management and WebSocket support for multi-worker, multi-node deployments behind load balancers.
-
-- 🌐🌍 **Multilingual Support**: Use Open WebUI in your preferred language with i18n support. We're actively seeking contributors to expand language coverage!
-
-- 🌟 **Continuous Updates**: We're committed to improving Open WebUI with regular updates, fixes, and new features.
-
-- 🛡️ **Transparent Security Process**: Security reports are triaged, fixed, and published as open advisories through a documented responsible-disclosure process. See our [Security Policy](https://github.com/open-webui/open-webui/security).
-
-Want to learn more about Open WebUI's features? Check out our [Open WebUI documentation](https://docs.openwebui.com/features) for a comprehensive overview!
-
-## The Open WebUI Ecosystem 🌐
-
-Open WebUI is the core, surrounded by companion apps and infrastructure that extend what your AI can do, where it can reach, and how you run it:
-
-- 💻 **Open WebUI Computer** ([open-webui/computer](https://github.com/open-webui/computer)): A standalone, mobile-first computer and coding agent that runs on the machine you own. Files, terminal, and git in a browser tab, reachable from your phone. Connect it into Open WebUI as a model, or reach it from Telegram, WhatsApp, and more.
-
-- ⚡ **Open Terminal** and **Terminals (Enterprise)** ([open-webui/open-terminal](https://github.com/open-webui/open-terminal) & [open-webui/terminals](https://github.com/open-webui/terminals)): A self-hosted computing environment that plugs into Open WebUI, giving the AI a place to write code, run it, read output, fix errors, and iterate inside the chat. Terminals gives you per-user isolated containers with separate credentials, resource limits, and network rules. Automatic lifecycle management on Docker or Kubernetes.
-
-- 🔄 **oikb** ([open-webui/oikb](https://github.com/open-webui/oikb)): Feed your Knowledge Bases from 45+ sources (GitHub, Confluence, ServiceNow, Salesforce, Jira, Slack, SharePoint, Notion, and more), keeping the tools your team already uses continuously in sync.
-
-- 🖥️ **Native Desktop App** ([open-webui/desktop](https://github.com/open-webui/desktop)): Run Open WebUI as a native app on macOS, Windows, and Linux. System-wide Spotlight chat bar with screenshot capture, push-to-talk voice, and optional fully-local inference via a built-in llama.cpp engine.
-
-Want to learn more? Check out our [Open WebUI documentation](https://docs.openwebui.com) for more details!
-
----
-
-We are incredibly grateful for the generous support of our sponsors. Their contributions help us to maintain and improve our project, ensuring we can continue to deliver quality work to our community. Thank you!
-
-## How to Install 🚀
-
-### Installation via Python pip 🐍
-
-Open WebUI can be installed using pip, the Python package installer. Before proceeding, ensure you're using **Python 3.12** to avoid compatibility issues.
-
-1. **Install Open WebUI**:
-   Open your terminal and run the following command to install Open WebUI:
-
-   ```bash
-   pip install open-webui
-   ```
-
-2. **Running Open WebUI**:
-   After installation, you can start Open WebUI by executing:
-
-   ```bash
-   open-webui serve
-   ```
-
-This will start the Open WebUI server, which you can access at [http://localhost:8080](http://localhost:8080)
-
-### Quick Start with Docker 🐳
-
-> [!NOTE]  
-> Please note that for certain Docker environments, additional configurations might be needed. If you encounter any connection issues, our detailed guide on [Open WebUI Documentation](https://docs.openwebui.com/) is ready to assist you.
-
-> [!WARNING]
-> When using Docker to install Open WebUI, make sure to include the `-v open-webui:/app/backend/data` in your Docker command. This step is crucial as it ensures your database is properly mounted and prevents any loss of data.
-
-> [!TIP]  
-> If you wish to utilize Open WebUI with Ollama included or CUDA acceleration, we recommend utilizing our official images tagged with either `:cuda` or `:ollama`. To enable CUDA, you must install the [Nvidia CUDA container toolkit](https://docs.nvidia.com/dgx/nvidia-container-runtime-upgrade/) on your Linux/WSL system.
-
-### Installation with Default Configuration
-
-- **If Ollama is on your computer**, use this command:
-
-  ```bash
-  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
-
-- **If Ollama is on a Different Server**, use this command:
-
-  To connect to Ollama on another server, change the `OLLAMA_BASE_URL` to the server's URL:
-
-  ```bash
-  docker run -d -p 3000:8080 -e OLLAMA_BASE_URL=https://example.com -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
-
-- **To run Open WebUI with Nvidia GPU support**, use this command:
-
-  ```bash
-  docker run -d -p 3000:8080 --gpus all --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:cuda
-  ```
-
-### Installation for OpenAI API Usage Only
-
-- **If you're only using OpenAI API**, use this command:
-
-  ```bash
-  docker run -d -p 3000:8080 -e OPENAI_API_KEY=your_secret_key -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
-
-### Installing Open WebUI with Bundled Ollama Support
-
-This installation method uses a single container image that bundles Open WebUI with Ollama, allowing for a streamlined setup via a single command. Choose the appropriate command based on your hardware setup:
-
-- **With GPU Support**:
-  Utilize GPU resources by running the following command:
-
-  ```bash
-  docker run -d -p 3000:8080 --gpus=all -v ollama:/root/.ollama -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:ollama
-  ```
-
-- **For CPU Only**:
-  If you're not using a GPU, use this command instead:
-
-  ```bash
-  docker run -d -p 3000:8080 -v ollama:/root/.ollama -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:ollama
-  ```
-
-Both commands facilitate a built-in, hassle-free installation of both Open WebUI and Ollama, ensuring that you can get everything up and running swiftly.
-
-After installation, you can access Open WebUI at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
-
-### Other Installation Methods
-
-We offer various installation alternatives, including non-Docker native installation methods, Docker Compose, Kustomize, and Helm. Visit our [Open WebUI Documentation](https://docs.openwebui.com/getting-started/) or join our [Discord community](https://discord.gg/5rJgQTnV4s) for comprehensive guidance.
-
-### Troubleshooting
-
-Encountering connection issues? Our [Open WebUI Documentation](https://docs.openwebui.com/troubleshooting/) has got you covered. For further assistance and to join our vibrant community, visit the [Open WebUI Discord](https://discord.gg/5rJgQTnV4s).
-
-#### Open WebUI: Server Connection Error
-
-If you're experiencing connection issues, it’s often due to the WebUI docker container not being able to reach the Ollama server at 127.0.0.1:11434 (host.docker.internal:11434) inside the container . Use the `--network=host` flag in your docker command to resolve this. Note that the port changes from 3000 to 8080, resulting in the link: `http://localhost:8080`.
-
-**Example Docker Command**:
+#### Python
 
 ```bash
-docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_BASE_URL=http://127.0.0.1:11434 --name open-webui --restart always ghcr.io/open-webui/open-webui:main
+# With uv installed (macOS/Linux)
+DATA_DIR=~/.open-webui uvx --python 3.12 open-webui@latest serve
+
+# Or install and run with pip (Python 3.12)
+pip install open-webui
+open-webui serve
 ```
 
-### Keeping Your Docker Installation Up-to-Date
+Then open [http://localhost:8080](http://localhost:8080).
 
-Check our Updating Guide available in our [Open WebUI Documentation](https://docs.openwebui.com/getting-started/updating).
-
-### Using the Dev Branch 🌙
-
-> [!WARNING]
-> The `:dev` branch contains the latest unstable features and changes. Use it at your own risk as it may have bugs or incomplete features.
-
-If you want to try out the latest bleeding-edge features and are okay with occasional instability, you can use the `:dev` tag like this:
+#### Docker
 
 ```bash
-docker run -d -p 3000:8080 -v open-webui:/app/backend/data --name open-webui --add-host=host.docker.internal:host-gateway --restart always ghcr.io/open-webui/open-webui:dev
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
 ```
 
-### Offline Mode
+Then open [http://localhost:3000](http://localhost:3000).
 
-If you are running Open WebUI in an offline environment, you can set the `HF_HUB_OFFLINE` environment variable to `1` to prevent attempts to download models from the internet.
+| Image tag | Includes                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------- |
+| `:main`   | Standard image with local AI dependencies                                                |
+| `:slim`   | Lightweight image using external services for embeddings, document extraction, and voice |
+| `:cuda`   | Open WebUI with CUDA acceleration                                                        |
+| `:ollama` | Open WebUI bundled with Ollama                                                           |
+| `:dev`    | Latest development build                                                                 |
 
-```bash
-export HF_HUB_OFFLINE=1
-```
+Add these options to `docker run` before the image name as needed:
 
-## What's Next? 🌟
+| Option                                               | Purpose                                                                                  |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `-e OLLAMA_BASE_URL=http://your-ollama-server:11434` | Connect to Ollama on another server                                                      |
+| `-e OPENAI_API_KEY=your_secret_key`                  | Set your OpenAI API key                                                                  |
+| `-e HF_HUB_OFFLINE=1`                                | Disable Hugging Face model downloads for offline use                                     |
+| `--gpus all`                                         | Enable Nvidia GPU access for `:cuda` or `:ollama`; requires the Nvidia Container Toolkit |
 
-Discover upcoming features on our roadmap in the [Open WebUI Documentation](https://docs.openwebui.com/roadmap/).
+See the [Docker installation guide](https://docs.openwebui.com/getting-started/quick-start/) for setup instructions and configuration options.
 
-## License 📜
+#### Desktop App
 
-This project contains code under multiple licenses. The current codebase includes components licensed under the Open WebUI License with an additional requirement to preserve the "Open WebUI" branding, as well as prior contributions under their respective original licenses. For a detailed record of license changes and the applicable terms for each section of the code, please refer to [LICENSE_HISTORY](./LICENSE_HISTORY). For complete and updated licensing details, please see the [LICENSE](./LICENSE) and [LICENSE_HISTORY](./LICENSE_HISTORY) files.
+[Download the native desktop app](https://github.com/open-webui/desktop) for macOS, Windows, and Linux.
 
-## Support 💬
+[Read the docs →](https://docs.openwebui.com/getting-started/)
 
-If you have any questions, suggestions, or need assistance, please open an issue or join our
-[Open WebUI Discord community](https://discord.gg/5rJgQTnV4s) to connect with us! 🤝
+### Ecosystem
 
-## Security 🛡️
+- [Open Terminal](https://github.com/open-webui/open-terminal) / [Terminals (Enterprise)](https://github.com/open-webui/terminals): The action layer that turns Open WebUI into a full agent harness, with enterprise orchestration for per-user workspaces.
+- [Knowledge Base Sync (oikb)](https://github.com/open-webui/oikb): Mirror folders, repos, buckets, and wikis into Open WebUI Knowledge Bases with incremental sync.
+- [Open WebUI Computer](https://github.com/open-webui/computer): Your computer in any browser: files, editor, terminal, git, and optional AI agents, running on your real machine.
 
-If you believe you've found a security vulnerability, or something that shouldn't be disclosed publicly, please [reach out confidentially through our responsible disclosure program on GitHub](https://github.com/open-webui/open-webui/security). We accept reports only through GitHub, not through any other platform. Thank you for helping us keep Open WebUI secure!
+See the [ecosystem documentation](https://docs.openwebui.com/ecosystem/) for details.
 
-## Star History
+### Troubleshooting and Updates
+
+See the [troubleshooting guide](https://docs.openwebui.com/troubleshooting/) for connection issues and the [updating guide](https://docs.openwebui.com/getting-started/updating) to update your installation.
+
+### Documentation
+
+See the [docs](https://docs.openwebui.com/) for configuration and usage, and the [roadmap](https://docs.openwebui.com/roadmap/) for planned work.
+
+For Docker Compose, Kubernetes, and other setups, see the [installation docs](https://docs.openwebui.com/getting-started/).
+
+### Support
+
+[Open an issue](https://github.com/open-webui/open-webui/issues) or [start a discussion](https://github.com/open-webui/open-webui/discussions).
+
+Find us on [Reddit](https://www.reddit.com/r/OpenWebUI/), [X](https://x.com/OpenWebUI), and [Discord](https://discord.gg/5rJgQTnV4s).
+
+### Security
+
+Report vulnerabilities privately through [GitHub security advisories](https://github.com/open-webui/open-webui/security). Security reports are accepted only through GitHub.
+
+### Star History
 
 <a href="https://star-history.com/#open-webui/open-webui&Date">
   <picture>
@@ -608,6 +504,10 @@ If you believe you've found a security vulnerability, or something that shouldn'
   </picture>
 </a>
 
----
+#### License
 
-Created by [Timothy Jaeryang Baek](https://github.com/tjbck) - Let's make Open WebUI even more amazing together! 💪
+Includes code under the Open WebUI License, which requires preserving the Open WebUI branding, and prior contributions under their original licenses. See [LICENSE](./LICENSE) and [LICENSE_HISTORY](./LICENSE_HISTORY) for terms and history.
+
+[Enterprise](https://docs.openwebui.com/enterprise) · [Careers](https://careers.openwebui.com/) · [Sponsor](https://github.com/sponsors/open-webui)
+
+Created by [Timothy Jaeryang Baek](https://github.com/tjbck).

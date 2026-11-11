@@ -422,8 +422,10 @@
 						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imageGenerationModel.label')}
+								forId="image-generation-model"
 							>
 								<input
+									id="image-generation-model"
 									list="model-list"
 									class={inputClass}
 									bind:value={config.IMAGE_GENERATION_MODEL}
@@ -438,8 +440,12 @@
 								</datalist>
 							</AdminSettingField>
 
-							<AdminSettingField label={$i18n.t('settings.admin.images.imageSize.label')}>
+							<AdminSettingField
+								label={$i18n.t('settings.admin.images.imageSize.label')}
+								forId="image-size"
+							>
 								<input
+									id="image-size"
 									class={inputClass}
 									placeholder={$i18n.t('Enter Image Size (e.g. 512x512)')}
 									bind:value={config.IMAGE_SIZE}
@@ -447,8 +453,12 @@
 							</AdminSettingField>
 
 							{#if ['comfyui', 'automatic1111', ''].includes(config?.IMAGE_GENERATION_ENGINE)}
-								<AdminSettingField label={$i18n.t('settings.admin.images.steps.label')}>
+								<AdminSettingField
+									label={$i18n.t('settings.admin.images.steps.label')}
+									forId="image-steps"
+								>
 									<input
+										id="image-steps"
 										class={inputClass}
 										placeholder={$i18n.t('Enter Number of Steps (e.g. 50)')}
 										bind:value={config.IMAGE_STEPS}
@@ -473,8 +483,10 @@
 							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 								<AdminSettingField
 									label={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
+									forId="images-openai-api-base-url"
 								>
 									<input
+										id="images-openai-api-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
 										bind:value={config.IMAGES_OPENAI_API_BASE_URL}
@@ -495,8 +507,10 @@
 
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imagesOpenaiApiVersion.label')}
+								forId="images-openai-api-version"
 							>
 								<input
+									id="images-openai-api-version"
 									class={inputClass}
 									placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiVersion.label')}
 									bind:value={config.IMAGES_OPENAI_API_VERSION}
@@ -506,8 +520,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imagesOpenaiApiParams.label')}
 								description={$i18n.t('settings.admin.images.imagesOpenaiApiParams.description')}
+								forId="images-openai-api-params"
 							>
 								<Textarea
+									id="images-openai-api-params"
 									className={textareaClass}
 									bind:value={config.IMAGES_OPENAI_API_PARAMS}
 									placeholder={$i18n.t('Enter additional parameters in JSON format')}
@@ -518,9 +534,11 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.automatic1111BaseUrl.label')}
 								description={$i18n.t('settings.admin.images.automatic1111BaseUrl.description')}
+								forId="automatic1111-base-url"
 							>
 								<div class="flex w-full gap-2">
 									<input
+										id="automatic1111-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
 										bind:value={config.AUTOMATIC1111_BASE_URL}
@@ -577,8 +595,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.automatic1111Params.label')}
 								description={$i18n.t('settings.admin.images.automatic1111Params.description')}
+								forId="automatic1111-params"
 							>
 								<Textarea
+									id="automatic1111-params"
 									className={textareaClass}
 									bind:value={config.AUTOMATIC1111_PARAMS}
 									placeholder={$i18n.t('Enter additional parameters in JSON format')}
@@ -589,9 +609,11 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.comfyuiBaseUrl.label')}
 								description={$i18n.t('settings.admin.images.comfyuiBaseUrl.description')}
+								forId="comfyui-base-url"
 							>
 								<div class="flex w-full gap-2">
 									<input
+										id="comfyui-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
 										bind:value={config.COMFYUI_BASE_URL}
@@ -735,17 +757,19 @@
 										{#each REQUIRED_WORKFLOW_NODES as node}
 											<div class="flex w-full flex-col">
 												<div class="shrink-0">
-													<div
+													<label
+														for={`comfyui-workflow-node-${node.type}-key`}
 														class=" capitalize line-clamp-1 w-20 text-gray-400 dark:text-gray-500"
 													>
 														{node.type}{node.type === 'prompt' ? '*' : ''}
-													</div>
+													</label>
 												</div>
 
 												<div class="flex mt-0.5 items-center">
 													<div class="">
 														<Tooltip content={$i18n.t('Input Key (e.g. text, unet_name, steps)')}>
 															<input
+																id={`comfyui-workflow-node-${node.type}-key`}
 																class="{inputClass} w-24"
 																placeholder={$i18n.t('Key')}
 																bind:value={node.key}
@@ -764,6 +788,7 @@
 															<input
 																class={inputClass}
 																placeholder={$i18n.t('Node Ids')}
+																aria-label={$i18n.t('Node Ids')}
 																bind:value={node.node_ids}
 															/>
 														</Tooltip>
@@ -782,8 +807,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imagesGeminiApiBaseUrl.label')}
 								description={$i18n.t('settings.admin.images.imagesGeminiApiBaseUrl.description')}
+								forId="images-gemini-api-base-url"
 							>
 								<input
+									id="images-gemini-api-base-url"
 									class={inputClass}
 									placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
 									bind:value={config.IMAGES_GEMINI_API_BASE_URL}
@@ -866,8 +893,12 @@
 								/>
 							</AdminSettingField>
 							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<AdminSettingField label={$i18n.t('settings.admin.images.imageEditModel.label')}>
+								<AdminSettingField
+									label={$i18n.t('settings.admin.images.imageEditModel.label')}
+									forId="image-edit-model"
+								>
 									<input
+										id="image-edit-model"
 										list="model-list"
 										class={inputClass}
 										bind:value={config.IMAGE_EDIT_MODEL}
@@ -881,8 +912,12 @@
 									</datalist>
 								</AdminSettingField>
 
-								<AdminSettingField label={$i18n.t('settings.admin.images.imageEditSize.label')}>
+								<AdminSettingField
+									label={$i18n.t('settings.admin.images.imageEditSize.label')}
+									forId="image-edit-size"
+								>
 									<input
+										id="image-edit-size"
 										class={inputClass}
 										placeholder={$i18n.t('Enter Image Size (e.g. 512x512)')}
 										bind:value={config.IMAGE_EDIT_SIZE}
@@ -895,8 +930,10 @@
 							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 								<AdminSettingField
 									label={$i18n.t('settings.admin.images.imagesEditOpenaiApiBaseUrl.label')}
+									forId="images-edit-openai-api-base-url"
 								>
 									<input
+										id="images-edit-openai-api-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('settings.admin.images.imagesEditOpenaiApiBaseUrl.label')}
 										bind:value={config.IMAGES_EDIT_OPENAI_API_BASE_URL}
@@ -917,8 +954,10 @@
 
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imagesEditOpenaiApiVersion.label')}
+								forId="images-edit-openai-api-version"
 							>
 								<input
+									id="images-edit-openai-api-version"
 									class={inputClass}
 									placeholder={$i18n.t('settings.admin.images.imagesEditOpenaiApiVersion.label')}
 									bind:value={config.IMAGES_EDIT_OPENAI_API_VERSION}
@@ -928,9 +967,11 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.images.imagesEditComfyuiBaseUrl.label')}
 								description={$i18n.t('settings.admin.images.imagesEditComfyuiBaseUrl.description')}
+								forId="images-edit-comfyui-base-url"
 							>
 								<div class="flex w-full gap-2">
 									<input
+										id="images-edit-comfyui-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
 										bind:value={config.IMAGES_EDIT_COMFYUI_BASE_URL}
@@ -1064,17 +1105,19 @@
 										{#each REQUIRED_EDIT_WORKFLOW_NODES as node}
 											<div class="flex w-full flex-col">
 												<div class="shrink-0">
-													<div
+													<label
+														for={`comfyui-edit-workflow-node-${node.type}-key`}
 														class=" capitalize line-clamp-1 w-20 text-gray-400 dark:text-gray-500"
 													>
 														{node.type}{['prompt', 'image'].includes(node.type) ? '*' : ''}
-													</div>
+													</label>
 												</div>
 
 												<div class="flex mt-0.5 items-center">
 													<div class="">
 														<Tooltip content={$i18n.t('Input Key (e.g. text, unet_name, steps)')}>
 															<input
+																id={`comfyui-edit-workflow-node-${node.type}-key`}
 																class="{inputClass} w-24"
 																placeholder={$i18n.t('Key')}
 																bind:value={node.key}
@@ -1093,6 +1136,7 @@
 															<input
 																class={inputClass}
 																placeholder={$i18n.t('Node Ids')}
+																aria-label={$i18n.t('Node Ids')}
 																bind:value={node.node_ids}
 															/>
 														</Tooltip>
@@ -1111,8 +1155,10 @@
 							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 								<AdminSettingField
 									label={$i18n.t('settings.admin.images.imagesEditGeminiApiBaseUrl.label')}
+									forId="images-edit-gemini-api-base-url"
 								>
 									<input
+										id="images-edit-gemini-api-base-url"
 										class={inputClass}
 										placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
 										bind:value={config.IMAGES_EDIT_GEMINI_API_BASE_URL}

@@ -115,6 +115,32 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
   must not cancel cleanup again; timeout remains retryable. Recover expired-lease tasks only from
   the requesting reply author's unfinished messages, preserving approval-pause rejection semantics.
 
+## Native Agent execution
+
+- Admit saved Agent turns before mutating chat history. Recheck active executions and sibling
+  branches under the chat transaction. A matching empty automation placeholder can be reused.
+  Continuing a signed provider session requires the same actor, chat, provider, model, and actual
+  terminal URL identity. Legacy signed state needs the normalized execution record to prove that binding.
+- Recheck live terminal access before accepting native Agent approvals and before starting or sending
+  input to the remote session, including reconnect replay. A grant at session creation is not continuing
+  authorization. Preserve the bound terminal/context identity; revocation must not block retaining
+  received output or confirming termination of that existing session.
+- Commit each exact sequenced terminal output frame before acknowledging it or giving it to a provider
+  reader. Keep this journal server-owned and separate from user-visible chat output, copies, and model input.
+  A duplicate sequence can only confirm the same bytes for the same execution and terminal session.
+- `AGENT_NATIVE_OUTPUT_MAX_BYTES` defaults to 67108864 bytes and `AGENT_NATIVE_OUTPUT_MAX_EVENTS` to
+  65536 frames per reply. Both accept positive integers. Retain one additional received frame, bounded
+  by the 20 MiB carrier, before stopping intake at capacity. Keep the reply pending if that frame
+  cannot be saved. Journal appends rewrite a bounded JSON value in the existing reply row.
+- Force-stop preserves accepted raw frames and the saved normalized output. Recovery for a known
+  session can try to read additional retained frames from the durable cursor without sending Agent
+  input. Report that the remote tail may be incomplete after forced termination. A worker crash
+  before commit can leave an unacknowledged frame outside WebUI storage.
+- A fenced stop attempt preserves the retained output before DELETE. Release the reply only after
+  a verified terminal acknowledgement and durable publication. A lost acknowledgement, timeout, 404,
+  missing worker, or expired lease keeps the reply pending. Recovery never starts a session or
+  replays prompts, tools, or approval responses.
+
 ## Image profiles and storage
 
 - Named image profiles use request-local config snapshots and expose only ID/name to ordinary users.
@@ -442,3 +468,61 @@ completion acknowledgements read-only/idempotent. Other stale actions fail close
 active/uncertain/unpublished work or erase raw data, admissions, checkpoints, selections or batch
 accounting. History sync must not replace the retirement ledger; quota/CAS failures roll back the
 entire retirement-and-registration transition.
+
+## v0.13.3 data and API contracts
+
+- Alembic head `a133d11e0001` is an empty merge of fork head `a122d15e0001` and official head
+  `9f6c2a8d1b43`. Keep the six official revision IDs and preserve earlier migration semantics.
+  Verify fresh and seeded upgrades on SQLite and PostgreSQL. Drain workers before upgrading and use
+  a coordinated backup of the database, uploads, config and image for rollback.
+- A saved chat view belongs to its authenticated viewer and requires current chat read access.
+  Persist the validated layout and saved chat references. Keep temporary scope, chat history and
+  preview capabilities out of the layout. Copies, side chats, promotions and share snapshots carry
+  original transcript and tool output with frozen citations. Strip source-bound execution,
+  checkpoint, selection, cursor and Agent resume state. Live shared continuation still uses its
+  original saved chat and existing permissions.
+- Agent executions require a saved chat and a single selected Agent. Claim one execution under
+  the chat row lock before remote effects, bound to the reply author, chat, model, terminal,
+  directory and original task. Keep signed resume and execution records server-side. Browser
+  rewrites must preserve the durable record and cannot admit or advance it. An unresolved record
+  blocks a new Agent turn and destructive chat deletion. Require durable proof of output
+  publication and executing-terminal completion before releasing the execution record. Commit
+  final reply state and release atomically. Realtime rechecks ownership and current terminal access.
+- Renewable sessions validate the active SQL row and its user binding together with current
+  account and Redis revocation checks. Preserve retryable authentication failures and valid
+  cookies during Redis outages. Configured Tether is independent of personal Direct Integrations
+  and grants no administrator-terminal skill discovery or knowledge import privileges.
+- Reserve each configured preview hostname in private SQL before serving it. Keep retired hosts
+  and their origins isolated after URL changes, disablement, public settings reset and restarts.
+  The registry stays authoritative when persistent settings are disabled. The main application
+  cannot use a reserved hostname. Keep server state out of the config API and export.
+- Preview tickets bind the login, terminal target and context. Check the actor's terminal
+  `/ports` list when issuing and renewing port tickets and during active preview traffic. Verify
+  a supplied Proxy browser session in the original terminal and chat so closing the browser
+  tab also closes its port preview session. Port-only requests reuse a verified session for
+  the same login, terminal, chat, context and port, including after ticket expiry. Atomically
+  record the create claim before contacting the terminal. Retain ambiguous claims through
+  the terminal idle window and replace known sessions only after authenticated upstream
+  confirmation that they are gone.
+- Start monitoring authorization before sending upstream preview requests or waiting for the
+  WebSocket opening frame. Cancel pending HTTP and WebSocket establishment on revocation.
+  Recheck the ticket and live access after a remote port lookup, before forwarding the
+  WebSocket target and before sending upstream HTTP response headers.
+- Rewrite upstream capability paths in textual preview responses, refuse HTTP redirects outside
+  the upstream browser scope and redact ticket paths from application logs. Port WebSockets
+  validate the opening URL against the authorized port. The terminal browser proxy applies its
+  own network policy to subsequent redirects and maintains its target-site cookie jar. The strict
+  page sandbox blocks DOM cookie and local storage access. Terminal file delivery and interactive
+  Chrome control use their authenticated, context-bound routes.
+  See the [preview guide](../docs/terminal-preview.md).
+- Keep normalized chat-message tool output exact. Provider replay reconstructs the original
+  `provider_function` or `provider_batch` and retains each child's frozen citations. Hidden
+  private and runtime context stays request-local and counts against the final budget. Retain raw
+  results and dispatch provenance across all save, approval and retry paths.
+- New attachment defaults are preload off, retrieval and reranking Top K 10, chunk size 1024
+  and the small-file full-text threshold 50000 characters. Retain explicit saved values.
+  Ordinary knowledge uploads claim capacity atomically. Tool imports recheck the live target
+  authorization after indexing and before linking the file.
+
+See the [v0.13.3 decision record](../docs/upstream/v0.13.3-decisions.md) and the
+[development checks](../docs/DEVELOPMENT.md).

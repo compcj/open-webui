@@ -172,8 +172,9 @@ async def test_socket_callback_requires_live_claim_and_cleans_marker(monkeypatch
     from test_event_call_access import runtime as socket_fixture
 
     repo, doc, metadata = await bound(monkeypatch)
-    socket_runtime = socket_fixture.__wrapped__()
+    socket_runtime = socket_fixture.__wrapped__(monkeypatch)
     ns = socket_runtime.ns
+    socket_runtime.sessions['socket'] = {'id': 'owner'}
     ns['get_event_call_session_error'] = AsyncMock(return_value=None)
     ns['get_user_id_from_session_pool'] = lambda sid: 'owner'
     socket = ModuleType('open_webui.socket.main')

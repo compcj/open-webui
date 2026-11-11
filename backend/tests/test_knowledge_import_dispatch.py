@@ -122,11 +122,23 @@ async def test_approved_resume_rechecks_live_collection_acl(execution_runtime, i
     import_runtime.base.user_id = 'another-owner'
     import_runtime.grant.return_value = True
     queued = call(name, True, terminal)
+    metadata = {
+        'chat_id': 'saved',
+        'message_id': 'reply',
+        'tools': tools,
+        'params': {'tool_approval_mode': 'ask'},
+    }
+    execute = execution_runtime.ns['execute_tool_call']
+    with pytest.raises(execution_runtime.ns['ToolApprovalRequired']):
+        await execute({}, metadata, None, queued)
+    assert queued['status'] == 'pending' and queued['approval_fingerprint']
+    import_runtime.fetch.assert_not_awaited()
+
+    queued['approved'] = True
     import_runtime.grant.return_value = False
-    result = await execution_runtime.ns['execute_tool_call'](
-        {}, {'chat_id': 'saved', 'tools': tools, 'params': {'tool_approval_mode': 'ask'}}, None, queued
-    )
+    result = await execute({}, metadata, None, queued)
     assert 'error' in json.loads(result[1])
+    import_runtime.grant.assert_awaited_once()
     import_runtime.fetch.assert_not_awaited()
 
 

@@ -23,6 +23,8 @@ DERIVED_CONTEXT_FIELDS = frozenset(
         'tool_result_accounting',
         'tool_budget_accounting',
         'execution_ledger',
+        'task_id',
+        'frozen_tool_context',
         'event_seq',
         'events_dropped_through',
         'raw_cursor',
@@ -33,6 +35,9 @@ DERIVED_CONTEXT_FIELDS = frozenset(
         'context_checkpoint_id',
         'tool_result_ledger',
         '_temporary_execution_id',
+        'agent',
+        'agent_execution',
+        'agent_resolution',
     }
 )
 
@@ -52,7 +57,8 @@ def copy_chat_without_context_state(chat: dict) -> dict:
     if isinstance(result.get('id'), str) and result['id'].startswith(('temporary:', 'local:')):
         result.pop('id')
     messages = list(((result.get('history') or {}).get('messages') or {}).values())
-    messages.extend(result.get('messages') or [])
+    flat_messages = result.get('messages') or []
+    messages.extend(flat_messages.values() if isinstance(flat_messages, dict) else flat_messages)
     for message in messages:
         if not isinstance(message, dict):
             continue

@@ -44,7 +44,9 @@ printf 'installed from frozen lockfile\\n'
 		{ mode: 0o755 }
 	);
 	const dockerfile = readFileSync(path.join(root, 'Dockerfile'), 'utf8');
-	const command = dockerfile.match(/^RUN ((?:npm ci\b|sh scripts\/npm-ci\.sh)[^\r\n]*)/m)?.[1];
+	const command = dockerfile.match(
+		/^RUN ((?:ONNXRUNTIME_NODE_INSTALL_CUDA=skip )?(?:npm ci\b|sh scripts\/npm-ci\.sh)[^\r\n]*)/m
+	)?.[1];
 	assert.ok(command, 'Docker frontend dependency installation must be present');
 	const result = spawnSync(
 		bash,

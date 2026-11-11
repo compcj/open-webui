@@ -16,7 +16,8 @@
 
 目标范围为模型、文件夹和当前对话挂载知识库的并集。只要挂载了知识库，写入就限制在这些库中，
 无论内容通过检索工具还是 `file_context` 注入。没有挂载库时，可以选择当前用户有写权限的库。
-每次执行都重新检查权限；审批等待期间被撤销权限的请求也会被拒绝。
+每次执行都重新检查权限。直接导入还会在索引完成后、关联文件前重新确认当前目标和权限。
+审批等待或处理期间被撤销权限的请求会被拒绝。
 
 列表中的 `write_access` 表示当前用户对该知识库的写权限，不保证其中每个文件都可编辑。
 文件编辑还要求文件属于目标库，并且用户拥有文件级写权限。读取权限、挂载和搜索结果本身均不授权写入。
@@ -95,12 +96,15 @@
 
 个人浏览器直连终端、目录和目录批量导入暂不支持。未选择可用的服务器终端时，选择终端后重试；
 不能通过工具参数指定其他用户、聊天或终端连接。
+启用 Tether 不会扩展导入权限。终端导入仍要求当前聊天选中的管理员服务器终端。
 
 ### 大小、同名与失败结果
 
 两种导入都保存到已有知识库根目录。同名文件或目录会报冲突，不覆盖也不自动改名。
 导入沿用现有文件大小上限、允许格式、解析器和索引配置；超过模型上下文不妨碍导入，
 但服务器内存、存储、下载和解析服务仍有资源及超时限制。
+v0.13.3 的普通附件默认关闭预加载，检索和重排 Top K 默认均为 10，分块大小默认 1024，
+小文件全文阈值默认 50000 字符。保留管理员已保存的设置。导入会处理来源全文，索引按当前配置分块。
 
 只有实际保存、处理及关联均已核实才报告成功。若索引按配置跳过，结果会明确标记
 `indexing_skipped: true` 和 `indexed: false`。失败时仅清理本次新建且确认未关联的孤立文件；
@@ -192,13 +196,15 @@ File edits additionally require membership and file write access. External colle
 `import_knowledge_terminal_file(knowledge_id, path, filename=None)` imports a file from the current
 administrator-configured terminal, using the actor's existing terminal and chat context. Personal
 browser-direct terminals and directory imports are unsupported. Terminal import also requires model
-terminal capability. URL import does not require the web-search toggle.
+terminal capability. Tether access leaves the administrator-terminal requirement in effect.
+URL import does not require the web-search toggle.
 
 Source contents stay outside model context. Both tools wait for completion and return compact file
 identity and persistence/indexing status. Web pages store extracted UTF-8 text; supported documents
 retain their original bytes. Existing file limits, loaders, permissions and root-name conflict checks
-still apply. These tools do not crawl sites, overwrite files, or require WebUI credentials in terminal
-scripts. Check retained file IDs after partial completion or interruption before attempting a new import.
+still apply. The import rechecks live permissions after indexing, before publishing the file association.
+These tools do not crawl sites, overwrite files, or require WebUI credentials in terminal scripts.
+Check retained file IDs after partial completion or interruption before attempting a new import.
 
 `write_knowledge_file` creates UTF-8 `.md`/`.txt` files at the collection root without overwriting names.
 `replace_knowledge_file_content` accepts either full `content` or `operations`, using original Unicode

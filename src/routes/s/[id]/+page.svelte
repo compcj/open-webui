@@ -68,9 +68,7 @@
 		loadAndScroll();
 	}
 
-	//////////////////////////
 	// Web functions
-	//////////////////////////
 
 	const loadAndScroll = async () => {
 		if (await loadSharedChat()) {

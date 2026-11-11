@@ -36,6 +36,7 @@ export type FileEntry = {
 	type: 'file' | 'directory';
 	size?: number;
 	modified?: number;
+	created?: number | null;
 	writable?: boolean;
 };
 
@@ -78,9 +79,56 @@ export type ListeningPort = {
 	process: string | null;
 };
 
-export type TerminalFeatures = {
-	terminal?: boolean;
+export type TerminalSystemInfo = {
+	sampled_at: number;
+	hostname: string;
+	os: string;
+	arch: string;
+	environment: 'host' | 'container';
+	uptime_seconds: number | null;
+	service_uptime_seconds: number;
+	cpu: { percent: number | null; cores: number | null; scope: 'host' | 'cgroup' };
+	memory: { total: number; used: number; scope: 'host' | 'cgroup' } | null;
+	disk: { path: string; total: number; used: number; free: number } | null;
+	network: { name: string; up: boolean | null; addresses: string[] }[] | null;
+	process_scope: 'user' | 'environment';
+	processes:
+		| {
+				pid: number;
+				name: string;
+				cpu_percent: number | null;
+				memory_bytes: number;
+		  }[]
+		| null;
 };
+
+export type TerminalFeatures = {
+	agents?: boolean;
+	terminal?: boolean;
+	browser?: boolean;
+	desktop?: boolean;
+	git?: boolean;
+	events?: boolean;
+};
+
+// Missing flags mean unsupported; never probe a new endpoint on an older server.
+export async function getTerminalFeatures(
+	connection: TerminalConnection,
+	chatId: string | null,
+	signal?: AbortSignal
+): Promise<TerminalFeatures> {
+	try {
+		const result = await terminalRequest<{ features?: TerminalFeatures }>(
+			connection,
+			chatId,
+			'/api/config',
+			{ signal }
+		);
+		return result.features ?? {};
+	} catch {
+		return {};
+	}
+}
 
 export type TerminalFileRoot = {
 	path: string;
@@ -141,12 +189,17 @@ export const resolveTerminalConnection = (
 	directServers: any[],
 	token: string
 ): TerminalConnection | null => {
-	if (!get(config)?.features?.enable_tool_servers || !selector) return null;
+	const features = get(config)?.features;
+	if (!features?.enable_tool_servers || !selector) return null;
+	if (selector.startsWith('tether:') && !features.enable_tether) return null;
 	if (servers.some((server) => server.id === selector)) {
 		return {
 			selector,
 			baseUrl: `${WEBUI_API_BASE_URL}/terminals/${encodeURIComponent(selector)}`,
-			key: token,
+			// Panels outlive Tether's token rotations; read the current session at request time.
+			get key() {
+				return typeof localStorage === 'undefined' ? token : (localStorage.getItem('token') ?? '');
+			},
 			system: true
 		};
 	}
@@ -159,6 +212,16 @@ export const resolveTerminalConnection = (
 		: null;
 };
 
+export class TerminalRequestError extends Error {
+	constructor(
+		message: string,
+		public status: number
+	) {
+		super(message);
+		this.name = 'TerminalRequestError';
+	}
+}
+
 export const terminalRequest = async <T>(
 	connection: TerminalConnection,
 	chatId: string | null,
@@ -166,20 +229,37 @@ export const terminalRequest = async <T>(
 	options: RequestInit = {}
 ): Promise<T> => {
 	const cleanup = options.method === 'DELETE' && /^\/api\/terminals\/[^/]+$/.test(path);
-	if (!cleanup && !get(config)?.features?.enable_tool_servers)
-		throw new Error('Tool servers are disabled');
-	if (!cleanup && !connection.system && !get(config)?.features?.enable_direct_integrations)
-		throw new Error('Direct integrations are disabled');
 	const response = await fetch(`${connection.baseUrl}${path}`, {
 		...options,
 		headers: {
-			...bearerHeaders(connection.key, cleanup),
+			...terminalConnectionHeaders(connection, cleanup),
 			...(chatId ? { 'X-Session-Id': chatId } : {}),
 			...options.headers
 		}
 	});
-	if (!response.ok) throw new Error(`Terminal request failed (${response.status})`);
+	if (!response.ok) {
+		const body = await response.json().catch(() => null);
+		throw new TerminalRequestError(
+			typeof body?.detail === 'string'
+				? body.detail
+				: typeof body?.error === 'string'
+					? body.error
+					: `Terminal request failed (${response.status})`,
+			response.status
+		);
+	}
 	return response.json();
+};
+
+export const terminalConnectionHeaders = (connection: TerminalConnection, cleanup = false) => {
+	const features = get(config)?.features;
+	if (!cleanup && !features?.enable_tool_servers)
+		throw new TerminalRequestError('Tool servers are disabled', 403);
+	if (!cleanup && !connection.system && !features?.enable_direct_integrations)
+		throw new TerminalRequestError('Direct integrations are disabled', 403);
+	if (!cleanup && connection.selector?.startsWith('tether:') && !features?.enable_tether)
+		throw new TerminalRequestError('Tether is disabled', 403);
+	return bearerHeaders(connection.key, cleanup);
 };
 
 const bearerHeaders = (apiKey: TerminalCredential, cleanup = false): Record<string, string> => {
@@ -337,7 +417,10 @@ export const getTerminalServers = async (token: string): Promise<TerminalServer[
 		}
 	}).catch(() => null);
 	if (!res || !res.ok) return [];
-	return res.json().catch(() => []);
+	const servers: TerminalServer[] = await res.json().catch(() => []);
+	return servers.filter(
+		(server) => !server.id?.startsWith('tether:') || get(config)?.features?.enable_tether
+	);
 };
 
 export const getTerminalConfig = async (
@@ -402,7 +485,8 @@ export const searchFiles = async (
 	limit: number = 20,
 	type: 'file' | 'directory' | 'any' = 'any',
 	sessionId?: string,
-	showHidden: boolean = false
+	showHidden: boolean = false,
+	signal?: AbortSignal
 ): Promise<TerminalFileSearchResponse | null> => {
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
@@ -416,13 +500,16 @@ export const searchFiles = async (
 	});
 	const base = baseUrl.replace(/\/$/, '');
 	const searchRes = await fetch(`${base}/files/search?${searchParams.toString()}`, {
-		headers
+		headers,
+		signal
 	}).catch(() => null);
 
 	if (searchRes?.ok) {
 		const json = await searchRes.json().catch(() => null);
 		if (Array.isArray(json?.results)) return { results: json.results };
 	}
+
+	if (signal?.aborted) return null;
 
 	const globParams = new URLSearchParams({
 		pattern: query.trim() ? `*${query.trim()}*` : '*',
@@ -431,9 +518,10 @@ export const searchFiles = async (
 		max_results: String(limit)
 	});
 	const globRes = await fetch(`${base}/files/glob?${globParams.toString()}`, {
-		headers
+		headers,
+		signal
 	}).catch((err) => {
-		console.error('open-terminal searchFiles error:', err);
+		if (!signal?.aborted) console.error('open-terminal searchFiles error:', err);
 		return null;
 	});
 	if (!globRes?.ok) return null;
@@ -823,14 +911,7 @@ export const getListeningPorts = async (
 	return json?.ports ?? [];
 };
 
-export const getPortProxyUrl = (baseUrl: string, port: number, path: string = ''): string => {
-	if (!get(config)?.features?.enable_tool_servers) return '';
-	return `${baseUrl.replace(/\/$/, '')}/proxy/${port}/${path}`;
-};
-
-// ---------------------------------------------------------------------------
 // Notebook execution
-// ---------------------------------------------------------------------------
 
 export const createNotebookSession = async (
 	baseUrl: string,

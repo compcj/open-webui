@@ -18,6 +18,13 @@ from starlette.responses import StreamingResponse
 
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.images.context import build_tool_result_parts
+from open_webui.utils.tool_calling import (
+    INCOMPLETE_CALL_ERROR,
+    final_answer_payload,
+    recover_tool_calls,
+    set_tool_call_visibility,
+    tool_repetition_error,
+)
 from test_web_tool_citations import load_functions
 
 
@@ -100,10 +107,16 @@ def runtime():
         'terminal_event_handler': AsyncMock(),
         'attach_tool_citations': AsyncMock(),
         'build_tool_result_parts': build_tool_result_parts,
+        'INCOMPLETE_CALL_ERROR': INCOMPLETE_CALL_ERROR,
+        'final_answer_payload': final_answer_payload,
+        'recover_tool_calls': recover_tool_calls,
+        'set_tool_call_visibility': set_tool_call_visibility,
+        'tool_repetition_error': tool_repetition_error,
         'get_reasoning_format': lambda model: None,
         'convert_url_images_to_base64': AsyncMock(side_effect=lambda data, **kwargs: data),
         'normalize_messages_for_model': lambda data: data,
         'merge_usage': lambda current, incoming: {**(current or {}), **incoming},
+        'USAGE_DETAIL_KEYS': ('prompt_tokens_details', 'completion_tokens_details'),
         'Chats': SimpleNamespace(
             get_message_by_id_and_message_id=AsyncMock(return_value=None),
             get_chat_title_by_id=AsyncMock(return_value='Synthetic chat'),
@@ -113,9 +126,16 @@ def runtime():
     load_functions(
         ns,
         'utils/response.py',
-        {'normalize_usage', 'handle_responses_streaming_event', 'deep_merge', 'get_response_delta_key'},
+        {
+            'normalize_usage',
+            'handle_responses_streaming_event',
+            'deep_merge',
+            'get_response_delta_key',
+            'update_usage_snapshot',
+            'usage_counter',
+        },
     )
-    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call'})
+    load_functions(ns, 'utils/tool_search.py', {'resolve_tool_call', 'split_tool_call_batches'})
     load_functions(
         ns,
         'utils/misc.py',
@@ -126,6 +146,7 @@ def runtime():
             'reconcile_tool_pairs',
             'get_paired_tool_call_ids',
             'get_last_user_message_item',
+            'get_system_message',
             'get_content_from_message',
             'set_last_user_message_content',
         },
@@ -140,10 +161,13 @@ def runtime():
             'get_response_completion_event_data',
             '_deduplicate_tool_calls',
             '_split_tool_calls',
+            'prepare_tool_execution',
             'tool_result_content',
             '_is_tool_result_error',
         },
     )
+
+    load_functions(ns, 'utils/tool_permissions.py', {'ToolApprovalRequired'})
 
     def response_for(chunks):
         async def body():
@@ -172,6 +196,7 @@ def runtime():
                 'chat_id': 'local:test' if temporary else 'saved-chat',
                 'message_id': 'reply',
                 'params': {'reasoning_tags': False},
+                'tools': {'test_tool': {'type': 'builtin', 'tool_id': 'builtin:test_tool'}},
             },
             'events': [],
             'event_emitter': emit,
@@ -562,7 +587,7 @@ async def test_legacy_round_usage_counts_only_latest_response_and_new_tool_text(
         _estimate_tokens=len,
     )['_exceeds_token_threshold']
 
-    async def capture(request, user, messages, *args):
+    async def capture(request, user, messages, *args, **kwargs):
         snapshots.append(copy.deepcopy(messages))
         return messages, None, False
 

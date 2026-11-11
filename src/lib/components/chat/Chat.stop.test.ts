@@ -37,7 +37,7 @@ const createChat = (stop: () => Promise<unknown>, chatId: string | null = 'chat'
 		const stoppingChats = new Map(), processingQueueChats = new Set();
 		let $chatRequestQueues = {}, files = [], prompt = 'draft';
 		const chatRequestQueues = { update: (fn) => { $chatRequestQueues = fn($chatRequestQueues); } };
-		const tick = async () => {}, emitTyping = () => {};
+		const tick = async () => {}, emitTyping = () => {}, embedded = false, agentModelId = undefined;
 		let selectedModels = ['model'];
 		const selectedModelIds = ['model'], $models = [{ id: 'model' }], pendingOAuthTools = [];
 		const $settings = { enableMessageQueue: false }, $config = {}, chatFiles = [], chatVariables = {};

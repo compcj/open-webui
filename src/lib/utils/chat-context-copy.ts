@@ -4,6 +4,7 @@ const derived = new Set([
 	'temporary_context',
 	'context_scope',
 	'contextSummary',
+	'context_summary',
 	'context_usage',
 	'context_compaction',
 	'chat_context_checkpoint',
@@ -25,7 +26,15 @@ const derived = new Set([
 	'_tool_result_refs',
 	'_context_message_id',
 	'context_checkpoint_id',
-	'tool_result_ledger'
+	'tool_result_ledger',
+	'task_id',
+	'agent',
+	'agent_execution',
+	'agent_state',
+	'agent_session_id',
+	'agent_run_id',
+	'agent_resolution',
+	'hidden_output'
 ]);
 function clean(object: any) {
 	if (!object || typeof object !== 'object' || Array.isArray(object)) return;
@@ -41,10 +50,11 @@ function message(object: any) {
 		clean(item?.meta);
 		clean(item?.metadata);
 	}
-	if (Array.isArray(object?.statusHistory))
-		object.statusHistory = object.statusHistory.filter(
-			(entry: any) => !['context_compaction', 'tool_result_compaction'].includes(entry?.action)
-		);
+	for (const key of ['statusHistory', 'status_history'])
+		if (Array.isArray(object?.[key]))
+			object[key] = object[key].filter(
+				(entry: any) => !['context_compaction', 'tool_result_compaction'].includes(entry?.action)
+			);
 }
 export function projectRawChat<T>(source: T): T {
 	const copy = structuredClone(source) as any;

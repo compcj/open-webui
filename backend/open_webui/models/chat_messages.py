@@ -4,39 +4,70 @@ import os
 import time
 import uuid
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select, delete, func, cast, Integer, distinct
-from sqlalchemy.ext.asyncio import AsyncSession
 from open_webui.internal.db import Base, get_async_db_context
-from open_webui.utils.response import merge_usage, normalize_usage
-from pydantic import BaseModel, ConfigDict
+from open_webui.utils.response import normalize_usage
+from open_webui.utils.session_records import has_pending_tool_approval, recorded_timestamp
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
     Column,
-    ForeignKey,
     Float,
+    ForeignKey,
     Index,
     Integer,
     Text,
-    cast,
     case,
+    cast,
     delete,
+    distinct,
     func,
     literal,
     select,
+    type_coerce,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-####################
+UNCONFIRMED_AGENT_STATES = ('starting', 'running', 'stopping', 'unconfirmed')
+AGENT_OUTPUT_INCOMPLETE_ERROR = {
+    'code': 'agent_output_incomplete',
+    'content': 'The agent stopped. Its output may be incomplete because the terminal could have produced more data.',
+}
+
+
+def agent_output_private_fields(keep_retention_state: bool = False) -> tuple[str, ...]:
+    always = ('output_journal', 'stop_attempt')
+    if keep_retention_state:
+        return always
+    return (
+        *always,
+        'output_journal_version',
+        'output_retention_blocked',
+        'output_capacity_reached',
+        'stop_recovering',
+        'output_incomplete',
+    )
+
+
+def strip_agent_output_journal(meta: dict | None, *, keep_retention_state: bool = False) -> dict | None:
+    # Protocol frames and retention state belong to the execution store.
+    execution = meta.get('agent_execution') if isinstance(meta, dict) else None
+    if not isinstance(execution, dict):
+        return meta
+    excluded = agent_output_private_fields(keep_retention_state)
+    return {**meta, 'agent_execution': {key: value for key, value in execution.items() if key not in excluded}}
+
+
 # Helpers
-####################
 
 
 def _normalize_timestamp(timestamp: Optional[int]) -> float:
@@ -45,11 +76,11 @@ def _normalize_timestamp(timestamp: Optional[int]) -> float:
     if timestamp is None:
         return now
 
-    # Convert milliseconds to seconds if needed
+    # Treat values above the seconds-range cutoff as milliseconds.
     if timestamp > 10_000_000_000:
         timestamp = timestamp / 1000
 
-    # Validate: must be after 2020 and not in the future (with 1 day tolerance)
+    # Accept timestamps from 2020-01-01 through one day ahead of now, inclusive.
     min_valid = 1577836800  # 2020-01-01 00:00:00 UTC
     max_valid = now + 86400  # 1 day in the future (clock skew tolerance)
 
@@ -159,9 +190,7 @@ def _extract_tool_names(value: Any) -> list[str]:
     return names
 
 
-####################
 # ChatMessage DB Schema
-####################
 
 
 class ChatMessage(Base):
@@ -212,9 +241,7 @@ class ChatMessage(Base):
     )
 
 
-####################
 # Pydantic Models
-####################
 
 
 class ChatMessageModel(BaseModel):
@@ -240,13 +267,36 @@ class ChatMessageModel(BaseModel):
     created_at: int
     updated_at: int
 
+    @field_validator('meta')
+    @classmethod
+    def without_agent_output_journal(cls, meta):
+        return strip_agent_output_journal(meta)
 
-####################
+
 # Table Operations
-####################
 
 
 class ChatMessageTable:
+    @staticmethod
+    def _public_meta(db, *, keep_retention_state=False):
+        # Project private data inside SQL so normal chat reads never load journal bytes.
+        meta = ChatMessage.meta
+        fields = agent_output_private_fields(keep_retention_state)
+        if db.get_bind().dialect.name == 'sqlite':
+            paths = [f'$.agent_execution.{field}' for field in fields]
+            return type_coerce(func.json_remove(meta, *paths), JSON)
+
+        agent = meta['agent_execution']
+        projected = cast(meta, JSONB)
+        for field in fields:
+            projected = projected.delete_path(['agent_execution', field])
+        return case((func.json_typeof(agent) == 'object', cast(projected, JSON)), else_=meta)
+
+    @classmethod
+    def _select_public_message_rows(cls, db):
+        fields = [column for column in ChatMessage.__table__.columns if column.key != 'meta']
+        return select(*fields, cls._public_meta(db).label('meta'))
+
     @staticmethod
     def _apply_message_data(message: ChatMessage, data: dict, now: int) -> None:
         """Overwrite only the fields the payload carries."""
@@ -270,6 +320,14 @@ class ChatMessageTable:
             message.embeds = data.get('embeds')
         if 'meta' in data or 'voice_provenance' in data:
             meta = copy.deepcopy(data.get('meta') if 'meta' in data else message.meta)
+            if isinstance(meta, dict):
+                meta.pop('agent_execution', None)
+            prior = message.meta or {}
+            if 'agent' in prior and 'agent' not in (meta or {}):
+                meta = {**(meta or {}), 'agent': prior['agent']}
+            if 'agent_execution' in prior:
+                # Only the execution store can advance remote execution state.
+                meta = {**(meta or {}), 'agent_execution': prior['agent_execution']}
             provenance = public_voice_provenance({'meta': message.meta}, message.user_id) or public_voice_provenance(
                 data, message.user_id
             )
@@ -293,8 +351,8 @@ class ChatMessageTable:
 
         usage = get_usage(data)
         if usage:
-            existing_usage = normalize_usage(message.usage)
-            message.usage = existing_usage if usage == existing_usage else merge_usage(existing_usage, usage)
+            # The caller saves a cumulative message snapshot; accumulation belongs to the model-call loop.
+            message.usage = usage
         message.updated_at = now
 
     @staticmethod
@@ -302,6 +360,8 @@ class ChatMessageTable:
         from open_webui.utils.chat_voice import public_voice_provenance
 
         meta = copy.deepcopy(data.get('meta'))
+        if isinstance(meta, dict):
+            meta.pop('agent_execution', None)
         provenance = public_voice_provenance(data, user_id)
         if provenance:
             # Copies omit private meta; persist their allowlisted public attribution in the JSON column.
@@ -324,7 +384,7 @@ class ChatMessageTable:
             error=data.get('error'),
             usage=get_usage(data),
             context_summary=data.get('context_summary') or data.get('contextSummary'),
-            created_at=data.get('timestamp') or now,
+            created_at=(recorded_timestamp(data.get('timestamp')) or 0) if 'timestamp' in data else now,
             updated_at=now,
         )
 
@@ -379,15 +439,21 @@ class ChatMessageTable:
         self, chat_id: str, user_id: str, messages: dict[str, dict], db: AsyncSession | None = None
     ) -> None:
         """Backfill missing rows without overwriting newer message data."""
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
         if not messages:
             return
         async with get_async_db_context(db) as db:
             insert = sqlite_insert if db.bind.dialect.name == 'sqlite' else pg_insert
             rows = [
-                self._build_message(f'{chat_id}-{mid}', chat_id, data.get('user_id') or user_id, data, int(time.time()))
+                self._build_message(
+                    f'{chat_id}-{mid}',
+                    chat_id,
+                    data.get('user_id') or user_id,
+                    {**data, 'timestamp': data.get('timestamp')},
+                    int(time.time()),
+                )
                 for mid, data in messages.items()
             ]
             await db.execute(
@@ -398,8 +464,36 @@ class ChatMessageTable:
 
     async def get_message_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[ChatMessageModel]:
         async with get_async_db_context(db) as db:
-            message = await db.get(ChatMessage, id)
+            result = await db.execute(self._select_public_message_rows(db).where(ChatMessage.id == id))
+            message = result.mappings().one_or_none()
             return ChatMessageModel.model_validate(message) if message else None
+
+    async def get_chat_ids_with_pending_approval(self, chat_ids: list[str], db: AsyncSession | None = None) -> set[str]:
+        if not chat_ids:
+            return set()
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(ChatMessage.chat_id, ChatMessage.output)
+                .where(ChatMessage.chat_id.in_(chat_ids))
+                .where(ChatMessage.role == 'assistant')
+                .where(ChatMessage.done.is_(False))
+            )
+            return {chat_id for chat_id, output in result.all() if has_pending_tool_approval(output)}
+
+    async def get_unconfirmed_agent_execution(self, chat_id: str, *, db: AsyncSession | None = None) -> dict | None:
+        """Read server-owned execution state, including after a worker restart."""
+        async with nullcontext(db) if db is not None else get_async_db_context() as session:
+            execution = await session.scalar(
+                select(self._public_meta(session, keep_retention_state=True)['agent_execution'])
+                .where(
+                    ChatMessage.chat_id == chat_id,
+                    ChatMessage.meta['agent_execution']['state'].as_string().in_(UNCONFIRMED_AGENT_STATES),
+                )
+                .limit(1)
+            )
+            return strip_agent_output_journal({'agent_execution': execution}, keep_retention_state=True)[
+                'agent_execution'
+            ]
 
     async def has_unfinished_assistant_by_chat_id(
         self,
@@ -419,9 +513,11 @@ class ChatMessageTable:
     async def get_messages_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> list[ChatMessageModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
-                select(ChatMessage).filter_by(chat_id=chat_id).order_by(ChatMessage.created_at.asc())
+                self._select_public_message_rows(db)
+                .where(ChatMessage.chat_id == chat_id)
+                .order_by(ChatMessage.created_at.asc())
             )
-            messages = result.scalars().all()
+            messages = result.mappings().all()
             return [ChatMessageModel.model_validate(message) for message in messages]
 
     # DB column names that differ from the JSON message keys.
@@ -444,8 +540,8 @@ class ChatMessageTable:
         embedded JSON blob for legacy chats).
         """
         async with get_async_db_context(db) as db:
-            result = await db.execute(select(ChatMessage).filter_by(chat_id=chat_id))
-            rows = result.scalars().all()
+            result = await db.execute(self._select_public_message_rows(db).where(ChatMessage.chat_id == chat_id))
+            rows = result.mappings().all()
 
         if not rows:
             return None
@@ -458,17 +554,18 @@ class ChatMessageTable:
 
         messages_map: dict[str, dict] = {}
         for row in rows:
-            msg_id = row.id[prefix_len:] if row.id.startswith(prefix) else row.id
+            row_id = row['id']
+            msg_id = row_id[prefix_len:] if row_id.startswith(prefix) else row_id
 
             msg: dict = {'id': msg_id}
             for key in col_keys:
                 if key in self.EXCLUDED_COLUMNS:
                     continue
-                val = getattr(row, key)
+                val = row[key]
                 if val is None:
                     continue
                 json_key = self.DB_TO_JSON_KEY_MAP.get(key, key)
-                msg[json_key] = val
+                msg[json_key] = strip_agent_output_journal(val) if key == 'meta' else val
 
             # Ensure content always has a value
             msg.setdefault('content', '')
@@ -507,13 +604,13 @@ class ChatMessageTable:
     ) -> list[ChatMessageModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
-                select(ChatMessage)
-                .filter_by(user_id=user_id)
+                self._select_public_message_rows(db)
+                .where(ChatMessage.user_id == user_id)
                 .order_by(ChatMessage.created_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
-            messages = result.scalars().all()
+            messages = result.mappings().all()
             return [ChatMessageModel.model_validate(message) for message in messages]
 
     async def get_messages_by_model_id(
@@ -526,14 +623,14 @@ class ChatMessageTable:
         db: Optional[AsyncSession] = None,
     ) -> list[ChatMessageModel]:
         async with get_async_db_context(db) as db:
-            stmt = select(ChatMessage).filter_by(model_id=model_id)
+            stmt = self._select_public_message_rows(db).where(ChatMessage.model_id == model_id)
             if start_date:
                 stmt = stmt.filter(ChatMessage.created_at >= start_date)
             if end_date:
                 stmt = stmt.filter(ChatMessage.created_at <= end_date)
             stmt = stmt.order_by(ChatMessage.created_at.desc()).offset(skip).limit(limit)
             result = await db.execute(stmt)
-            messages = result.scalars().all()
+            messages = result.mappings().all()
             return [ChatMessageModel.model_validate(message) for message in messages]
 
     async def get_chat_ids_by_model_id(
@@ -848,7 +945,7 @@ class ChatMessageTable:
                     day_stmt = day_stmt.filter(ChatMessage.created_at >= start_date)
                 if end_date:
                     day_stmt = day_stmt.filter(ChatMessage.created_at <= end_date)
-                day_result = await db.execute(day_stmt)
+                day_result = await db.execute(day_stmt.where(ChatMessage.created_at > 0))
                 active_days = {_date_key(row.created_at, tz) for row in day_result.all()}
 
             input_total = int(token_result.input_tokens or 0)
@@ -874,7 +971,7 @@ class ChatMessageTable:
             result = await db.execute(
                 select(func.min(ChatMessage.created_at)).filter(
                     ChatMessage.user_id == user_id,
-                    ChatMessage.created_at.isnot(None),
+                    ChatMessage.created_at > 0,
                 )
             )
             value = result.scalar()
@@ -908,7 +1005,7 @@ class ChatMessageTable:
                 ChatMessage.created_at <= end_date,
             )
 
-            result = await db.execute(stmt)
+            result = await db.execute(stmt.where(ChatMessage.created_at > 0))
             daily: dict[str, dict] = {}
             for row in result.all():
                 date = _date_key(row.created_at, tz)
@@ -1125,7 +1222,7 @@ class ChatMessageTable:
 
             if day is not None:
                 stmt = stmt.group_by(day, ChatMessage.model_id)
-            result = await db.execute(stmt)
+            result = await db.execute(stmt.where(ChatMessage.created_at > 0))
             counts: dict[str, dict[str, int]] = {}
             for timestamp, model_id, value in result.all():
                 date_str = timestamp if day is not None else bucket_start(timestamp).strftime(date_format)

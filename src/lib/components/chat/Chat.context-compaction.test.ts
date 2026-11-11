@@ -22,7 +22,7 @@ const createChat = () => {
 	const toast = { loading: vi.fn(() => 'toast'), success: vi.fn(), error: vi.fn() };
 	const body = `
 		const { toast, mergeCompactionStatus, isVisibleToolResultStatus } = dependencies;
-		const isTemporaryContextRpc = () => false;
+		const isTemporaryContextRpc = () => false, isTemporaryChatId = id => id?.startsWith("temporary:");
   const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
   const console = { log: () => {} };
 		const tick = async () => {};

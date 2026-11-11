@@ -10,6 +10,10 @@ const names = new Set([
 	'taskConfig',
 	'configuredParams',
 	'toolSearchAlwaysLoaded',
+	'defaultDecisionsPrompt',
+	'defaultPermissionsPrompt',
+	'toolSearchEmbeddingModel',
+	'readChatConfigMetadata',
 	'updateInterfaceHandler'
 ]);
 const declarations = parse(source)

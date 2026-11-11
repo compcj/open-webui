@@ -273,6 +273,7 @@ async def test_nonstream_native_terminal_choices_finalize_save_usage_and_details
         'build_response_object': lambda response, data: data,
         'merge_events_into_response': lambda data, events: data,
         'publish_chat_failed_event': AsyncMock(),
+        'time': time,
         'log': logging.getLogger(__name__),
     }
     ns['copy'] = copy
@@ -286,10 +287,10 @@ async def test_nonstream_native_terminal_choices_finalize_save_usage_and_details
         chats.upsert_message_to_chat_by_id_and_message_id.assert_not_awaited()
         assert 'assistant_message' not in ctx
     elif case == 'error':
-        assert chats.upsert_message_to_chat_by_id_and_message_id.call_args.args[2] == {
-            'done': True,
-            'error': {'content': 'synthetic provider failure'},
-        }
+        saved = chats.upsert_message_to_chat_by_id_and_message_id.call_args.args[2]
+        assert saved['done'] is True
+        assert saved['error'] == {'content': 'synthetic provider failure'}
+        assert isinstance(saved['meta']['response_ended_at'], float)
         ns['publish_chat_finished_event'].assert_not_awaited()
     else:
         saved = chats.upsert_message_to_chat_by_id_and_message_id.call_args.args[2]
@@ -406,6 +407,7 @@ async def test_nonstream_continue_keeps_signed_response_boundaries():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from open_webui.utils.native_providers import normalize_response, build_request
+    from open_webui.utils.response import merge_usage
 
     data = payload()
     marker = data['_native_transport']
@@ -428,12 +430,14 @@ async def test_nonstream_continue_keeps_signed_response_boundaries():
         'get_reasoning_details': lambda value: value.get('reasoning_details'),
         'output_id': lambda prefix: prefix + uuid4().hex,
         'normalize_usage': lambda value: value,
+        'merge_usage': merge_usage,
         'publish_chat_finished_event': AsyncMock(),
         'outlet_filter_handler': AsyncMock(),
         'background_tasks_handler': AsyncMock(),
         'build_response_object': lambda response, data: data,
         'merge_events_into_response': lambda data, events: data,
         'publish_chat_failed_event': AsyncMock(),
+        'time': time,
         'log': logging.getLogger(__name__),
     }
     load_functions(

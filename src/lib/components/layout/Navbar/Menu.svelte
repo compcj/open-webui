@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { projectRawChat } from '$lib/utils/chat-context-copy';
+	import CommentButton from '$lib/components/comments/CommentButton.svelte';
 	import { toast } from 'svelte-sonner';
 	import { getContext, tick } from 'svelte';
 
@@ -10,7 +11,8 @@
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 
 	import {
-		showControls,
+		showTabs,
+		showOverview,
 		showArtifacts,
 		mobile,
 		temporaryChatEnabled,
@@ -32,12 +34,14 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import AdjustmentsHorizontal from '$lib/components/icons/AdjustmentsHorizontal.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
+	import Map from '$lib/components/icons/Map.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
 	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
+	import EditPencilIcon from '$lib/components/layout/Sidebar/icons/EditPencil.svelte';
 
 	const i18n = getContext<import('svelte/store').Writable<import('i18next').i18n>>('i18n');
 
@@ -45,6 +49,7 @@
 	export let readOnly: boolean = false;
 
 	export let shareHandler: Function;
+	export let renameHandler: Function;
 	export let moveChatHandler: Function;
 
 	export let archiveChatHandler: Function;
@@ -58,6 +63,7 @@
 
 	const temporaryContext: any = getContext('temporary-context');
 	let showFullMessages = false;
+	let show = false;
 
 	const getChatAsText = async () => {
 		const history = chat.chat.history;
@@ -340,6 +346,7 @@
 {/if}
 
 <Dropdown
+	bind:show
 	closeOnSelect
 	onOpenChange={(state) => {
 		if (state === false) {
@@ -406,7 +413,21 @@
 					</svg>
 					<div class="flex items-center">{$i18n.t('Scroll to Top')}</div>
 				</button>
+			{/if}
 
+			{#if Object.keys(chat?.chat?.history?.messages ?? {}).length > 0}
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					aria-haspopup="dialog"
+					on:click={() => showOverview.set(true)}
+				>
+					<Map className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Overview')}</div>
+				</button>
+			{/if}
+
+			{#if scrollToTop}
 				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 			{/if}
 
@@ -416,7 +437,7 @@
 					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 					id="chat-artifacts-button"
 					on:click={async () => {
-						await showControls.set(true);
+						await showTabs.set(true);
 						await showArtifacts.set(true);
 						await showEmbeds.set(false);
 					}}
@@ -440,6 +461,16 @@
 					<Share className="size-3.5" strokeWidth="1.5" />
 					<div class="flex items-center">{$i18n.t('Share')}</div>
 				</button>
+			{/if}
+
+			{#if chat?.id && !$temporaryChatEnabled}
+				<CommentButton
+					onComment={() => showTabs.set('comments')}
+					menu
+					resource={{ resource_type: 'chat', resource_id: chat.id }}
+					onOpen={() => (show = false)}
+					className="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+				/>
 			{/if}
 
 			{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
@@ -484,7 +515,22 @@
 						<div class="flex items-center line-clamp-1">{$i18n.t('PDF document (.pdf)')}</div>
 					</button>
 				</DropdownSub>
+			{/if}
 
+			{#if (!readOnly || $folders.find((folder) => folder.id === chat?.folder_id)?.user_id === $user?.id) && !$temporaryChatEnabled && chat?.id}
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					on:click={() => {
+						renameHandler();
+					}}
+				>
+					<EditPencilIcon className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Rename')}</div>
+				</button>
+			{/if}
+
+			{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
 				<button
 					draggable="false"
 					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"

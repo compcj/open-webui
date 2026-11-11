@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm.attributes import flag_modified
+from open_webui.utils.session_records import recorded_timestamp
 
 BACKEND = Path(__file__).parents[1] / 'open_webui'
 
@@ -94,6 +95,7 @@ async def runtime(tmp_path, monkeypatch):
     folder_module.has_folder_access = folder_access
     monkeypatch.setitem(sys.modules, folder_module.__name__, folder_module)
     namespace = {
+        'recorded_timestamp': recorded_timestamp,
         '__name__': __name__,
         **{
             name: getattr(sa, name)
@@ -107,6 +109,8 @@ async def runtime(tmp_path, monkeypatch):
                 'Index',
                 'ForeignKey',
                 'select',
+                'func',
+                'type_coerce',
                 'update',
                 'text',
             )
@@ -144,7 +148,12 @@ async def runtime(tmp_path, monkeypatch):
         classes={'Chat', 'ChatModel', 'ChatResponse', 'ChatForm'},
         functions={'is_internal_chat'},
     )
-    load_source(namespace, 'models/chat_messages.py', classes={'ChatMessage'})
+    load_source(
+        namespace,
+        'models/chat_messages.py',
+        classes={'ChatMessage'},
+        functions={'agent_output_private_fields', 'strip_agent_output_journal'},
+    )
     load_source(
         namespace,
         'models/chat_messages.py',
@@ -155,6 +164,8 @@ async def runtime(tmp_path, monkeypatch):
             '_lock_message_writes',
             'upsert_message',
             'get_messages_map_by_chat_id',
+            '_select_public_message_rows',
+            '_public_meta',
         },
     )
     namespace['ChatMessageModel'] = SimpleNamespace(model_validate=lambda row: row)
@@ -169,6 +180,7 @@ async def runtime(tmp_path, monkeypatch):
             '_add_child_id_to_parent',
             'upsert_message_to_history',
             'get_accessible_chat_by_id',
+            'has_chat_access',
             'get_chat_by_id_and_user_id',
             'insert_voice_message',
             'update_voice_message',

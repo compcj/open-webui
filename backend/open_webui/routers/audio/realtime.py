@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL, DEFAULT_REALTIME_CALL_PROMPT_TEMPLATE
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, BYPASS_MODEL_ACCESS_CONTROL, ENABLE_FORWARD_USER_INFO_HEADERS
 from open_webui.models.chats import Chats
@@ -15,6 +16,7 @@ from open_webui.models.config import Config
 from open_webui.models.models import Models, ModelVoice
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_verified_user_by_token
+from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.headers import get_microsoft_entra_id_access_token, include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.models import check_model_access, get_all_models
@@ -307,7 +309,24 @@ class CallProtocol:
         raise ValueError('Unsupported call command')
 
 
-async def check_realtime_access(ws, token, redis, chat_id=None, model_id=None):
+async def get_realtime_agent_model(ws, user, chat_id, model_id, terminal_id):
+    from open_webui.utils.agents.discovery import get_models as get_agent_models
+
+    if not is_saved_chat_id(chat_id):
+        raise ValueError('Agent conversations require a saved chat')
+    if not isinstance(terminal_id, str) or not terminal_id:
+        raise ValueError('Select a terminal to call an agent')
+    parts = model_id.split(':', 3)
+    if len(parts) != 4:
+        raise ValueError('Invalid agent model')
+    candidates = await get_agent_models(ws, user, {'terminal_id': terminal_id, 'chat_id': chat_id}, provider=parts[2])
+    model = next((item for item in candidates if item['id'] == model_id), None)
+    if model is None:
+        raise ValueError('Agent model is unavailable in the selected terminal')
+    return model
+
+
+async def check_realtime_access(ws, token, redis, chat_id=None, model_id=None, *, terminal_id=None):
     """Revalidate credentials, current call policy and shared-chat/model rights."""
     current = await get_verified_user_by_token(token, redis)
     config = await Config.get_many('audio.realtime.enabled', 'user.permissions')
@@ -321,7 +340,9 @@ async def check_realtime_access(ws, token, redis, chat_id=None, model_id=None):
         chat = await Chats.get_chat_by_id(chat_id)
         if not chat or chat.user_id != current.id:
             raise ValueError('Chat ownership revoked')
-    if model_id:
+    if model_id and model_id.startswith('agent:'):
+        await get_realtime_agent_model(ws, current, chat_id, model_id, terminal_id)
+    elif model_id:
         model = ws.app.state.MODELS.get(model_id)
         if not model or model.get('direct'):
             raise ValueError('Chat model access denied')
@@ -432,13 +453,24 @@ async def realtime_call(ws: WebSocket):
         model_id = auth.get('model_id')
         if not isinstance(model_id, str):
             raise ValueError('Select a chat model')
-        if not ws.app.state.MODELS:
-            await get_all_models(ws, user=user)
-        model = ws.app.state.MODELS.get(model_id)
-        if not model or model.get('direct'):
-            raise ValueError('Bridge requires a server-configured chat model')
+        agent_model = model_id.startswith('agent:')
+        terminal_id = auth.get('terminal_id') if agent_model else None
+        if agent_model:
+            # Match HTTP chat authentication for terminal connections using session auth.
+            ws.state.token = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
+            model = await get_realtime_agent_model(ws, user, chat_id, model_id, terminal_id)
+        else:
+            if not ws.app.state.MODELS:
+                await get_all_models(ws, user=user)
+            model = ws.app.state.MODELS.get(model_id)
+            if not model or model.get('direct'):
+                raise ValueError('Bridge requires a server-configured chat model')
         model_info = await Models.get_model_by_id(model_id)
-        if not BYPASS_MODEL_ACCESS_CONTROL and (user.role != 'admin' or not BYPASS_ADMIN_ACCESS_CONTROL):
+        if (
+            not agent_model
+            and not BYPASS_MODEL_ACCESS_CONTROL
+            and (user.role != 'admin' or not BYPASS_ADMIN_ACCESS_CONTROL)
+        ):
             try:
                 await check_model_access(user, model, model_info=model_info)
             except HTTPException as error:
@@ -530,8 +562,16 @@ async def realtime_call(ws: WebSocket):
                     'bridge.result',
                     'bridge.status',
                 }:
-                    await check_realtime_access(ws, token, redis, chat_id, model_id)
-                command = protocol.command(event)
+                    await check_realtime_access(ws, token, redis, chat_id, model_id, terminal_id=terminal_id)
+                try:
+                    command = protocol.command(event)
+                except (ValueError, TypeError):
+                    if not isinstance(event, dict) or event.get('type') != 'conversation.item.truncate':
+                        raise
+                    await ws.send_json(
+                        {'type': 'bridge.error', 'message': 'Invalid audio truncation request', 'fatal': False}
+                    )
+                    continue
                 if event['type'] == 'bridge.result':
                     protocol.requested.add(f'result:{event["call_id"]}')
                 for item in command if isinstance(command, list) else [command]:
@@ -565,7 +605,7 @@ async def realtime_call(ws: WebSocket):
             # Also limits a call to the provider's one-hour session lifetime.
             for _ in range(360):
                 await asyncio.sleep(10)
-                await check_realtime_access(ws, token, redis, chat_id, model_id)
+                await check_realtime_access(ws, token, redis, chat_id, model_id, terminal_id=terminal_id)
             raise ValueError('Call session expired. Start a new call.')
 
         tasks = [asyncio.create_task(fn()) for fn in (client_events, provider_events, check_auth)]

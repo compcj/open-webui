@@ -8,6 +8,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from open_webui.utils.tool_calling import parse_arguments
 
 from test_web_tool_citations import BACKEND, load_functions, runtime as citation_runtime
 from test_image_tool_context import runtime as output_runtime, install_approval_store
@@ -20,7 +21,9 @@ from test_tool_dispatch_v0122 import wrapped
 async def test_search_dispatch_saved_approval_execution_and_json_reload(pipeline, stream_runtime, monkeypatch):
     ns = pipeline.ns
     search_module = ModuleType('open_webui.utils.tool_search')
-    search_module.__dict__.update(JSONCodec=json, add_or_update_system_message=ns['add_or_update_system_message'])
+    search_module.__dict__.update(
+        JSONCodec=json, parse_arguments=parse_arguments, add_or_update_system_message=ns['add_or_update_system_message']
+    )
     tree = ast.parse((BACKEND / 'utils/tool_search.py').read_text(encoding='utf-8'))
     nodes = [n for n in tree.body if not isinstance(n, ast.ImportFrom) or not n.module.startswith('open_webui.')]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), 'real_tool_search', 'exec'), search_module.__dict__)
@@ -101,6 +104,7 @@ async def test_search_dispatch_saved_approval_execution_and_json_reload(pipeline
         tool_calls=[[provider]],
         is_saved_chat_id=lambda value: value == 'chat',
         event_emitter=ns['event_emitter'],
+        get_event_emitter=AsyncMock(return_value=ns['event_emitter']),
         Chats=SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=save),
     )
     load_functions(live, 'utils/middleware.py', {'pause_for_tool_approval'})
@@ -115,6 +119,7 @@ async def test_search_dispatch_saved_approval_execution_and_json_reload(pipeline
     message = json.loads(json.dumps(stored))
     install_approval_store(ns, message)
     ns['Chats'].get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(user_id='owner'))
+    ns['Chats'].get_agent_execution = AsyncMock(return_value=None)
     ns['Chats'].get_message_by_id_and_message_id = AsyncMock(return_value=message)
     message['user_id'] = 'owner'
     load_functions(ns, 'utils/tool_approval.py', {'resolve_tool_call_output'})

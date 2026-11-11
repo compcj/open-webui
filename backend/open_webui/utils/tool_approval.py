@@ -1,17 +1,100 @@
 import copy
+import hashlib
+import time
+from collections import OrderedDict
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.env import REDIS_KEY_PREFIX, REDIS_SENTINEL_HOSTS, REDIS_URL, UVICORN_WORKERS
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.models.users import Users
 from open_webui.socket.main import get_event_emitter
 from open_webui.utils.json_codec import JSONCodec
+
+
+_FROZEN_CONTEXT_TTL = 1800
+_FROZEN_CONTEXT_MAX_BYTES = 2 * 1024 * 1024
+_FROZEN_CONTEXT_MAX_ENTRIES = 64
+_frozen_tool_contexts = OrderedDict()
+
+
+def frozen_tool_context_key(actor_id, chat_id, message_id, model_id, parent_id):
+    identity = JSONCodec.dumps([actor_id, chat_id, message_id, model_id, parent_id])
+    return f'{REDIS_KEY_PREFIX}:approval-context:{hashlib.sha256(identity.encode()).hexdigest()}'
+
+
+def frozen_tool_context_matches(frozen, current):
+    """Generated synthetic call IDs vary; source identity, order, and bytes must agree."""
+
+    def values(messages):
+        return [
+            (
+                message.get('role'),
+                message.get('content'),
+                [call['function'] for call in message.get('tool_calls') or []],
+            )
+            for message in messages
+        ]
+
+    return values(frozen) == values(current)
+
+
+def missing_frozen_tool_context():
+    return HTTPException(409, 'The private context for this reply expired or changed. Regenerate to start a new reply.')
+
+
+def _approval_context_redis(request):
+    redis = getattr(request.app.state, 'redis', None)
+    if redis is None and (REDIS_URL or REDIS_SENTINEL_HOSTS or UVICORN_WORKERS != 1):
+        raise HTTPException(503, 'Tool approval context is temporarily unavailable.')
+    return redis
+
+
+async def store_frozen_tool_context(request, key, messages):
+    value = JSONCodec.dumps(messages, ensure_ascii=False)
+    if len(value.encode('utf-8')) > _FROZEN_CONTEXT_MAX_BYTES:
+        raise HTTPException(
+            409, 'The private context is too large to retain for approval. Regenerate with less context.'
+        )
+    redis = _approval_context_redis(request)
+    if redis is not None:
+        try:
+            await redis.set(key, value, ex=_FROZEN_CONTEXT_TTL)
+        except Exception as error:
+            raise HTTPException(503, 'Tool approval context is temporarily unavailable.') from error
+    else:
+        now = time.monotonic()
+        while _frozen_tool_contexts and (
+            len(_frozen_tool_contexts) >= _FROZEN_CONTEXT_MAX_ENTRIES
+            or next(iter(_frozen_tool_contexts.values()))[0] <= now
+        ):
+            _frozen_tool_contexts.popitem(last=False)
+        _frozen_tool_contexts[key] = (now + _FROZEN_CONTEXT_TTL, value)
+        _frozen_tool_contexts.move_to_end(key)
+
+
+async def load_frozen_tool_context(request, key):
+    redis = _approval_context_redis(request)
+    if redis is not None:
+        try:
+            value = await redis.get(key)
+        except Exception as error:
+            raise HTTPException(503, 'Tool approval context is temporarily unavailable.') from error
+    else:
+        expires, value = _frozen_tool_contexts.get(key, (0, None))
+        if expires <= time.monotonic():
+            _frozen_tool_contexts.pop(key, None)
+            value = None
+    if not value:
+        raise missing_frozen_tool_context()
+    return JSONCodec.loads(value)
 
 
 class ResolveToolCallForm(BaseModel):
@@ -71,12 +154,68 @@ async def resolve_tool_call_output(
     form_data: ResolveToolCallForm,
     user,
     db: AsyncSession | None = None,
+    *,
+    request=None,
 ) -> dict:
     chat = await Chats.get_accessible_chat_by_id(chat_id, user, db=db, permission='write')
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    # Resolve credentials outside the chat write transaction: OAuth refresh or
+    # Redis coordination may perform network/SQL work. Only server-owned execution
+    # state selects the target; the locked write below fences changes during I/O.
+    try:
+        authorized_execution = await Chats.get_agent_execution(chat_id, message_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            503, 'Agent terminal authorization is temporarily unavailable.', headers={'Retry-After': '2'}
+        ) from None
+    authorized_binding = None
+    if authorized_execution is not None:
+        from open_webui.utils.agents.access import authorize_agent_terminal
+
+        if (
+            authorized_execution.get('user_id') != user.id
+            or authorized_execution.get('chat_id') != chat_id
+            or authorized_execution.get('message_id') != message_id
+            or not authorized_execution.get('task_id')
+            or not authorized_execution.get('terminal_id')
+            or not authorized_execution.get('terminal_identity')
+        ):
+            raise HTTPException(403, 'Invalid agent execution binding')
+        if authorized_execution.get('state') != 'running':
+            raise HTTPException(409, 'Agent request is no longer active')
+        authorized_binding = {
+            key: authorized_execution.get(key)
+            for key in (
+                'user_id',
+                'chat_id',
+                'message_id',
+                'task_id',
+                'session_id',
+                'terminal_id',
+                'provider',
+                'model',
+                'cwd',
+                'terminal_identity',
+                'terminal_context',
+                'automation_id',
+                'state',
+            )
+        }
+        await authorize_agent_terminal(
+            request,
+            user,
+            {key: authorized_binding[key] for key in ('terminal_id', 'chat_id', 'automation_id')},
+            authorized_binding['terminal_identity'],
+            **(
+                {'terminal_context': authorized_binding['terminal_context']}
+                if 'terminal_context' in authorized_execution
+                else {}
+            ),
         )
 
     async with Chats.edit_message_output(chat_id, message_id) as message:
@@ -103,6 +242,55 @@ async def resolve_tool_call_output(
         function_call.setdefault('call_id', form_data.call_id)
         tool_name = function_call.get('name')
 
+        if function_call.get('native') is not None:
+            from open_webui.utils.auth import decode_token
+
+            token = (message.get('meta') or {}).get('agent')
+            binding = decode_token(token) if isinstance(token, str) else None
+            if (
+                not binding
+                or binding.get('purpose') != 'terminal-agent'
+                or binding.get('user') != user.id
+                or binding.get('chat') != chat_id
+            ):
+                raise HTTPException(403, 'Invalid agent conversation')
+            if message.get('done') or function_call.get('status') != 'pending' or function_call.get('agent_resolution'):
+                raise HTTPException(409, 'Agent request is no longer pending')
+            if (form_data.action == 'answer') != (tool_name == 'ask_user') and form_data.action != 'reject':
+                raise HTTPException(400, 'Invalid response for this agent request')
+            if form_data.action == 'answer' and not isinstance(form_data.answers, dict):
+                raise HTTPException(400, 'Answers must be keyed by question')
+            execution = (message.get('meta') or {}).get('agent_execution') or {}
+            if authorized_binding is None:
+                raise HTTPException(403, 'Invalid agent execution binding')
+            if any(execution.get(key) != value for key, value in authorized_binding.items()):
+                raise HTTPException(409, 'Agent execution changed during authorization. Retry the request.')
+            expected = {
+                'user_id': user.id,
+                'chat_id': chat_id,
+                **{key: binding.get(key) for key in ('terminal_id', 'provider', 'model', 'cwd')},
+            }
+            if not expected['terminal_id'] or any(execution.get(key) != value for key, value in expected.items()):
+                raise HTTPException(403, 'Invalid agent execution binding')
+            terminal_identity = binding.get('terminal_identity') or execution.get('terminal_identity')
+            if not terminal_identity or terminal_identity != execution.get('terminal_identity'):
+                raise HTTPException(403, 'Invalid agent terminal binding')
+            context = {}
+            if 'terminal_context' in binding or 'terminal_context' in execution:
+                context['terminal_context'] = binding.get('terminal_context', execution.get('terminal_context'))
+                if 'terminal_context' in execution and context['terminal_context'] != execution['terminal_context']:
+                    raise HTTPException(403, 'Invalid agent terminal context')
+            function_call['agent_resolution'] = form_data.model_dump()
+            function_call['status'] = 'queued'
+            # The running native client consumes this persisted response. Do not start a model/tool loop.
+            return {'chat': chat, 'output': output, 'resume': None}
+
+        if (message.get('meta') or {}).get('frozen_tool_context') is True:
+            if request is None:
+                raise missing_frozen_tool_context()
+            key = frozen_tool_context_key(user.id, chat_id, message_id, message.get('model'), message.get('parentId'))
+            await load_frozen_tool_context(request, key)
+
         if (
             any(
                 item.get('type') == 'function_call_output' and item.get('call_id') == form_data.call_id
@@ -117,8 +305,9 @@ async def resolve_tool_call_output(
             item.get('approved') is True or item.get('status') == 'in_progress' for item in pending_tool_calls(output)
         )
 
+        is_question = function_call.get('is_ask_user', tool_name == 'ask_user')
         if form_data.action == 'approve':
-            if tool_name == 'ask_user':
+            if is_question:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail='ask_user requires an answer or deny.'
                 )
@@ -136,7 +325,7 @@ async def resolve_tool_call_output(
                 }
             )
         else:
-            if tool_name != 'ask_user':
+            if not is_question:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail='Tool call does not accept answers.'
                 )
@@ -171,6 +360,11 @@ async def resolve_tool_call_output(
                 resume = 'model'
             else:
                 pending[0]['status'] = 'pending'
+                mode = ((chat.chat or {}).get('params') or {}).get('tool_approval_mode') or (
+                    (message.get('meta') or {}).get('params') or {}
+                ).get('tool_approval_mode')
+                if mode == 'auto':
+                    resume = 'tools'
 
     event_emitter = await get_event_emitter(
         {
@@ -213,7 +407,7 @@ async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat
         **(message_meta.get('params') if isinstance(message_meta.get('params'), dict) else {}),
     }
     current_approval_mode = chat_params.get('tool_approval_mode')
-    if current_approval_mode in {'ask', 'full'}:
+    if current_approval_mode in {'ask', 'full', 'auto'}:
         params['tool_approval_mode'] = current_approval_mode
     if 'tool_approval_mode' not in params:
         params['tool_approval_mode'] = 'ask'

@@ -11,7 +11,10 @@ export type OutputItem = {
 	id?: string;
 	call_id?: string;
 	name?: string;
+	display_label?: string;
+	display_labels?: { running?: string; completed?: string };
 	status?: string;
+	hidden?: boolean;
 	arguments?: unknown;
 	content?: OutputContentPart[];
 	summary?: OutputContentPart[] | string;
@@ -34,6 +37,8 @@ export type OutputDetailToken = {
 		type: string;
 		id?: string;
 		name?: string;
+		display_label?: string;
+		running_label?: string;
 		done?: string;
 		duration?: string;
 		arguments?: string;
@@ -49,6 +54,11 @@ export type OutputDisplayItem =
 			type: 'message';
 			id: string;
 			text: string;
+	  }
+	| {
+			type: 'image';
+			id: string;
+			src: string;
 	  }
 	| {
 			type: 'detail_single';
@@ -181,14 +191,15 @@ function getInlineFileFromToolOutput(callItem?: OutputItem, resultItem?: OutputI
 	}
 
 	const result = parseJSONStringValue(getToolResultText(resultItem)) as Record<string, unknown>;
+	const isTerminalFile = result?.source === 'open_terminal' && !!result.terminal_selector;
+	const isOpenWebUIFile = result?.source === 'open_webui';
 	if (
 		!result ||
 		typeof result !== 'object' ||
 		result.type !== 'file' ||
-		result.source !== 'open_terminal' ||
-		result.exists === false ||
 		!result.path ||
-		!result.terminal_selector
+		result.exists === false ||
+		!(isTerminalFile || isOpenWebUIFile)
 	) {
 		return null;
 	}
@@ -233,6 +244,14 @@ function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string,
 			type: 'tool_calls',
 			id: callId,
 			name,
+			running_label:
+				typeof item.display_labels?.running === 'string' ? item.display_labels.running : '',
+			display_label:
+				typeof item.display_labels?.completed === 'string'
+					? item.display_labels.completed
+					: typeof item.display_label === 'string'
+						? item.display_label
+						: '',
 			done: isDone ? 'true' : 'false',
 			status,
 			// ToolCallDisplay HTML-decodes these, like legacy <details> attributes.
@@ -349,6 +368,14 @@ function buildDetailToken(
 	return null;
 }
 
+export function isHiddenToolCall(item: OutputItem): boolean {
+	return (
+		item.type === 'function_call' &&
+		item.hidden === true &&
+		!['pending', 'queued', 'requires_approval'].includes(item.status ?? '')
+	);
+}
+
 export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDisplayItem[] {
 	const displayItems: OutputDisplayItem[] = [];
 	const currentDetailTokens: OutputDetailToken[] = [];
@@ -387,12 +414,14 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 
 		// A split provider call keeps its raw arguments for replay deduplication;
 		// only its executable children have results and belong in the tool list.
-		if (item.type === 'function_call' && item.status === 'superseded') {
+		if (isHiddenToolCall(item) || (item.type === 'function_call' && item.status === 'superseded')) {
 			return;
 		}
 
 		if (item.type === 'function_call_output') {
-			const inlineFile = getInlineFileFromToolOutput(toolCallByCallId[item.call_id ?? ''], item);
+			const call = toolCallByCallId[item.call_id ?? ''];
+			if (call && isHiddenToolCall(call)) return;
+			const inlineFile = getInlineFileFromToolOutput(call, item);
 			if (inlineFile) {
 				flushDetails();
 				displayItems.push({
@@ -438,6 +467,20 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 					type: 'message',
 					id: item.id ?? `message-${index}`,
 					text
+				});
+			}
+			return;
+		}
+
+		if (item.type === 'image_generation_call') {
+			if (typeof item.result === 'string' && item.result) {
+				flushDetails();
+				displayItems.push({
+					type: 'image',
+					id: item.id ?? `image-${index}`,
+					src: item.result.startsWith('data:')
+						? item.result
+						: `data:image/${item.output_format || 'png'};base64,${item.result}`
 				});
 			}
 			return;
@@ -750,4 +793,43 @@ export function setOutputText(output: OutputItem[], text: string): OutputItem[] 
 			? { ...item, content: item === lastMessage ? [{ type: 'output_text', text }] : [] }
 			: item
 	);
+}
+
+function parseToolArguments(args: unknown): Record<string, unknown> {
+	if (!args) {
+		return {};
+	}
+	let value = args;
+	while (typeof value === 'string') {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			break;
+		}
+	}
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+export function getPendingAskUserFromMessage<T extends { role?: string; output?: unknown }>(
+	message: T
+) {
+	if (message?.role !== 'assistant' || !Array.isArray(message.output)) {
+		return null;
+	}
+
+	const call = message.output.find(
+		(item: OutputItem) =>
+			item?.type === 'function_call' &&
+			item?.name === 'ask_user' &&
+			item?.status === 'pending' &&
+			(item?.call_id || item?.id)
+	);
+
+	if (call) {
+		return { message, call, args: parseToolArguments(call.arguments) };
+	}
+
+	return null;
 }

@@ -74,6 +74,7 @@
 						? 'pr-8'
 						: ''}"
 					placeholder={$i18n.t('API Base URL')}
+					aria-label={$i18n.t('API Base URL')}
 					bind:value={url}
 					autocomplete="off"
 					readonly={true}

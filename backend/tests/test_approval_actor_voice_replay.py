@@ -29,7 +29,7 @@ def request_metadata(params, messages):
     namespace = dict(
         copy=copy,
         form_data={'params': copy.deepcopy(params), 'messages': copy.deepcopy(messages)},
-        request=SimpleNamespace(headers={}, state=SimpleNamespace()),
+        request=SimpleNamespace(headers={}, state=SimpleNamespace(), client=None),
         user=SimpleNamespace(id='actor'),
         request_params=params,
         approval_resume=None,
@@ -87,11 +87,17 @@ async def test_participant_approval_preserves_request_params_and_system_reset(sy
             )
         ),
         'Config': SimpleNamespace(get=AsyncMock(return_value={'system': 'global default'})),
+        'get_event_emitter': AsyncMock(return_value=None),
     }
     load_functions(namespace, 'utils/middleware.py', {'pause_for_tool_approval'})
     load_functions(namespace, 'utils/tool_approval.py', {'build_tool_approval_resume_payload'})
     await namespace['pause_for_tool_approval'](
-        'shared', 'a', [{'type': 'function_call', 'call_id': 'call', 'name': 'tool'}], {}, metadata
+        SimpleNamespace(state=SimpleNamespace()),
+        'shared',
+        'a',
+        [{'type': 'function_call', 'call_id': 'call', 'name': 'tool'}],
+        {},
+        metadata,
     )
     chat = SimpleNamespace(
         user_id='owner',
@@ -125,7 +131,7 @@ def canonical_replay(monkeypatch):
     for name in ('process_messages_with_output', 'get_reasoning_format'):
         setattr(middleware, name, namespace[name])
     misc.convert_output_to_messages = namespace['convert_output_to_messages']
-    payload.convert_messages_openai_to_ollama = lambda messages: messages
+    payload.convert_chat_completions_messages_to_ollama = lambda messages: messages
     for name, module in [('middleware', middleware), ('misc', misc), ('payload', payload)]:
         monkeypatch.setitem(sys.modules, 'open_webui.utils.' + name, module)
     return namespace['process_messages_with_output']

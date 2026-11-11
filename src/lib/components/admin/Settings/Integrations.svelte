@@ -29,6 +29,7 @@
 	import ExternalKnowledge from './ExternalKnowledge.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
+	import type { ConnectionsConfig } from '$lib/apis/configs';
 
 	import {
 		getSkillsConfig,
@@ -76,7 +77,7 @@
 	};
 
 	let servers: ToolServerConnection[] | null = null;
-	let connectionsConfig: any = null;
+	let connectionsConfig: ConnectionsConfig | null = null;
 	let showConnectionModal = false;
 
 	// Terminal server admin connections
@@ -84,14 +85,15 @@
 	let showAddTerminalModal = false;
 	let editTerminalIdx: number | null = null;
 
-	const updateDirectIntegrations = async () => {
-		const res = await setConnectionsConfig(localStorage.token, connectionsConfig).catch((error) => {
+	const updateConnections = async (changes: ConnectionsConfig) => {
+		const res = await setConnectionsConfig(localStorage.token, changes).catch((error) => {
 			toast.error(`${error}`);
 		});
 
 		if (res) {
+			connectionsConfig = res;
 			toast.success($i18n.t('Connections settings updated'));
-			await config.set(await getBackendConfig());
+			await config.set(await getBackendConfig(localStorage.token));
 		}
 	};
 
@@ -328,6 +330,7 @@
 									<div class="flex gap-1 items-center">
 										<Tooltip content={$i18n.t('Configure')}>
 											<button
+												aria-label={$i18n.t('Configure')}
 												class="self-center p-1 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition"
 												on:click={() => {
 													editTerminalIdx = idx;
@@ -435,8 +438,44 @@
 					<Switch
 						disabled={!$config?.features?.enable_tool_servers}
 						bind:state={connectionsConfig.ENABLE_DIRECT_INTEGRATIONS}
-						on:change={updateDirectIntegrations}
+						on:change={() =>
+							updateConnections({
+								ENABLE_DIRECT_INTEGRATIONS: connectionsConfig?.ENABLE_DIRECT_INTEGRATIONS
+							})}
 						ariaLabelledbyId={labelId}
+					/>
+				</AdminSettingRow>
+			</AdminSettingSection>
+			<AdminSettingSection title={$i18n.t('Tether and terminal previews')}>
+				<AdminSettingRow
+					label={$i18n.t('Enable Tether')}
+					description={$i18n.t('Allow signed-in Tether devices to connect to this server.')}
+					let:labelId
+				>
+					<Switch
+						bind:state={connectionsConfig.ENABLE_TETHER}
+						on:change={() => updateConnections({ ENABLE_TETHER: connectionsConfig?.ENABLE_TETHER })}
+						ariaLabelledbyId={labelId}
+					/>
+				</AdminSettingRow>
+				<AdminSettingRow
+					label={$i18n.t('Terminal preview URL')}
+					description={$i18n.t(
+						'Use a separate hostname with HTTPS. Leave blank to disable Proxy previews.'
+					)}
+					let:labelId
+				>
+					<input
+						type="url"
+						id={`${labelId}-control`}
+						aria-labelledby={labelId}
+						class="w-full min-w-0 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-850"
+						placeholder="https://preview.example.com"
+						bind:value={connectionsConfig.TERMINAL_PREVIEW_BASE_URL}
+						on:change={() =>
+							updateConnections({
+								TERMINAL_PREVIEW_BASE_URL: connectionsConfig?.TERMINAL_PREVIEW_BASE_URL ?? ''
+							})}
 					/>
 				</AdminSettingRow>
 			</AdminSettingSection>

@@ -61,7 +61,9 @@ const directoryBody = transpileModule(
 	`
 	let { selectedTerminal, chatId, listFiles, setCwd } = state;
 	let currentPath = '/start/', savedPath = currentPath, directoryController = null;
-	let terminalContextRevision = 0, loadGeneration = 0, $selectedTerminalId = '/terminal';
+	let terminalContextRevision = 0, loadGeneration = 0, effectiveTerminalId = '/terminal';
+	const disposed = false, onViewChange = null;
+	let savedPathLoaded = false;
 	let openedFile = null, saveConnection = null, dirty = false, terminalContext = null;
 	const protectBuffer = async () => true;
 	let loading = false, error = null, selectedFile = null, selectedFileWritable = true, previewPort = null;
@@ -121,8 +123,6 @@ describe('file browser directory request ownership', () => {
 		resolvers[0]({ entries: [{ name: 'first' }] });
 		await first;
 		expect(view.get().entries).toEqual([{ name: 'second' }]);
-		expect(setCwd).toHaveBeenCalledOnce();
-		expect(setCwd).toHaveBeenCalledWith('/terminal', 'token', '/second/', 'chat-a');
 	});
 });
 
@@ -137,7 +137,8 @@ const contextDeclarationsSource = fileDeclarations
 	.flatMap((node: any) => node.declarations ?? [])
 	.filter(
 		(node: any) =>
-			node.id?.name.startsWith('prevTerminal') || ['prevChatId', 'mounted'].includes(node.id?.name)
+			node.id?.name.startsWith('prevTerminal') ||
+			['prevChatId', 'prevFolderDirectory', 'mounted', 'disposed'].includes(node.id?.name)
 	)
 	.map((node: any) => `let ${source.slice(node.start, node.end)};`)
 	.join('\n');
@@ -150,8 +151,9 @@ const fileBody = transpileModule(
 	`
 	let { selectedTerminal, chatId, readFile } = state;
 	let terminal = selectedTerminal;
-	let $selectedTerminalId = '/terminal', $terminalServers = [], $settings = {}, $config = {};
+	let effectiveTerminalId = '/terminal', $terminalServers = [], $settings = {}, $config = {};
 	const getTerminal = () => terminal;
+	const folderDirectory = null, onOpenFile = null, initialFile = null, onViewChange = null;
 	let terminalContextRevision = 0, loadGeneration = 0, commentGeneration = 0;
 	let dirtyChoice = null, dirty = false, saving = false, saveConnection = null, diskChanged = false, terminalContext = null;
 	let openedFile = null, pendingFile = null, viewerRoot = null;
@@ -159,7 +161,7 @@ const fileBody = transpileModule(
 	const filesystemFile = (file, terminal_id, session_id) => ({ ...file, terminal_id, session_id });
 	const publishFile = () => {}, tick = async () => {};
 	let currentPath = '/work/', selectedFile = null, selectedFileWritable = true, fileLoading = false;
-	let fileContent = null, documentTargetPage = null, filePreviewController = null;
+	let fileContent = null, documentTargetPage = null, filePreviewController = null, showRaw = false, fileModelData = null;
 	let fileImageUrl = null, fileVideoUrl = null, fileAudioUrl = null, filePdfData = null;
 	let fileSqliteData = null, fileDocxData = null, fileOfficeHtml = null, fileOfficeSlides = null;
 	let currentSlide = 0, excelSheetNames = [], selectedExcelSheet = '', excelWorkbook = null;
@@ -173,6 +175,7 @@ const fileBody = transpileModule(
 	const isImage = () => false, isVideo = () => false, isAudio = () => false;
 	const isPdf = () => false, isSqlite = () => false, isOffice = () => false;
 	const getFileExt = path => path.split('.').pop();
+	const is3DModel = () => false;
 	${contextDeclarationsSource}
 	${fileDeclarationsSource}
 	const updateContext = () => ${source.slice(contextBlock.body.start, contextBlock.body.end)};
@@ -182,7 +185,7 @@ const fileBody = transpileModule(
 		switchChat: id => { chatId = id; updateContext(); fileContent = 'current chat'; },
 		switchContext: next => {
 			terminal = next.terminal ?? terminal;
-			$selectedTerminalId = next.selectedId ?? $selectedTerminalId;
+			effectiveTerminalId = next.selectedId ?? effectiveTerminalId;
 			chatId = next.chatId ?? chatId;
 			updateContext();
 		},

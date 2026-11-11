@@ -2,9 +2,11 @@
 
 import ast
 import copy
+import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 from html import escape
 from pathlib import Path
@@ -19,15 +21,44 @@ BACKEND = Path(__file__).parents[1] / 'open_webui'
 
 def load_functions(namespace, path, names):
     names = set(names)
+    namespace.setdefault('JSONCodec', json)
     if path == 'utils/misc.py' and 'convert_output_to_messages' in names:
-        names.add('get_provider_function')
+        names.update({'get_provider_function', 'merge_tool_call_batches'})
     if path == 'routers/openai.py' and '_normalize_stored_item' in names:
         load_functions(namespace, 'utils/misc.py', {'get_provider_function'})
-    if path == 'utils/middleware.py' and 'execute_tool_call' in names:
+    if path == 'utils/middleware.py' and names.intersection({'execute_tool_call', 'prepare_tool_execution'}):
+        from open_webui.utils.tool_calling import prepare_tool_call
+
+        names.update({'prepare_tool_execution', 'clear_server_tool_fields'})
+        namespace.setdefault('prepare_tool_call', prepare_tool_call)
+        namespace.setdefault('re', re)
+        namespace.setdefault('time', time)
         load_functions(namespace, 'utils/tool_search.py', {'resolve_tool_call'})
+    if path == 'utils/middleware.py' and names.intersection(
+        {'streaming_chat_response_handler', 'non_streaming_chat_response_handler'}
+    ):
+        names.add('clear_server_tool_fields')
+    if path == 'utils/middleware.py' and names.intersection({'execute_tool_call', 'resume_tool_calls'}):
+        namespace.setdefault('hashlib', hashlib)
+        load_functions(
+            namespace,
+            'utils/tool_permissions.py',
+            {
+                'ToolApprovalRequired',
+                'requires_tool_approval',
+                'tool_permission_fingerprint',
+                'approval_required_from_call',
+            },
+        )
+    if path == 'utils/tool_search.py':
+        from open_webui.utils.tool_calling import parse_arguments
+
+        namespace.setdefault('parse_arguments', parse_arguments)
     tree = ast.parse((BACKEND / path).read_text(encoding='utf-8'))
     nodes = [
-        node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in names
     ]
     if path == 'utils/tool_search.py':
         nodes = [

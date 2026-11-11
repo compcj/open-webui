@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections.abc
+import difflib
 import hashlib
 import ipaddress
 import logging
@@ -15,11 +16,13 @@ from typing import Callable, Optional, Sequence, Union
 
 import aiohttp
 import mimeparse
+from fastapi import HTTPException
 from open_webui.env import CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE
 from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
 SURROGATE_RE = re.compile('[\ud800-\udfff]')
+MAX_DIFF_LINES = 5000
 
 
 def deep_update(d, u):
@@ -192,7 +195,7 @@ def get_message_list(messages_map, message_id):
     :return: List of ordered messages starting from the root to the given message
     """
 
-    # Handle case where messages is None
+    # No history, no archaeology. An empty map gets an empty list.
     if not messages_map:
         return []  # Return empty list instead of None to prevent iteration errors
 
@@ -202,7 +205,7 @@ def get_message_list(messages_map, message_id):
     if not current_message:
         return []  # Return empty list instead of None to prevent iteration errors
 
-    # Reconstruct the chain by following the parentId links
+    # Follow parentId back through the conversation family tree.
     message_list = []
     visited_message_ids = set()
 
@@ -342,10 +345,126 @@ def get_provider_function(item: dict) -> dict:
     if not isinstance(function, dict):
         function = item
     arguments = function.get('arguments', '{}')
-    return {
-        'name': function.get('name', ''),
-        'arguments': arguments if isinstance(arguments, str) else JSONCodec.dumps(arguments),
-    }
+    if function is item and 'original_arguments' in item:
+        original = item['original_arguments']
+        try:
+            if isinstance(JSONCodec.loads(original), dict):
+                arguments = original
+        except (TypeError, ValueError):
+            # Recovered literal or fenced arguments have a canonical JSON copy.
+            pass
+    if isinstance(arguments, str):
+        try:
+            valid_json = isinstance(JSONCodec.loads(arguments), dict)
+        except (TypeError, ValueError):
+            valid_json = False
+    else:
+        valid_json = False
+    if not valid_json:
+        from open_webui.utils.tool_calling import parse_arguments
+
+        try:
+            arguments = JSONCodec.dumps(parse_arguments(arguments))
+        except ValueError:
+            # Providers still need a syntactically valid pair to receive the error.
+            arguments = '{}'
+    return {'name': function.get('name', ''), 'arguments': arguments}
+
+
+def merge_tool_call_batches(output: list[dict], *, raw: bool = False, descriptors: dict | None = None) -> list[dict]:
+    """Project each complete batch as the original provider call and one ordered result."""
+    from open_webui.utils.tool_citations import citation_output
+    from open_webui.utils.tool_result_sources import output_text
+
+    batches, results = {}, {}
+    for index, item in enumerate(output):
+        batch = item.get('provider_batch')
+        if (
+            item.get('type') == 'function_call'
+            and isinstance(batch, dict)
+            and isinstance(item.get('call_id'), str)
+            and isinstance(batch.get('call_id'), str)
+            and isinstance(batch.get('function'), dict)
+            and isinstance(batch.get('tool_name'), str)
+            and type(batch.get('size')) is int
+        ):
+            batches.setdefault(batch['call_id'], []).append(item)
+        elif item.get('type') == 'function_call_output' and isinstance(item.get('call_id'), str):
+            results[item['call_id']] = (index, item)
+    if not batches:
+        return output
+
+    members = {call['call_id']: batch_id for batch_id, calls in batches.items() for call in calls}
+    remaining = {batch_id: {call['call_id'] for call in calls} for batch_id, calls in batches.items()}
+    replay, emitted = [], set()
+    for item in output:
+        call_id = item.get('call_id')
+        batch_id = members.get(call_id) if isinstance(call_id, str) else None
+        if batch_id is None or item.get('type') not in {'function_call', 'function_call_output'}:
+            replay.append(item)
+            continue
+        calls = batches[batch_id]
+        batch = calls[0]['provider_batch']
+        # Approval may leave only part of the provider batch resolved.
+        if len(calls) != batch.get('size') or any(call['call_id'] not in results for call in calls):
+            continue
+        if item['type'] == 'function_call':
+            if batch_id not in emitted:
+                replay.append(
+                    {
+                        'type': 'function_call',
+                        'id': calls[0].get('id', batch_id),
+                        'call_id': batch_id,
+                        **get_provider_function({'provider_function': batch['function']}),
+                        'status': 'completed',
+                    }
+                )
+                emitted.add(batch_id)
+            continue
+        remaining[batch_id].discard(item['call_id'])
+        if remaining[batch_id]:
+            continue
+
+        # Keep each child's exact text as a contiguous range, including when it
+        # contains JSON, newlines, or quotes. Budget only that range; the
+        # child's frozen citation suffix and the batch framing remain fixed.
+        content, refs, images = '', [], []
+
+        def member_index(call):
+            index = call['provider_batch'].get('index')
+            return index if type(index) is int else 0
+
+        for call in sorted(calls, key=member_index):
+            index, result = results[call['call_id']]
+            text = output_text(result)
+            label = JSONCodec.dumps(
+                {
+                    'tool_name': call['provider_batch']['tool_name'],
+                    'status': result.get('status', call.get('status')),
+                },
+                ensure_ascii=False,
+            )
+            content += f'{label}\n'
+            descriptor = (descriptors or {}).get(result.get('id') or f'output-{index}')
+            if descriptor:
+                refs.append({**descriptor, 'start': len(content), 'end': len(content) + len(text)})
+            content += output_text({'output': citation_output(result)}) if raw else text
+            content += '\n\n'
+            images.extend(
+                part
+                for part in result.get('output') or []
+                if isinstance(part, dict) and part.get('type') == 'input_image'
+            )
+        replay.append(
+            {
+                'type': 'function_call_output',
+                'call_id': batch_id,
+                'output': [{'type': 'input_text', 'text': content}, *images],
+                'status': 'completed',
+                **({'_tool_result_refs': refs} if refs else {}),
+            }
+        )
+    return replay
 
 
 def convert_output_to_messages(
@@ -387,6 +506,12 @@ def convert_output_to_messages(
     from open_webui.utils.tool_citations import citation_output
 
     descriptors = output_descriptors(output) if include_tool_result_refs else {}
+    original_descriptors = (
+        {id(item): descriptors.get(item.get('id') or f'output-{index}') for index, item in enumerate(output)}
+        if include_tool_result_refs
+        else {}
+    )
+    output = merge_tool_call_batches(output, raw=raw, descriptors=descriptors)
     messages = []
     pending_tool_refs = []
     pending_tool_calls = []
@@ -395,6 +520,7 @@ def convert_output_to_messages(
     pending_reasoning_details = []
     pending_tool_image_urls = []
     pending_tool_outputs = []
+
     completed_call_ids = {
         item.get('call_id')
         for item in output
@@ -424,6 +550,9 @@ def convert_output_to_messages(
                 message['thinking'] = '\n'.join(pending_reasoning)
             else:
                 message['reasoning_content'] = '\n'.join(pending_reasoning)
+        elif pending_tool_calls and reasoning_format == 'reasoning_content':
+            # DeepSeek rejects a tool call turn without reasoning_content.
+            message['reasoning_content'] = ''
 
         if pending_reasoning_details:
             message['reasoning_details'] = pending_reasoning_details
@@ -460,18 +589,18 @@ def convert_output_to_messages(
             return
 
         flush_pending()
-        for item_index, output_item in pending_tool_outputs:
+        for output_item in pending_tool_outputs:
             output_parts = output_item.get('output', [])
             content = output_text(output_item)
-            result_ref = (
-                {
-                    **descriptors[output_item.get('id') or f'output-{item_index}'],
-                    'start': 0,
-                    'end': len(content),
-                }
-                if include_tool_result_refs
-                else None
-            )
+            result_refs = []
+            if include_tool_result_refs:
+                if id(output_item) in original_descriptors:
+                    descriptor = original_descriptors[id(output_item)]
+                    if descriptor:
+                        result_refs = [{**descriptor, 'start': 0, 'end': len(content)}]
+                else:
+                    # Only synthetic batch projections can supply these spans.
+                    result_refs = output_item.get('_tool_result_refs', [])
             # Budget references cover raw text only. The frozen citation suffix
             # remains in the final input even when that raw span is projected.
             if raw:
@@ -488,7 +617,7 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
-                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
+                        **({'_tool_result_refs': result_refs} if result_refs else {}),
                         'content': content,
                     }
                 )
@@ -498,7 +627,7 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
-                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
+                        **({'_tool_result_refs': result_refs} if result_refs else {}),
                         'content': [
                             {'type': 'input_text', 'text': content},
                             *[{'type': 'input_image', 'image_url': url} for url in image_urls],
@@ -510,14 +639,14 @@ def convert_output_to_messages(
                     {
                         'role': 'tool',
                         'tool_call_id': output_item.get('call_id', ''),
-                        **({'_tool_result_refs': [result_ref]} if result_ref else {}),
+                        **({'_tool_result_refs': result_refs} if result_refs else {}),
                         'content': content,
                     }
                 )
 
         pending_tool_outputs = []
 
-    for item_index, item in enumerate(output):
+    for item in output:
         item_type = item.get('type', '')
         if item_type != 'function_call_output':
             flush_tool_outputs()
@@ -555,7 +684,7 @@ def convert_output_to_messages(
             if item.get('call_id') not in function_call_ids:
                 continue
 
-            pending_tool_outputs.append((item_index, item))
+            pending_tool_outputs.append(item)
 
         elif item_type == 'reasoning':
             reasoning_details = item.get('reasoning_details') if raw else None
@@ -613,10 +742,11 @@ def convert_output_to_messages(
                     prefix = '<code_interpreter_output>\n'
                     start = sum(len(chunk) + 1 for chunk in pending_content) + len(prefix)
                     pending_content.append(f'{prefix}{code_output_text}\n</code_interpreter_output>')
-                    if include_tool_result_refs:
+                    descriptor = original_descriptors.get(id(item))
+                    if descriptor:
                         pending_tool_refs.append(
                             {
-                                **descriptors[item.get('id') or f'output-{item_index}'],
+                                **descriptor,
                                 'start': start,
                                 'end': start + len(code_output_text),
                             }
@@ -825,7 +955,7 @@ def strip_empty_content_blocks(messages: list[dict]) -> list[dict]:
     return messages
 
 
-def openai_chat_message_template(model: str, message_id: str | None = None):
+def chat_completion_template(model: str, message_id: str | None = None):
     return {
         'id': message_id if message_id else f'{model}-{str(uuid.uuid4())}',
         'created': int(time.time()),
@@ -834,7 +964,7 @@ def openai_chat_message_template(model: str, message_id: str | None = None):
     }
 
 
-def openai_chat_chunk_message_template(
+def chat_completion_chunk_template(
     model: str,
     content: str | None = None,
     reasoning_content: str | None = None,
@@ -842,7 +972,7 @@ def openai_chat_chunk_message_template(
     usage: dict | None = None,
     message_id: str | None = None,
 ) -> dict:
-    template = openai_chat_message_template(model, message_id)
+    template = chat_completion_template(model, message_id)
     template['object'] = 'chat.completion.chunk'
 
     template['choices'][0]['index'] = 0
@@ -865,14 +995,14 @@ def openai_chat_chunk_message_template(
     return template
 
 
-def openai_chat_completion_message_template(
+def chat_completion_message_template(
     model: str,
     message: str | None = None,
     reasoning_content: str | None = None,
     tool_calls: list[dict] | None = None,
     usage: dict | None = None,
 ) -> dict:
-    template = openai_chat_message_template(model)
+    template = chat_completion_template(model)
     template['object'] = 'chat.completion'
     if message is not None:
         template['choices'][0]['message'] = {
@@ -890,25 +1020,21 @@ def openai_chat_completion_message_template(
 
 
 def get_gravatar_url(email):
-    # Trim leading and trailing whitespace from
-    # an email address and force all characters
-    # to lower case
+    # Trim and lowercase the email; the avatar should survive a stuck Shift key.
     address = str(email).strip().lower()
 
-    # Create a SHA256 hash of the final string
+    # Hash the normalized email into its Gravatar calling card.
     hash_object = hashlib.sha256(address.encode())
     hash_hex = hash_object.hexdigest()
 
-    # Grab the actual image URL
+    # Send the hash to Gravatar; the email stays out of the URL.
     return f'https://www.gravatar.com/avatar/{hash_hex}?d=mp'
 
 
-# Give us each day the data we require, and forgive us our
-# technical debts as we forgive those who commit upstream.
-# Lead the bits not into corruption but deliver them from
-# entropy, for the checksum and the glory are forever.
+# Let what has been entrusted to us be kept whole,
+# and let nothing be lost in the passing from hand to hand.
 def calculate_sha256(file_path, chunk_size):
-    # Compute SHA-256 hash of a file efficiently in chunks
+    # Read in chunks so large files do not need to fit in memory.
     sha256 = hashlib.sha256()
     with open(file_path, 'rb') as f:
         while chunk := f.read(chunk_size):
@@ -919,9 +1045,9 @@ def calculate_sha256(file_path, chunk_size):
 def calculate_sha256_string(string):
     # Create a new SHA-256 hash object
     sha256_hash = hashlib.sha256()
-    # Update the hash object with the bytes of the input string
+    # Feed the hash UTF-8 bytes; it does not take strings on faith.
     sha256_hash.update(string.encode('utf-8'))
-    # Get the hexadecimal representation of the hash
+    # Return the hex fingerprint, now suitable for polite string comparison.
     hashed_string = sha256_hash.hexdigest()
     return hashed_string
 
@@ -934,13 +1060,13 @@ def validate_email_format(email: str) -> bool:
 
 
 def sanitize_filename(file_name):
-    # Convert to lowercase
+    # Lowercase the filename; shouting does not help us find it.
     lower_case_file_name = file_name.lower()
 
-    # Remove special characters using regular expression
+    # Strip punctuation; word characters and whitespace make the guest list.
     sanitized_file_name = re.sub(r'[^\w\s]', '', lower_case_file_name)
 
-    # Replace spaces with dashes
+    # Give each whitespace run one dash, regardless of its enthusiasm.
     final_file_name = re.sub(r'\s+', '-', sanitized_file_name)
 
     return final_file_name
@@ -981,26 +1107,38 @@ def _strip_null_bytes_deep(obj):
     return obj
 
 
+def _has_null_bytes_or_surrogates(obj) -> bool:
+    """True if any string, key or value, has a null byte or surrogate."""
+    if isinstance(obj, str):
+        if '\x00' in obj:
+            return True
+        # O(1) in CPython, so ASCII strings such as base64 images skip the surrogate scan.
+        if obj.isascii():
+            return False
+        try:
+            obj.encode('utf-8')
+            return False
+        except UnicodeEncodeError:
+            return True
+    elif isinstance(obj, dict):
+        return any(_has_null_bytes_or_surrogates(k) or _has_null_bytes_or_surrogates(v) for k, v in obj.items())
+    elif isinstance(obj, list):
+        return any(_has_null_bytes_or_surrogates(v) for v in obj)
+    return False
+
+
 def sanitize_data_for_db(obj):
     """Recursively sanitize all strings in a data structure for database storage.
 
-    Performs a fast pre-check: serializes the structure once and scans for
+    Performs a fast pre-check: scans every string once for
     null bytes or invalid UTF-8 surrogates. If none are found, the
     original object is returned immediately, skipping the expensive
     recursive walk.
     """
     if isinstance(obj, str):
         return sanitize_text_for_db(obj)
-    # Fast path: check for null bytes and surrogate code points in the serialized form.
-    # json.dumps is implemented in C and much faster than a Python-level
-    # recursive walk over every leaf string.
-    try:
-        serialized = JSONCodec.dumps(obj, ensure_ascii=False)
-        if '\\u0000' not in serialized:
-            serialized.encode('utf-8')
-            return obj
-    except (TypeError, ValueError, UnicodeEncodeError):
-        pass
+    if not _has_null_bytes_or_surrogates(obj):
+        return obj
     return _strip_null_bytes_deep(obj)
 
 
@@ -1059,7 +1197,7 @@ def extract_folders_after_data_docs(path):
     except ValueError:
         return []
 
-    # Exclude the filename and accumulate folder names
+    # Collect the folder ancestry; the filename is not invited.
     tags = []
 
     folders = parts[index_docs:-1]
@@ -1295,17 +1433,15 @@ def extract_urls(text: str) -> list[str]:
     return url_pattern.findall(text)
 
 
-# We believe in one architect of all that is seen and served.
-# Should this stream falter, it shall be raised again on the
-# third retry. We look for the uptime of the world to come.
+# Let what falters have another chance,
+# and let the third try be kinder than the first two.
 async def cleanup_response(
     response: aiohttp.ClientResponse | None,
     session: aiohttp.ClientSession | None,
 ):
     if response:
         if not response.closed:
-            # aiohttp 3.9+ made ClientResponse.close() synchronous (returns None).
-            # Older versions returned a coroutine.  Handle both gracefully.
+            # Close directly, and await completion if the implementation returns an awaitable.
             result = response.close()
             if result is not None:
                 await result
@@ -1376,3 +1512,11 @@ def stream_chunks_handler(stream: aiohttp.StreamReader):
             yield bytes(buffer)
 
     return yield_safe_stream_chunks()
+
+
+def unified_text_diff(old: str, new: str, fromfile: str, tofile: str) -> list[str]:
+    # splitlines handles a missing final newline and CRLF without breaking the renderer.
+    old_lines, new_lines = old.splitlines(), new.splitlines()
+    if max(len(old_lines), len(new_lines)) > MAX_DIFF_LINES:
+        raise HTTPException(status_code=413, detail=f'Diff is limited to {MAX_DIFF_LINES} lines per version')
+    return list(difflib.unified_diff(old_lines, new_lines, fromfile=fromfile, tofile=tofile, lineterm=''))

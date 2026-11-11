@@ -72,6 +72,29 @@ These operations still require current terminal and chat access. Signed delivery
 resolve their original context, independently of the currently open chat. HTML is source/download
 content and SVG previews remain isolated; the new file actions do not enable same-origin port previews.
 
+### Editing and Git
+
+Open a writable text or code file in a file tab to edit and save it in the selected workspace.
+When the file changes on disk during editing, the editor asks before overwriting it. A failed
+save keeps the draft in the editor. A chat, account or connection change invalidates the previous
+save target.
+
+On terminals with Git support, the file tree shows working-tree changes and the editor can show
+staged or unstaged diffs. The Git controls operate on the repository in the selected terminal
+and chat context. They include staging, commits, branches and worktrees. Clone uses the selected
+directory.
+
+### Browser tabs and port previews
+
+Use Chrome mode for full browser capabilities when the selected terminal offers a Chrome session.
+Proxy mode and embedded port pages require an independent preview hostname configured by the
+administrator. The embedded page runs in a sandbox with no access to WebUI's DOM or browser storage.
+Preview tickets are bound to the current login, terminal and chat context and expire after five
+minutes. WebUI rechecks access during active use. The existing file source, download and image
+preview actions remain available under the terminal file policy.
+
+See [independent terminal previews](terminal-preview.md) for setup and browser behavior.
+
 ## Temporary V2 contexts and saved artifacts
 
 A V2 temporary chat uses its server-issued context ID and epoch, independently of its socket ID.

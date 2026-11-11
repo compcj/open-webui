@@ -32,6 +32,7 @@ async def test_socket_persists_lifecycle_but_not_usage(kind, persist):
         sio=sio,
         WEBSOCKET_MANAGER='',
         is_saved_chat_id=lambda id: id == 'chat',
+        is_temporary_chat_id=lambda id: False,
         Users=SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='owner'))),
     )
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
@@ -175,6 +176,7 @@ async def test_socket_rejects_non_notifications_before_emit_and_save(data):
         sio=sio,
         WEBSOCKET_MANAGER='',
         is_saved_chat_id=lambda id: id == 'chat',
+        is_temporary_chat_id=lambda id: False,
         Users=SimpleNamespace(get_user_by_id=AsyncMock(return_value=SimpleNamespace(id='owner'))),
     )
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})

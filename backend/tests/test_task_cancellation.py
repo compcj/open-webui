@@ -347,6 +347,7 @@ def chat_stop_endpoint(ns, chat):
         type_ignores=[],
     )
     ns['get_temporary_chat_session_id'] = lambda value: None
+    ns['ChatMessages'] = SimpleNamespace(get_unconfirmed_agent_execution=AsyncMock(return_value=None))
     ns['Chats'] = SimpleNamespace(
         get_accessible_chat_by_id=AsyncMock(return_value=chat),
         get_messages_map_by_chat_id=AsyncMock(return_value=chat.chat['history']['messages']),

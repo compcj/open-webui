@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 import aiohttp
@@ -31,7 +32,7 @@ from open_webui.utils.tools import (
     set_terminal_servers,
     set_tool_servers,
 )
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 router = APIRouter()
 
@@ -40,6 +41,8 @@ log = logging.getLogger(__name__)
 CONNECTIONS_CONFIG_KEYS = {
     'ENABLE_DIRECT_CONNECTIONS': 'direct.enable',
     'ENABLE_DIRECT_INTEGRATIONS': 'direct.integrations.enable',
+    'ENABLE_TETHER': 'tether.enable',
+    'TERMINAL_PREVIEW_BASE_URL': 'terminal.preview.base_url',
     'ENABLE_BASE_MODELS_CACHE': 'models.base_models_cache',
 }
 CODE_EXECUTION_CONFIG_KEYS = {
@@ -86,11 +89,20 @@ def config_updates(data: dict, key_map: dict[str, str]) -> dict:
     return {key_map[field]: value for field, value in data.items() if field in key_map}
 
 
-############################
-# ImportConfig
-# Thy configuration come, thy settings be done,
-# in production as it is in development.
-############################
+async def preview_config_url(request, value):
+    from open_webui.utils.terminal_preview import validate_preview_base_url
+
+    try:
+        return validate_preview_base_url(
+            value, str(request.base_url), await Config.get('webui.url', ''), os.getenv('WEBUI_URL', '')
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+# Import Config
+# Let what we prepare in quiet hold when the world grows loud,
+# and let those who depend on it find steadiness through change.
 
 
 class ImportConfigForm(BaseModel):
@@ -101,6 +113,10 @@ class ImportConfigForm(BaseModel):
 async def import_config(request: Request, form_data: ImportConfigForm, user=Depends(get_admin_user)):
     from open_webui.utils.mfa import update_mfa_config
 
+    if 'terminal.preview.base_url' in form_data.config:
+        form_data.config['terminal.preview.base_url'] = await preview_config_url(
+            request, form_data.config['terminal.preview.base_url']
+        )
     await update_mfa_config(request, form_data.config)
     await publish_event(
         request,
@@ -112,9 +128,7 @@ async def import_config(request: Request, form_data: ImportConfigForm, user=Depe
     return await Config.get_all()
 
 
-############################
-# ExportConfig
-############################
+# Export Config
 
 
 @router.get('/export', response_model=dict)
@@ -145,9 +159,7 @@ async def set_interface_visibility(request: Request, form_data: InterfaceVisibil
     return form_data
 
 
-############################
 # Connections Config
-############################
 
 
 class SkillsConfigForm(BaseModel):
@@ -175,9 +187,11 @@ async def set_skills_config(request: Request, form_data: SkillsConfigForm, user=
 
 
 class ConnectionsConfigForm(BaseModel):
-    ENABLE_DIRECT_CONNECTIONS: bool
+    ENABLE_DIRECT_CONNECTIONS: bool = False
     ENABLE_DIRECT_INTEGRATIONS: bool = False
-    ENABLE_BASE_MODELS_CACHE: bool
+    ENABLE_TETHER: bool = False
+    TERMINAL_PREVIEW_BASE_URL: str = ''
+    ENABLE_BASE_MODELS_CACHE: bool = False
 
 
 @router.get('/connections', response_model=ConnectionsConfigForm)
@@ -191,7 +205,13 @@ async def set_connections_config(
     form_data: ConnectionsConfigForm,
     user=Depends(get_admin_user),
 ):
+    if 'TERMINAL_PREVIEW_BASE_URL' in form_data.model_fields_set:
+        form_data.TERMINAL_PREVIEW_BASE_URL = await preview_config_url(request, form_data.TERMINAL_PREVIEW_BASE_URL)
     await Config.upsert(config_updates(form_data.model_dump(exclude_unset=True), CONNECTIONS_CONFIG_KEYS))
+    if 'ENABLE_TETHER' in form_data.model_fields_set and not form_data.ENABLE_TETHER:
+        from open_webui.utils.tether import hub
+
+        await hub.close_disabled_connections()
     values = await get_config_values(CONNECTIONS_CONFIG_KEYS)
     await publish_event(
         request,
@@ -256,9 +276,7 @@ async def register_oauth_client(
         )
 
 
-############################
 # ToolServers Config
-############################
 
 
 class ToolServerConnection(BaseModel):
@@ -417,7 +435,7 @@ async def verify_terminal_server_connection(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -490,7 +508,7 @@ async def put_terminal_server_policy(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -530,7 +548,7 @@ async def put_terminal_server_lifecycle(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -572,7 +590,7 @@ async def refresh_terminal_server_terminals(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     body = {
@@ -742,9 +760,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
         )
 
 
-############################
-# CodeInterpreterConfig
-############################
+# Code Interpreter Config
 class CodeInterpreterConfigForm(BaseModel):
     ENABLE_CODE_EXECUTION: bool
     CODE_EXECUTION_ENGINE: str
@@ -790,9 +806,7 @@ async def set_code_execution_config(
     return values
 
 
-############################
-# SetDefaultModels
-############################
+# Set Default Models
 class ModelsConfigForm(BaseModel):
     DEFAULT_MODELS: str | None
     DEFAULT_PINNED_MODELS: str | None
@@ -805,6 +819,7 @@ class ModelsConfigForm(BaseModel):
 async def get_models_defaults(request: Request, user=Depends(get_verified_user)):
     return {
         'DEFAULT_MODEL_METADATA': await Config.get('models.default_metadata'),
+        'DEFAULT_FUNCTION_CALLING': (await Config.get('models.default_params') or {}).get('function_calling'),
     }
 
 
@@ -835,11 +850,27 @@ async def set_models_config(request: Request, form_data: ModelsConfigForm, user=
 class SubagentsConfigForm(BaseModel):
     ENABLE_SUBAGENTS: bool
     SUBAGENTS_BACKGROUND_ENABLED: bool
-    SUBAGENTS_MAX_CONCURRENT: int
-    SUBAGENTS_MAX_ASYNC: int
-    SUBAGENTS_MAX_ITERATIONS: int
-    SUBAGENTS_MAX_OUTPUT: int
+    SUBAGENTS_MAX_CONCURRENT: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_ASYNC: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_ITERATIONS: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_OUTPUT: int | None = Field(default=None, gt=0)
     SUBAGENTS_SYSTEM_PROMPT: str
+
+    @field_validator(
+        'SUBAGENTS_MAX_CONCURRENT',
+        'SUBAGENTS_MAX_ASYNC',
+        'SUBAGENTS_MAX_ITERATIONS',
+        'SUBAGENTS_MAX_OUTPUT',
+        mode='before',
+    )
+    @classmethod
+    def normalize_limit(cls, value):
+        return None if value in ('', 0) else value
+
+    @field_validator('SUBAGENTS_MAX_CONCURRENT', 'SUBAGENTS_MAX_ASYNC', mode='before')
+    @classmethod
+    def normalize_legacy_unlimited(cls, value):
+        return None if value == -1 else value
 
 
 @router.get('/subagents', response_model=SubagentsConfigForm)
@@ -902,9 +933,7 @@ async def set_default_suggestions(
     return {'suggestions': suggestions, 'i18n': suggestions_i18n}
 
 
-############################
-# SetBanners
-############################
+# Set Banners
 
 
 class SetBannersForm(BaseModel):

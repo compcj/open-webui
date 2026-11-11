@@ -11,15 +11,24 @@ failure (no more fire-and-forget create_task).
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, ClassVar
 
+from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from open_webui.internal.db import Base, get_async_db
-from sqlalchemy import JSON, BigInteger, Column, Text, delete, select
+from sqlalchemy import JSON, BigInteger, Column, Text, delete, select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
+
+PREVIEW_BASE_KEY = 'terminal.preview.base_url'
+MAIN_URL_KEY = 'webui.url'
+PREVIEW_PRIVATE_PREFIX = 'server.terminal-preview.'
+PREVIEW_HOSTS_KEY = PREVIEW_PRIVATE_PREFIX + 'hosts'
 
 API_CONFIG_KEYS = ('openai.api_configs', 'ollama.api_configs')
 DICT_CONFIG_KEY_ALIASES = {
@@ -27,6 +36,7 @@ DICT_CONFIG_KEY_ALIASES = {
     'ollama.api_configs': ('OLLAMA_API_CONFIGS',),
     'rag.mineru_params': ('MINERU_PARAMS',),
     'rag.docling_params': ('DOCLING_PARAMS',),
+    'rag.mistral_ocr_params': ('MISTRAL_OCR_PARAMS',),
     'web.search.linkup_search_params': ('LINKUP_SEARCH_PARAMS',),
     'image_generation.automatic1111.api_params': ('AUTOMATIC1111_PARAMS',),
     'image_generation.openai.params': ('IMAGES_OPENAI_API_PARAMS',),
@@ -97,7 +107,7 @@ def _json_value(value: Any) -> Any:
     return jsonable_encoder(value)
 
 
-# ── Model ────────────────────────────────────────────────────────────────────
+# Model
 
 
 class Config(Base):
@@ -113,7 +123,7 @@ class Config(Base):
     PERSISTENT_ENABLED: ClassVar[bool] = True
     OAUTH_PERSISTENT_ENABLED: ClassVar[bool] = False
 
-    # ── Class methods ────────────────────────────────────────
+    # Class methods
 
     @classmethod
     def configure(
@@ -142,6 +152,8 @@ class Config(Base):
     @staticmethod
     async def get(key: str, default: Any = None) -> Any:
         """Get a config value by key. Returns default if not set."""
+        if key.startswith(PREVIEW_PRIVATE_PREFIX):
+            return default
         if not Config.persistent_enabled_for(key):
             return Config.default_value(key, default)
         async with get_async_db() as db:
@@ -151,6 +163,7 @@ class Config(Base):
     @staticmethod
     async def get_many(*keys: str) -> dict:
         """Get multiple config values. Returns {key: value} for keys that exist."""
+        keys = tuple(key for key in keys if not key.startswith(PREVIEW_PRIVATE_PREFIX))
         disabled_values = {
             key: Config.default_value(key)
             for key in keys
@@ -179,7 +192,9 @@ class Config(Base):
         if not Config.PERSISTENT_ENABLED:
             return default_values
         async with get_async_db() as db:
-            result = await db.execute(select(Config).where(Config.key.like(f'{namespace}.%')))
+            result = await db.execute(
+                select(Config).where(Config.key.like(f'{namespace}.%'), ~Config.key.startswith(PREVIEW_PRIVATE_PREFIX))
+            )
             values = {row.key: row.value for row in result.scalars().all()}
             values.update(default_values)
             return values
@@ -190,7 +205,7 @@ class Config(Base):
         if not Config.PERSISTENT_ENABLED:
             return dict(Config.DEFAULTS)
         async with get_async_db() as db:
-            result = await db.execute(select(Config))
+            result = await db.execute(select(Config).where(~Config.key.startswith(PREVIEW_PRIVATE_PREFIX)))
             values = {row.key: row.value for row in result.scalars().all()}
             if not Config.OAUTH_PERSISTENT_ENABLED:
                 values.update({key: value for key, value in Config.DEFAULTS.items() if key.startswith('oauth.')})
@@ -199,6 +214,16 @@ class Config(Base):
     @staticmethod
     async def upsert(updates: dict, *, db: AsyncSession | None = None) -> None:
         """Upsert multiple config key-value pairs. Raises on failure."""
+        updates = {key: value for key, value in updates.items() if not key.startswith(PREVIEW_PRIVATE_PREFIX)}
+        preview_change = PREVIEW_BASE_KEY in updates or MAIN_URL_KEY in updates
+        if preview_change and db is None:
+            async with get_async_db() as session:
+                await Config.upsert(updates, db=session)
+                await session.commit()
+            return
+        if preview_change:
+            await Config._update_preview_hosts(db, updates=updates)
+
         persistent_updates = {}
         for key, value in updates.items():
             value = _json_value(value)
@@ -229,7 +254,11 @@ class Config(Base):
     @staticmethod
     async def delete(key: str) -> bool:
         """Delete a config key. Returns True if it existed."""
+        if key.startswith(PREVIEW_PRIVATE_PREFIX):
+            return False
         async with get_async_db() as db:
+            if key == PREVIEW_BASE_KEY:
+                await Config._update_preview_hosts(db)
             row = await db.get(Config, key)
             if row:
                 await db.delete(row)
@@ -239,10 +268,127 @@ class Config(Base):
 
     @staticmethod
     async def clear() -> None:
-        """Delete all config rows."""
+        """Delete public settings while retaining preview isolation and create claims."""
         async with get_async_db() as db:
-            await db.execute(delete(Config))
+            await Config._update_preview_hosts(db)
+            await db.execute(delete(Config).where(~Config.key.startswith(PREVIEW_PRIVATE_PREFIX)))
             await db.commit()
+
+    @staticmethod
+    def _insert_preview_state(db, key, value, updated_at):
+        insert = postgres_insert if db.get_bind().dialect.name == 'postgresql' else sqlite_insert
+        return insert(Config).values(key=key, value=value, updated_at=updated_at).on_conflict_do_nothing()
+
+    @staticmethod
+    async def _update_preview_hosts(db, *, updates=None):
+        from open_webui.utils.terminal_preview import origin_hostname, validate_preview_base_url
+
+        updates = updates or {}
+        # All hostname reservations and main URL changes serialize on this row.
+        # The insert obtains the SQLite write lock. PostgreSQL locks the selected row.
+        await db.execute(Config._insert_preview_state(db, PREVIEW_HOSTS_KEY, [], int(time.time())))
+        row = await db.get(Config, PREVIEW_HOSTS_KEY, with_for_update=True, populate_existing=True)
+        hosts = set(row.value)
+
+        async def config_value(key):
+            stored = await db.get(Config, key) if Config.persistent_enabled_for(key) else None
+            return stored.value if stored else Config.default_value(key, '')
+
+        env_main = os.getenv('WEBUI_URL', '')
+        current_main = await config_value(MAIN_URL_KEY)
+        current_base = await config_value(PREVIEW_BASE_KEY)
+        try:
+            current_host = origin_hostname(validate_preview_base_url(current_base, env_main, current_main))
+        except ValueError:
+            current_host = None
+        if current_host:
+            hosts.add(current_host)
+
+        desired_main = updates.get(MAIN_URL_KEY, current_main)
+        if MAIN_URL_KEY in updates and origin_hostname(desired_main) in hosts:
+            raise HTTPException(400, 'A reserved preview hostname cannot host the main application')
+        if PREVIEW_BASE_KEY in updates:
+            try:
+                desired_base = validate_preview_base_url(
+                    updates[PREVIEW_BASE_KEY], env_main, current_main, desired_main
+                )
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from None
+            if not Config.persistent_enabled_for(PREVIEW_BASE_KEY) and desired_base != current_base:
+                raise HTTPException(
+                    400, 'Change the preview environment setting when persistent configuration is disabled'
+                )
+            updates[PREVIEW_BASE_KEY] = desired_base
+            if hostname := origin_hostname(desired_base):
+                hosts.add(hostname)
+        if hosts != set(row.value):
+            row.value = sorted(hosts)
+        return hosts
+
+    @staticmethod
+    async def get_preview_settings():
+        """Read the active settings and reserved hosts from one SQL snapshot."""
+        from open_webui.utils.terminal_preview import origin_hostname, validate_preview_base_url
+
+        async with get_async_db() as db:
+            keys = (PREVIEW_BASE_KEY, MAIN_URL_KEY)
+            result = await db.execute(select(Config).where(Config.key.in_((*keys, PREVIEW_HOSTS_KEY))))
+            values = {row.key: row.value for row in result.scalars()}
+            settings = {
+                key: values.get(key, Config.default_value(key, ''))
+                if Config.persistent_enabled_for(key)
+                else Config.default_value(key, '')
+                for key in keys
+            }
+            try:
+                base = validate_preview_base_url(
+                    settings[PREVIEW_BASE_KEY], settings[MAIN_URL_KEY], os.getenv('WEBUI_URL', '')
+                )
+            except ValueError:
+                base = ''
+            hosts = set(values.get(PREVIEW_HOSTS_KEY, ()))
+            if (hostname := origin_hostname(base)) and hostname not in hosts:
+                hosts = await Config._update_preview_hosts(db)
+                await db.commit()
+            # The active setting may have changed while taking the reservation lock.
+            settings[PREVIEW_BASE_KEY] = base if hostname in hosts else ''
+            return {**settings, 'isolated_hosts': hosts}
+
+    @staticmethod
+    async def get_preview_port(key):
+        async with get_async_db() as db:
+            row = await db.get(Config, PREVIEW_PRIVATE_PREFIX + 'port.' + key)
+            return (row.value, row.updated_at) if row else (None, None)
+
+    @staticmethod
+    async def claim_preview_port(key, claim, expires_at):
+        async with get_async_db() as db:
+            result = await db.execute(
+                Config._insert_preview_state(
+                    db, PREVIEW_PRIVATE_PREFIX + 'port.' + key, {'claim': claim}, expires_at
+                ).returning(Config.key)
+            )
+            inserted = result.scalar_one_or_none() is not None
+            await db.commit()
+            return inserted
+
+    @staticmethod
+    async def settle_preview_port(key, claim, session_id=None):
+        async with get_async_db() as db:
+            query = (
+                update(Config).values(value={'claim': claim, 'session_id': session_id}, updated_at=None)
+                if session_id is not None
+                else delete(Config)
+            )
+            result = await db.execute(
+                query.where(
+                    Config.key == PREVIEW_PRIVATE_PREFIX + 'port.' + key,
+                    Config.value['claim'].as_string() == claim,
+                ).returning(Config.key)
+            )
+            settled = result.scalar_one_or_none() is not None
+            await db.commit()
+            return settled
 
     @staticmethod
     async def seed_defaults(defaults: dict) -> None:
