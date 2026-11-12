@@ -2670,8 +2670,11 @@
 								</div>
 							</div>
 
-							<div class="flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
-								<div class="ml-1 self-end flex items-center min-w-0">
+							<div
+								class="flex flex-col gap-1 md:flex-row md:gap-0 justify-between mt-0.5 mb-2 mx-0.5 max-w-full"
+								dir="ltr"
+							>
+								<div class="ml-1 self-stretch md:self-end flex items-center min-w-0">
 									<InputMenu
 										bind:show={showInputMenu}
 										bind:tab={inputMenuTab}
