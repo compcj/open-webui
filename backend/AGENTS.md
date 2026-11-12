@@ -422,6 +422,29 @@ manual restricted-schema projection remains separate and explicit. See the
 [guide](../docs/native-model-connections.md), [follow-up](../docs/upstream/v0.12.2-native-connections-followup.md)
 and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
 
+## Tool continuation prompts and Gemini signatures
+
+- Prepare the selected model system prompt in `main.py` through `utils/chat.py::prepare_chat_system_prompt`
+  after payload preparation and before initial dispatch. Preserve canonical request metadata precedence,
+  the matching browser-direct exception and per-reply copies. Initial dispatch and tool continuations
+  bypass reinjection; standalone provider endpoints and internal tasks retain their existing semantics.
+- `utils/gemini_signatures.py` owns the Chat Completions carrier
+  `extra_content.google.thought_signature`. Keep opaque strings at their original message/call level,
+  independently of native envelopes and existing `reasoning_details`; do not infer a model or enable
+  schema conversion from this field. A signature delta is a complete value: repeated snapshots replace
+  it, and absent/empty deltas never erase it. Do not concatenate signatures as argument/text fragments.
+- Preserve carriers through late signature-only deltas, output storage, approval resumes and batch
+  replay. Restore the original provider wrapper, arguments and signature once; never repeat execution.
+  Signed message text stays exact, including whitespace and empty messages. Continue must preserve
+  independent signed response boundaries. Coalescing is limited to the current stream's new output;
+  earlier messages and completed code retain their order and cannot become executable again.
+- Historical model changes and request-filter routing changes strip Gemini carriers from outgoing
+  projections, preserving stored originals. Include message-level carriers in V2 accounting and wire
+  fingerprints; nested call carriers are counted with `tool_calls`. No migration or cache-management
+  API is introduced. See the [guide](../docs/gemini-cache-replay.md),
+  [decision record](../docs/upstream/v0.13.3-gemini-cache-followup.md) and
+  [checks](../docs/DEVELOPMENT.md#gemini-cache-replay-verification).
+
 ## Gemini schema compatibility
 
 `meta.tool_schema_compatibility` is an explicit `default`/`gemini` choice with base-model inheritance;

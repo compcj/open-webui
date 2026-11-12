@@ -136,6 +136,16 @@ connection, model and original content. Replay requires a validated match. Requi
 signatures produce explicit errors without rerunning completed tools. Display reasoning text cannot
 replace signed content; switching connections or models does not make old signatures reusable.
 
+通过 Chat Completions 兼容接口使用 Gemini 时，签名位于
+`extra_content.google.thought_signature`，按消息或工具调用的原位置保存和回传。
+这条路径与上述原生 `reasoning_details` 封装独立，不要求切换协议或开启工具 Schema 兼容模式。
+模型系统提示词的续轮固定、签名回放和缓存排错见[专项指南](gemini-cache-replay.md)。
+
+Gemini through a Chat Completions gateway uses `extra_content.google.thought_signature` at the
+original message or tool-call level. This replay path is separate from the native `reasoning_details`
+envelope and requires neither a protocol change nor the schema compatibility profile.
+See the [continuation and signature guide](gemini-cache-replay.md) for prompt stability and cache troubleshooting.
+
 工具引用前缀、审批和 off/legacy/V2 语义保持一致；最终预算包含原生回放、媒体、工具和协议封装，
 在采用工具结果选择前校验。见[上下文压缩](context-compaction.md)。
 Gemini 原生默认使用 `parametersJsonSchema`；手动受限 Schema 转换是独立选择，

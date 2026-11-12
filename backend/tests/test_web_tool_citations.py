@@ -22,6 +22,11 @@ BACKEND = Path(__file__).parents[1] / 'open_webui'
 def load_functions(namespace, path, names):
     names = set(names)
     namespace.setdefault('JSONCodec', json)
+    if path == 'utils/middleware.py':
+        from open_webui.utils.gemini_signatures import gemini_signature_fields, strip_gemini_signature
+
+        namespace.setdefault('gemini_signature_fields', gemini_signature_fields)
+        namespace.setdefault('strip_gemini_signature', strip_gemini_signature)
     if path == 'utils/misc.py' and 'convert_output_to_messages' in names:
         names.update({'get_provider_function', 'merge_tool_call_batches'})
     if path == 'routers/openai.py' and '_normalize_stored_item' in names:

@@ -102,6 +102,16 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 [verification](docs/DEVELOPMENT.md#tool-citation-cache-verification), and the
 [follow-up decision](docs/upstream/v0.11.4-tool-citation-cache-followup.md).
 
+## Tool continuation prompts and Gemini signatures
+
+Before changing provider dispatch or replay, preserve the [tool continuation and Gemini signature
+contract](backend/AGENTS.md#tool-continuation-prompts-and-gemini-signatures). Prepare a server model's
+system prompt once on the reply-owned input before the first transport copy; tool continuations reuse
+that prepared input. Keep Gemini Chat Completions `extra_content.google.thought_signature` opaque and
+separate from `reasoning_details`, with original message/call and batch boundaries. Preserve signed
+text and earlier stream output without repeating tools. See the [replay guide](docs/gemini-cache-replay.md)
+and [regression checks](docs/DEVELOPMENT.md#gemini-cache-replay-verification).
+
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to

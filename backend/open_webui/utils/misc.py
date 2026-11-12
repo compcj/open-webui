@@ -375,6 +375,7 @@ def merge_tool_call_batches(output: list[dict], *, raw: bool = False, descriptor
     """Project each complete batch as the original provider call and one ordered result."""
     from open_webui.utils.tool_citations import citation_output
     from open_webui.utils.tool_result_sources import output_text
+    from open_webui.utils.gemini_signatures import gemini_signature_fields
 
     batches, results = {}, {}
     for index, item in enumerate(output):
@@ -416,6 +417,7 @@ def merge_tool_call_batches(output: list[dict], *, raw: bool = False, descriptor
                         'id': calls[0].get('id', batch_id),
                         'call_id': batch_id,
                         **get_provider_function({'provider_function': batch['function']}),
+                        **gemini_signature_fields(calls[0]),
                         'status': 'completed',
                     }
                 )
@@ -505,6 +507,8 @@ def convert_output_to_messages(
     from open_webui.utils.tool_result_sources import output_descriptors, output_text
     from open_webui.utils.tool_citations import citation_output
 
+    from open_webui.utils.gemini_signatures import gemini_signature_fields
+
     descriptors = output_descriptors(output) if include_tool_result_refs else {}
     original_descriptors = (
         {id(item): descriptors.get(item.get('id') or f'output-{index}') for index, item in enumerate(output)}
@@ -518,6 +522,7 @@ def convert_output_to_messages(
     pending_content = []
     pending_reasoning = []  # Only populated for top-level structured reasoning fields.
     pending_reasoning_details = []
+    pending_signature = {}
     pending_tool_image_urls = []
     pending_tool_outputs = []
 
@@ -535,7 +540,10 @@ def convert_output_to_messages(
 
     def flush_pending():
         nonlocal pending_content, pending_tool_calls, pending_reasoning, pending_reasoning_details, pending_tool_refs
-        if not pending_content and not pending_tool_calls and not pending_reasoning and not pending_reasoning_details:
+        nonlocal pending_signature
+        if not (
+            pending_content or pending_tool_calls or pending_reasoning or pending_reasoning_details or pending_signature
+        ):
             return
 
         message = {
@@ -543,6 +551,7 @@ def convert_output_to_messages(
             'content': '\n'.join(pending_content) if pending_content else '',
             **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
             **({'_tool_result_refs': pending_tool_refs} if pending_tool_refs else {}),
+            **pending_signature,
         }
 
         if pending_reasoning:
@@ -563,6 +572,7 @@ def convert_output_to_messages(
         pending_tool_calls = []
         pending_reasoning = []
         pending_reasoning_details = []
+        pending_signature = {}
 
     def flush_tool_images():
         nonlocal pending_tool_image_urls
@@ -653,6 +663,12 @@ def convert_output_to_messages(
             flush_tool_images()
 
         if item_type == 'message':
+            # Continue may store multiple independently signed responses. Their
+            # text must not be joined into a new message under one signature.
+            signature = gemini_signature_fields(item) if raw else {}
+            if pending_signature or (signature and pending_content):
+                flush_pending()
+            pending_signature = signature
             # Extract text from output_text content parts
             content_parts = item.get('content', [])
             text = ''
@@ -677,6 +693,7 @@ def convert_output_to_messages(
                     'id': item.get('call_id', ''),
                     'type': 'function',
                     'function': get_provider_function(item),
+                    **(gemini_signature_fields(item) if raw else {}),
                 }
             )
 

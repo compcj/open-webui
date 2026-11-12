@@ -337,6 +337,7 @@ def estimate_message(message: dict) -> int:
         'files',
         'reasoning_content',
         'reasoning_details',
+        'extra_content',
         'thinking',
     ):
         total += estimate_text(message.get(key))
@@ -554,6 +555,7 @@ def wire_message(message: dict) -> dict:
         'images',
         'reasoning_content',
         'reasoning_details',
+        'extra_content',
         'thinking',
     )
     return {key: message[key] for key in fields if key in message and message[key] is not None}

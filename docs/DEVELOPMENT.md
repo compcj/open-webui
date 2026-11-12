@@ -467,6 +467,31 @@ not zero. Local prefix checks do not establish a cache hit rate or savings. See
 [OpenRouter caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) and the
 [implementation record](upstream/v0.11.4-tool-citation-cache-followup.md).
 
+### Gemini cache replay verification
+
+Use Python 3.11/3.12 and installed development dependencies. The tests use synthetic provider streams,
+real preparation/replay helpers and isolated storage fixtures; they do not start the application or
+contact a live model. Configure disposable data/static paths and a synthetic `WEBUI_SECRET_KEY` as in
+the setup section, and set `PYTHON_DOTENV_DISABLED=1` when checking without local deployment settings.
+
+```sh
+python -m pytest backend/tests/test_chat_system_prompt.py backend/tests/test_gemini_thought_signatures.py backend/tests/test_chat_model_isolation.py backend/tests/test_web_tool_citations.py backend/tests/test_tool_citation_replay.py backend/tests/test_v0133_tool_context.py backend/tests/test_image_tool_context.py backend/tests/test_streaming_error_recovery.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_tool_call_rounds.py backend/tests/test_native_connections_integration.py backend/tests/test_native_replay_budget.py backend/tests/test_native_provider_adapters.py backend/tests/test_native_text_tool_recovery.py backend/tests/test_openai_responses_payload.py backend/tests/test_context_compaction_v2.py backend/tests/test_chat_stream_retry.py -q
+```
+
+The two new suites exercise initial dispatch plus repeated tool sends, dynamic prompt resolution,
+canonical metadata precedence, direct model-ID collisions and standalone bypass behavior. They cover
+early/late/interleaved Gemini signatures, repeated or empty signature deltas, exact provider arguments,
+batch wrappers, saved/local history, approval replay, signed whitespace/empty text, Continue boundaries,
+request-filter model switches and V2 accounting/fingerprints. Legacy code continuation must retain
+earlier output and execute code only once. The existing suites protect citations, `reasoning_details`,
+native envelopes, other transports, retry and concurrent reply isolation.
+
+Use an unused task-owned `--basetemp` and `-p no:cacheprovider` if the default pytest directories are
+inaccessible. Keep tokenizer cache files in a writable task-local `TIKTOKEN_CACHE_DIR` when needed.
+Report collected tests and actual outcomes; a missing dependency is not a passed check. No frontend
+build or live gateway acceptance is established by these tests. See the
+[user guide](gemini-cache-replay.md) and [dated validation record](upstream/v0.13.3-gemini-cache-followup.md).
+
 ### Search1API endpoint verification
 
 Use Python 3.11/3.12 and the installed development dependencies. The provider tests mock HTTP;

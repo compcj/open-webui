@@ -86,6 +86,7 @@ def fanout(monkeypatch, settings, payload_handler, provider):
         'is_saved_chat_id': lambda chat_id: chat_id == 'chat',
         'apply_model_controls': lambda params, *args, **kwargs: params,
         'process_chat_payload': payload_handler,
+        'prepare_chat_system_prompt': AsyncMock(side_effect=lambda request, body, user: body),
         'chat_completion_handler': provider,
         'build_chat_response_context': AsyncMock(return_value={}),
         'process_chat_response': AsyncMock(side_effect=lambda response, ctx: response),
@@ -190,7 +191,8 @@ async def test_comparison_tools_prepare_and_replay_on_each_reply_branch(database
         await asyncio.wait_for(ready.wait(), timeout=5)
         return body, meta, [], False
 
-    async def provider(req, body, user):
+    async def provider(req, body, user, *, bypass_system_prompt=False):
+        assert bypass_system_prompt
         first = await v2.prepare_v2_request(req, user, body, body['metadata'], body['model'], request.app.state.MODELS)
         replay = await v2.prepare_v2_request(req, user, body, body['metadata'], body['model'], request.app.state.MODELS)
         assert first == replay
@@ -219,7 +221,7 @@ async def test_comparison_tools_prepare_and_replay_on_each_reply_branch(database
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['off', 'legacy', 'v2'])
 @pytest.mark.parametrize('direct', [False, True])
-async def test_comparison_detaches_nested_payload_metadata_and_runtime_state(monkeypatch, mode, direct):
+async def test_comparison_detaches_nested_payload_metadata_and_runtime_state(database, monkeypatch, mode, direct):
     from open_webui.utils.context_compaction_v2 import CompactionSettings
 
     request, payload, metadata, entries = inputs(('model-a', 'model-a' if direct else 'model-b'))
@@ -280,7 +282,7 @@ async def test_comparison_detaches_nested_payload_metadata_and_runtime_state(mon
 
 
 @pytest.mark.asyncio
-async def test_comparison_preserves_consumed_request_body_for_plugins(monkeypatch):
+async def test_comparison_preserves_consumed_request_body_for_plugins(database, monkeypatch):
     from open_webui.utils.context_compaction_v2 import CompactionSettings
 
     original, payload, metadata, entries = inputs(('model-a', 'model-b'))

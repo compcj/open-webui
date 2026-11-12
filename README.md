@@ -222,6 +222,19 @@ This reduces prefix changes caused by citation handling. Cache hits still depend
 provider routing, cache lifetime and actual compaction, with no guaranteed hit rate or cost reduction.
 See the [fix record and verification scope](docs/upstream/v0.11.4-tool-citation-cache-followup.md).
 
+模型配置的系统提示词在一次聊天请求的首轮发送前解析并固定，工具续轮复用同一份内容。
+通过 Chat Completions 兼容接口调用 Gemini 时，保留网关返回的
+`extra_content.google.thought_signature`，支持流式工具调用、批量调用、保存后重放和审批恢复；
+签名文本也保留原文与响应边界。该字段与既有 `reasoning_details` 独立，无需开启 Schema 兼容模式。
+说明、排错和已知边界见[工具续轮与 Gemini 签名指南](docs/gemini-cache-replay.md)。
+
+The configured model system prompt is resolved before a chat request's first send and reused by its
+tool continuations. Gemini through Chat Completions preserves the gateway's
+`extra_content.google.thought_signature` across streaming tool calls, batches, saved replay and
+approval resumes. Signed text keeps its original content and response boundaries. This carrier is
+independent of existing `reasoning_details` and the optional schema compatibility profile.
+See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) for scope and troubleshooting.
+
 ### 上下文压缩 / Context compaction
 
 管理员在 **设置 → 界面 → 上下文压缩** 选择 **关闭／原版压缩／V2压缩**。

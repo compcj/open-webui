@@ -218,6 +218,22 @@ async def generate_direct_chat_completion(
         return res
 
 
+async def prepare_chat_system_prompt(request: Request, form_data: dict, user: Any) -> dict:
+    """Freeze the model prompt on the reply input shared by all tool continuations."""
+    if getattr(request.state, 'direct', False) and form_data['model'] == getattr(request.state, 'model', {}).get('id'):
+        return form_data
+
+    model_info = await Models.get_model_by_id(form_data['model'])
+    if model_info is None:
+        return form_data
+
+    # Transport dispatch intentionally copies its input. Preparing only that copy
+    # drops the model prompt when middleware starts the first tool continuation.
+    body = {**form_data, 'messages': deepcopy(form_data.get('messages', []))}
+    metadata = {**form_data.get('metadata', {}), **getattr(request.state, 'metadata', {})}
+    return await apply_system_prompt_to_body(model_info.params.model_dump().get('system'), body, metadata, user)
+
+
 async def generate_chat_completion(
     request: Request,
     form_data: dict,

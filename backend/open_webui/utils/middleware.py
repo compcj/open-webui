@@ -88,6 +88,7 @@ from open_webui.utils.access_control.files import get_owner_accessible_folder_fi
 from open_webui.utils.access_control.folders import has_folder_access
 from open_webui.utils.ask_user import stage_ask_user_tool_calls
 from open_webui.utils.audit import log_model_usage
+from open_webui.utils.gemini_signatures import gemini_signature_fields, strip_gemini_signature
 from open_webui.utils.auth import get_verified_user_by_id
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
@@ -2366,8 +2367,12 @@ def get_reasoning_format(model: dict) -> str | None:
 
 
 def strip_reasoning_details(output: list) -> list:
+    from open_webui.utils.gemini_signatures import strip_gemini_signature
+
     return [
-        {key: value for key, value in item.items() if key != 'reasoning_details'} if isinstance(item, dict) else item
+        strip_gemini_signature({key: value for key, value in item.items() if key != 'reasoning_details'})
+        if isinstance(item, dict)
+        else item
         for item in output
     ]
 
@@ -3762,6 +3767,9 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         index = next((i for i, item in enumerate(messages) if item.get('_current_response_output')), len(messages))
         messages[index:index] = copy.deepcopy(private_context)
 
+    # Request filters may route away from the model used to reconstruct history.
+    if form_data.get('model') != model['id']:
+        form_data['messages'] = [strip_gemini_signature(message) for message in form_data['messages']]
     form_data = normalize_messages_for_model(form_data)
     metadata['_current_response_output_indices'] = [
         i for i, message in enumerate(form_data['messages']) if message.pop('_current_response_output', False)
@@ -5132,6 +5140,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                     or choice_message.get('reasoning_content')
                     or choice_message.get('reasoning')
                     or get_reasoning_details(choice_message)
+                    or gemini_signature_fields(choice_message)
                 )
             )
             if (continuing and 'error' not in response_data) or (
@@ -5197,6 +5206,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'status': 'completed',
                                 'role': 'assistant',
                                 'content': [{'type': 'output_text', 'text': content}],
+                                **gemini_signature_fields(choice_message),
                             }
                         )
                         if native_details:
@@ -5221,6 +5231,8 @@ async def non_streaming_chat_response_handler(response, ctx):
                             and previous[-1].get('type') == response_output[0].get('type') == 'message'
                             and previous[-1].get('role', 'assistant') == 'assistant'
                             and response_output[0].get('role', 'assistant') == 'assistant'
+                            and not gemini_signature_fields(previous[-1])
+                            and not gemini_signature_fields(response_output[0])
                         ):
                             response_output[0] = {
                                 **previous[-1],
@@ -5667,6 +5679,7 @@ async def streaming_chat_response_handler(response, ctx):
                     prior_output
                     and prior_output[-1].get('type') == 'message'
                     and prior_output[-1].get('status') == 'in_progress'
+                    and not gemini_signature_fields(prior_output[-1])
                 ):
                     msg_parts = prior_output[-1].get('content', [])
                     if not msg_parts or (len(msg_parts) == 1 and not msg_parts[0].get('text', '')):
@@ -5712,6 +5725,8 @@ async def streaming_chat_response_handler(response, ctx):
                     and prior_output[-1].get('type') == output[0].get('type') == 'message'
                     and prior_output[-1].get('role', 'assistant') == 'assistant'
                     and output[0].get('role', 'assistant') == 'assistant'
+                    and not gemini_signature_fields(prior_output[-1])
+                    and not gemini_signature_fields(output[0])
                 )
 
             def full_output():
@@ -5867,6 +5882,19 @@ async def streaming_chat_response_handler(response, ctx):
 
                     response_tool_calls = []
                     round_tool_call_ids = {}
+                    raw_message_parts = []
+                    signed_message = None
+                    # Legacy code continuations keep earlier output in this list.
+                    # Only the trailing unsigned placeholder belongs to the new stream.
+                    stream_prefix = {id(item) for item in output}
+                    if (
+                        output
+                        and output[-1].get('type') == 'message'
+                        and output[-1].get('status') == 'in_progress'
+                        and not gemini_signature_fields(output[-1])
+                        and not any(part.get('text') for part in output[-1].get('content', []))
+                    ):
+                        stream_prefix.discard(id(output[-1]))
                     # Gateways can emit an error and still recover within this stream.
                     # Only publish it if no later provider success supersedes it.
                     pending_stream_error = None
@@ -6288,6 +6316,9 @@ async def streaming_chat_response_handler(response, ctx):
                                                     response_tool_calls.append(delta_tool_call)
                                                 else:
                                                     # Update the existing tool call
+                                                    current_response_tool_call.update(
+                                                        gemini_signature_fields(delta_tool_call)
+                                                    )
                                                     delta_name = delta_tool_call.get('function', {}).get('name')
                                                     delta_arguments = delta_tool_call.get('function', {}).get(
                                                         'arguments'
@@ -6333,6 +6364,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                     item['name'] = func.get('name', item.get('name', ''))
                                                     item['arguments'] = func.get('arguments', item.get('arguments', ''))
                                                     item['status'] = 'in_progress'
+                                                    item.update(gemini_signature_fields(tc))
                                                 else:
                                                     output_index = len(output)
                                                     item = {
@@ -6342,6 +6374,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                         'name': func.get('name', ''),
                                                         'arguments': '',
                                                         'status': 'in_progress',
+                                                        **gemini_signature_fields(tc),
                                                     }
                                                     output.append(item)
                                                     output_by_call_id[call_id] = (output_index, item)
@@ -6414,6 +6447,9 @@ async def streaming_chat_response_handler(response, ctx):
                                     value = delta.get('content')
                                     if value and not isinstance(value, str):
                                         value = f'{value}'
+                                    if value:
+                                        raw_message_parts.append(value)
+                                    signature = gemini_signature_fields(delta)
 
                                     reasoning_content = (
                                         delta.get('reasoning_content')
@@ -6674,7 +6710,7 @@ async def streaming_chat_response_handler(response, ctx):
 
                                         tag_output = None
 
-                                        if DETECT_REASONING_TAGS:
+                                        if DETECT_REASONING_TAGS and signed_message is None and not signature:
                                             if not any(
                                                 item.get('attributes', {}).get('type') == 'reasoning_content'
                                                 for item in output
@@ -6693,7 +6729,7 @@ async def streaming_chat_response_handler(response, ctx):
                                             if solution_output is not None:
                                                 tag_output = solution_output
 
-                                        if DETECT_CODE_INTERPRETER:
+                                        if DETECT_CODE_INTERPRETER and signed_message is None and not signature:
                                             code_output, end = tag_output_handler(
                                                 'code_interpreter',
                                                 DEFAULT_CODE_INTERPRETER_TAGS,
@@ -6732,6 +6768,53 @@ async def streaming_chat_response_handler(response, ctx):
                                             stream_size = 0
                                             data = None
 
+                                    if signature or (signed_message is not None and value):
+                                        # Final empty deltas can carry the entire signature.
+                                        # Store it even when no text/tool arguments arrived.
+                                        if signed_message is None:
+                                            signed_message = {
+                                                'type': 'message',
+                                                'id': output_id('msg'),
+                                                'status': 'in_progress',
+                                                'role': 'assistant',
+                                            }
+                                        # The carrier signs the whole provider message, including
+                                        # text separated by calls or transformed by display tags.
+                                        # Coalesce only this stream's text; prior replies stay intact.
+                                        prefix = [item for item in output if id(item) in stream_prefix]
+                                        current_output = [
+                                            item
+                                            for item in output
+                                            if id(item) not in stream_prefix
+                                            and item.get('type') != 'message'
+                                            and not (
+                                                item.get('start_tag')
+                                                and (
+                                                    (
+                                                        item.get('type') == 'reasoning'
+                                                        and item.get('attributes', {}).get('type')
+                                                        != 'reasoning_content'
+                                                        and not item.get('reasoning_details')
+                                                    )
+                                                    or (
+                                                        item.get('type') == 'open_webui:code_interpreter'
+                                                        and item.get('output') is None
+                                                    )
+                                                )
+                                            )
+                                        ]
+                                        signed_message['content'] = [
+                                            {'type': 'output_text', 'text': ''.join(raw_message_parts)}
+                                        ]
+                                        signed_message.update(signature)
+                                        output = [*prefix, signed_message, *current_output]
+                                        stream_size = 0
+                                        await flush_pending_delta_data()
+                                        await event_emitter(
+                                            {'type': 'chat:completion', 'data': {'output': full_output()}}
+                                        )
+                                        data = None
+
                                 if delta and data:
                                     await queue_pending_delta_data(data, delta_type)
                                 elif data:
@@ -6766,7 +6849,12 @@ async def streaming_chat_response_handler(response, ctx):
                             for detail in item.get('reasoning_details', [])
                             if isinstance(detail, dict)
                         )
-                        if output[-1].get('type') == 'message' and not continuing and not has_native_envelope:
+                        if (
+                            output[-1].get('type') == 'message'
+                            and not continuing
+                            and not has_native_envelope
+                            and not gemini_signature_fields(output[-1])
+                        ):
                             parts = output[-1].get('content', [])
                             if parts and parts[-1].get('type') == 'output_text':
                                 parts[-1]['text'] = parts[-1]['text'].strip()
@@ -6806,6 +6894,7 @@ async def streaming_chat_response_handler(response, ctx):
                         and not incomplete
                         and current_form_data.get('tool_choice') != 'none'
                         and current_form_data.get('response_format') in (None, {'type': 'text'})
+                        and not any(gemini_signature_fields(item) for item in output)
                         # Signed native blocks bind the original assistant text; changing it
                         # would invalidate provider replay after a recovered tool executes.
                         and not any(
@@ -7047,6 +7136,7 @@ async def streaming_chat_response_handler(response, ctx):
                             output.append(item)
                             output_by_call_id[call_id] = item
                         clear_server_tool_fields(item)
+                        item.update(gemini_signature_fields(tool_call))
                         item.update(
                             name=function.get('name', ''),
                             arguments=function.get('arguments', '{}'),
@@ -7642,6 +7732,14 @@ async def streaming_chat_response_handler(response, ctx):
                                 extra_params=extra_params,
                             )
 
+                        if new_form_data.get('model') != form_data.get('model'):
+                            new_form_data['messages'] = [
+                                strip_gemini_signature(message) for message in new_form_data['messages']
+                            ]
+                            # This projection accumulates rounds; do not resurrect old
+                            # signatures after the new model returns its own next call.
+                            messages = [strip_gemini_signature(message) for message in messages]
+
                         final_answer_requested = bool(stop_reason) or (
                             max_tool_call_iterations is not None and tool_call_iterations >= max_tool_call_iterations
                         )
@@ -7666,6 +7764,7 @@ async def streaming_chat_response_handler(response, ctx):
                                 prior_output
                                 and prior_output[-1].get('type') == 'message'
                                 and prior_output[-1].get('status') == 'in_progress'
+                                and not gemini_signature_fields(prior_output[-1])
                             ):
                                 msg_parts = prior_output[-1].get('content', [])
                                 if not msg_parts or (len(msg_parts) == 1 and not msg_parts[0].get('text', '').strip()):
@@ -7961,6 +8060,11 @@ async def streaming_chat_response_handler(response, ctx):
                                     extra_params=extra_params,
                                 )
 
+                            if new_form_data.get('model') != form_data.get('model'):
+                                new_form_data['messages'] = [
+                                    strip_gemini_signature(message) for message in new_form_data['messages']
+                                ]
+                                messages = [strip_gemini_signature(message) for message in messages]
                             new_form_data = normalize_messages_for_model(new_form_data)
 
                             res = await generate_chat_completion(

@@ -251,6 +251,7 @@ from open_webui.utils.chat import (
 )
 from open_webui.utils.chat import (
     generate_chat_completion as chat_completion_handler,
+    prepare_chat_system_prompt,
 )
 from open_webui.utils.chat_id import (
     get_temporary_chat_session_id,
@@ -1850,7 +1851,8 @@ async def chat_completion(
                 if paused:
                     return {'status': True, 'chat_id': metadata.get('chat_id'), 'paused': True}
 
-                response = await chat_completion_handler(request, form_data, user)
+                form_data = await prepare_chat_system_prompt(request, form_data, user)
+                response = await chat_completion_handler(request, form_data, user, bypass_system_prompt=True)
 
                 if isinstance(response, Response) and response.status_code >= 400:
                     error_detail = get_response_error_detail(response)
