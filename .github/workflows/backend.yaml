@@ -1,16 +1,30 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend CI — Python formatting, logic checks, and tests
-# Runs on pushes and PRs to main/dev when backend files change
+# Runs on pushes and PRs to main/dev when backend files or locked actions change
 # ─────────────────────────────────────────────────────────────────────────────
 name: Python CI
 
 on:
   push:
     branches: [main, dev]
-    paths: ['backend/**', 'pyproject.toml', 'uv.lock', '.github/workflows/backend.yaml']
+    paths:
+      [
+        'backend/**',
+        'pyproject.toml',
+        'uv.lock',
+        '.github/workflows/backend.yaml',
+        '.github/workflows/actions.lock'
+      ]
   pull_request:
     branches: [main, dev]
-    paths: ['backend/**', 'pyproject.toml', 'uv.lock', '.github/workflows/backend.yaml']
+    paths:
+      [
+        'backend/**',
+        'pyproject.toml',
+        'uv.lock',
+        '.github/workflows/backend.yaml',
+        '.github/workflows/actions.lock'
+      ]
 
 concurrency:
   group: backend-${{ github.ref }}

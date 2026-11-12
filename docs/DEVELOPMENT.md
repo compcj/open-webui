@@ -162,7 +162,8 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
   `npm run format`, `npm run i18n:parse`, `git diff --exit-code`, and a production build. Another
   runs Vitest. The active workflow does not run `npm run check` or ESLint.
 - [Backend CI](../.github/workflows/backend.yaml) runs Ruff formatting, selected `F` logic checks,
-  and the full `backend/tests` pytest suite on Python 3.11/3.12. Tests use locked dependencies with
+  and the full `backend/tests` pytest suite on Python 3.11/3.12, including when the Actions lockfile
+  changes. Tests use locked dependencies with
   `--no-install-project` and isolated data/static/SQLite paths. This does not start the full application
   or verify external services.
 - Files ending in `.disabled` under `.github/workflows/` are not active workflows.
