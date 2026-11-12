@@ -152,7 +152,8 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
 ## What the existing CI actually checks
 
 - [Workflow and build-script CI](../.github/workflows/actions.yaml) validates workflow structure and
-  expression contexts with pinned, checksum-verified actionlint, then runs the Node 22 script tests.
+  expression contexts with pinned, checksum-verified actionlint, runs the Node 22 script tests, and
+  verifies workflow dependency coverage and provenance with pinned, checksum-verified `gh-actions-lock`.
   It does not install application dependencies or publish a release.
   The shared validation script narrowly suppresses actionlint 1.7.12's unsupported-key diagnostic
   for `concurrency.queue` in `release.yml` ([upstream issue](https://github.com/rhysd/actionlint/issues/657));
@@ -174,6 +175,23 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
   fails explicitly. Notes over the size limit use an excerpt with an immutable full-changelog link.
   [GitHub's `queue: max`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
   retains up to 100 pending runs so a later documentation push does not replace a waiting version-change run.
+
+After adding, removing, or merging workflow action references, regenerate
+`.github/workflows/actions.lock` with GitHub's official CLI extension:
+
+```sh
+gh extension install github/gh-actions-lock
+gh actions-lock --no-narrow
+gh actions-lock --verify-local
+gh actions-lock --verify
+```
+
+Install the extension only when it is missing. `--no-narrow` preserves the existing workflow
+references; review the generated lockfile diff and retain established pins unless an update is
+intentional. The offline check verifies coverage; the online check also verifies provenance.
+Never hand-edit the lockfile or copy an upstream lockfile without regenerating it against the fork's
+workflows. GitHub rejects an onboarded workflow at startup if one of its actions is missing from
+the lockfile. See [GitHub's lockfile guide](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies).
 
 For documentation-only changes, validate links, paths, formatting, and the diff. Application startup
 and a full dependency install are not needed. For behavior changes, select meaningful tests and
