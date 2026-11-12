@@ -70,6 +70,10 @@ model system prompts before transport copies and preservation of Gemini Chat Com
 It extends the citation-prefix contract while keeping native `reasoning_details` replay separate.
 Read it before merging chat dispatch, streamed output or provider replay changes.
 
+The [v0.13.3 input-cache follow-up](v0.13.3-input-cache-followup.md) records per-model reasoning replay
+and extra-body switches, fresh request-filter inputs, content-block preservation and cache usage
+normalization. Read it alongside the Gemini record when changing compatible gateways or continuations.
+
 ## Search1API endpoint follow-up
 
 The [v0.12.2 Search1API endpoint follow-up](v0.12.2-search1api-endpoint-followup.md) records the

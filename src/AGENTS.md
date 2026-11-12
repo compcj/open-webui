@@ -56,6 +56,10 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   Default means no conversion. Never infer it from a model name, URL, provider metadata or a
   same-ID server model; keep separate personal connections isolated. See the
   [compatibility guide](../docs/gemini-tool-compatibility.md).
+- Model request compatibility keeps `meta.reasoning_content_replay` default on and
+  `meta.extra_body_compatibility` default off. Preserve explicit false through edit/save/reload,
+  keep read-only controls disabled and describe top-level precedence for extra-body expansion.
+  These switches are independent of reasoning controls, tool-schema profiles and native signatures.
 - Workspace auto-discovery is administered through `GET/POST /api/v1/configs/skills` using
   `AUTO_DISCOVERY_SKILL_IDS`. The UI is not an access-control boundary. Expose terminal
   `config.auto_discover_skills` only for admin-managed connections, and clear stale discovery

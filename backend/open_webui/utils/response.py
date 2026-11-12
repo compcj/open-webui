@@ -39,8 +39,22 @@ def normalize_usage(usage: dict) -> dict:
         result['input_tokens'] = prompt + (usage_counter(usage.get('cache_n')) or 0)
     if 'total_tokens' not in result and all(key in result for key in ('input_tokens', 'output_tokens')):
         result['total_tokens'] = result['input_tokens'] + result['output_tokens']
+
+    # Provider cache aliases describe the same measurement. Normalize before
+    # accumulating calls so mixed native/OpenAI/DeepSeek formats count it once.
+    cache_read_values = [usage.get('cache_read_input_tokens')]
+    for key in ('input_tokens_details', 'prompt_tokens_details'):
+        details = usage.get(key)
+        if isinstance(details, dict):
+            cache_read_values.append(details.get('cached_tokens'))
+    cache_read_values.append(usage.get('prompt_cache_hit_tokens'))
+    cache_read = next((n for value in cache_read_values if (n := usage_counter(value)) is not None), None)
+    result.pop('cache_read_input_tokens', None)
+    if cache_read is not None:
+        result['cache_read_input_tokens'] = cache_read
+
     # SQL fallback readers must not turn invalid aliases into zero or fail a cast.
-    for key in ('prompt_tokens', 'completion_tokens'):
+    for key in ('prompt_tokens', 'completion_tokens', 'prompt_cache_hit_tokens'):
         value = usage_counter(usage.get(key))
         result.pop(key, None)
         if value is not None:

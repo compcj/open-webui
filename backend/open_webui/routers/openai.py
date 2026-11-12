@@ -1263,6 +1263,8 @@ def convert_to_responses_payload(payload: dict) -> dict:
     Chat Completions: { messages: [{role, content}], ... }
     Responses API: { input: [{type: "message", role, content: [...]}], instructions: "system" }
     """
+    from open_webui.utils.content_blocks import cache_fields, has_cache_fields, responses_text_parts
+
     messages = payload.pop('messages', [])
 
     system_content = ''
@@ -1282,11 +1284,14 @@ def convert_to_responses_payload(payload: dict) -> dict:
 
         # Only leading system messages become top-level instructions. Keep later
         # instructions (including V2 budget reminders) in their original input position.
-        if role == 'system' and not input_items:
+        if role == 'system' and not input_items and not has_cache_fields(content):
             if isinstance(content, str):
-                system_content = content
+                text = content
             elif isinstance(content, list):
-                system_content = '\n'.join(p.get('text', '') for p in content if p.get('type') == 'text')
+                text = '\n'.join(p.get('text', '') for p in content if p.get('type') == 'text')
+            else:
+                text = ''
+            system_content = '\n'.join(part for part in (system_content, text) if part)
             continue
 
         # Handle assistant messages with tool_calls (from convert_output_to_messages)
@@ -1303,7 +1308,9 @@ def convert_to_responses_payload(payload: dict) -> dict:
                         {
                             'type': 'message',
                             'role': 'assistant',
-                            'content': [{'type': 'output_text', 'text': text}],
+                            'content': responses_text_parts(content, 'output_text')
+                            if has_cache_fields(content)
+                            else [{'type': 'output_text', 'text': text}],
                         }
                     )
             # Convert each tool_call to a function_call input item
@@ -1339,7 +1346,7 @@ def convert_to_responses_payload(payload: dict) -> dict:
             content_parts = []
             for part in content:
                 if part.get('type') == 'text':
-                    content_parts.append({'type': text_type, 'text': part.get('text', '')})
+                    content_parts.append({'type': text_type, 'text': part.get('text', ''), **cache_fields(part)})
                 elif part.get('type') == 'image_url':
                     url_data = part.get('image_url', {})
                     if isinstance(url_data, dict):
@@ -1348,7 +1355,9 @@ def convert_to_responses_payload(payload: dict) -> dict:
                     else:
                         url = url_data if isinstance(url_data, str) else ''
                         detail = 'auto'
-                    content_parts.append({'type': 'input_image', 'image_url': url, 'detail': detail})
+                    content_parts.append(
+                        {'type': 'input_image', 'image_url': url, 'detail': detail, **cache_fields(part)}
+                    )
                 elif part.get('type') == 'file':
                     # OpenAI-compatible proxy path only. Open WebUI attachments are handled
                     # separately via metadata.files/RAG and must not be converted here.
@@ -1356,7 +1365,7 @@ def convert_to_responses_payload(payload: dict) -> dict:
                     if isinstance(file, dict):
                         file_part = {k: file[k] for k in ('file_id', 'file_data', 'filename') if k in file}
                         if 'file_id' in file_part or 'file_data' in file_part:
-                            content_parts.append({'type': 'input_file', **file_part})
+                            content_parts.append({'type': 'input_file', **file_part, **cache_fields(part)})
         else:
             content_parts = [{'type': text_type, 'text': str(content)}]
 
@@ -1532,6 +1541,23 @@ async def generate_chat_completion(
     else:
         await check_model_access(user, None, bypass_filter)
 
+    from open_webui.utils.openai_compatibility import expand_extra_body
+
+    compatibility_meta = getattr(model_info, 'meta', None)
+    explicit_provider_metadata = 'metadata' in payload
+    try:
+        payload = expand_extra_body(payload, enabled=getattr(compatibility_meta, 'extra_body_compatibility', False))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # This is transport data, never a second source of WebUI request identity.
+    if not explicit_provider_metadata:
+        payload.pop('metadata', None)
+    if getattr(compatibility_meta, 'reasoning_content_replay', True) is False:
+        payload['messages'] = [
+            {key: value for key, value in message.items() if key != 'reasoning_content'}
+            for message in payload.get('messages', [])
+        ]
+
     # Check if model is already in app state cache to avoid expensive get_all_models() call
     models = request.app.state.OPENAI_MODELS
     if not models or model_id not in models:
@@ -1689,16 +1715,19 @@ async def generate_chat_completion(
     # For Chat Completions, strip image parts from multimodal tool messages
     # (Chat Completions doesn't support images in tool content).
     if not is_native and not is_responses and 'messages' in payload:
+        from open_webui.utils.content_blocks import cache_fields, has_cache_fields
+
         for message in payload['messages']:
             if message.get('role') == 'tool' and isinstance(message.get('content'), list):
                 parts = message['content']
-                text = ''.join(part.get('text', '') for part in parts if part.get('type') in ('input_text', 'text'))
-                cache_control = next(
-                    (part['cache_control'] for part in reversed(parts) if part.get('cache_control')), None
-                )
-                # Prompt-cache markers only work on a content block, so keep the text as one
+                text_parts = [
+                    {'type': 'text', 'text': part.get('text', ''), **cache_fields(part)}
+                    for part in parts
+                    if part.get('type') in ('input_text', 'text')
+                ]
+                # A marker applies only through its original block, never to a later suffix.
                 message['content'] = (
-                    [{'type': 'text', 'text': text, 'cache_control': cache_control}] if cache_control and text else text
+                    text_parts if has_cache_fields(text_parts) else ''.join(part['text'] for part in text_parts)
                 )
 
     if not is_streaming_request:

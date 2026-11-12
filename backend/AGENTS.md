@@ -426,8 +426,10 @@ and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
 
 - Prepare the selected model system prompt in `main.py` through `utils/chat.py::prepare_chat_system_prompt`
   after payload preparation and before initial dispatch. Preserve canonical request metadata precedence,
-  the matching browser-direct exception and per-reply copies. Initial dispatch and tool continuations
-  bypass reinjection; standalone provider endpoints and internal tasks retain their existing semantics.
+  the matching browser-direct exception and per-reply copies. Cache resolved prompt text per selected
+  model for that request. Filtered continuations start from detached unfiltered input and receive the
+  cached prompt once after filtering; provider dispatch bypasses reinjection. Standalone endpoints
+  and internal tasks retain their existing semantics.
 - `utils/gemini_signatures.py` owns the Chat Completions carrier
   `extra_content.google.thought_signature`. Keep opaque strings at their original message/call level,
   independently of native envelopes and existing `reasoning_details`; do not infer a model or enable
@@ -444,6 +446,36 @@ and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
   API is introduced. See the [guide](../docs/gemini-cache-replay.md),
   [decision record](../docs/upstream/v0.13.3-gemini-cache-followup.md) and
   [checks](../docs/DEVELOPMENT.md#gemini-cache-replay-verification).
+
+## Input-cache compatibility
+
+- `meta.reasoning_content_replay` defaults true. Save the exact upstream `reasoning_content` separately
+  from displayed reasoning; replay it only when enabled, preserving empty values and whitespace.
+  Do not infer it from `reasoning`, parsed tags or older unmarked display items. Model-switch projections
+  remove it without editing saved originals. Keep Ollama thinking, Gemini carriers and `reasoning_details`
+  independent; disabling replay removes only this field at the OpenAI transport boundary.
+  Keep raw reasoning within its provider response, including code continuations. When signed text is
+  reordered before reasoning, preserve their exact message-ID association for early and late raw deltas.
+  Later code projections must not restore carriers already invalidated by a model switch.
+- `meta.extra_body_compatibility` defaults false. Enabled expansion requires a JSON object, flattens
+  once, and gives explicit top-level fields precedence, including false/empty values. Expand before
+  final budget validation and native internal-field stripping; nested metadata cannot replace WebUI
+  request identity. Preserve literal string cache/routing identifiers in custom parameters; generic
+  JSON parameters, literal reasoning-effort choices and Ollama parsing keep their contracts.
+- Capture request-filter input only after frozen private context is installed. Run filters on fresh
+  copies every round, including tool/code continuations; approval preflight still precedes effects.
+  Filters may intentionally rewrite the prefix or route models. Preserve raw baselines, metadata
+  handles, private-context isolation and final budget guards. Stateful Responses still sends only
+  new results and system context; it cannot rewrite history already held by the provider.
+- Keep complete system/content blocks, including `cache_control` and `prompt_cache_breakpoint`,
+  across normalization, injection, image conversion and Chat/Responses serialization. Final stop
+  keeps tools, uses `tool_choice=none` and appends a user instruction; never execute later tool calls.
+  Subagent schema descriptions follow deduplicated configured model IDs, with unchanged access checks.
+- Normalize provider cache-read aliases once to `cache_read_input_tokens` before accumulating rounds.
+  Preserve zero versus unknown and latest-call prompt counts for compaction. Analytics can read surviving
+  historical DeepSeek aliases; it cannot reconstruct overwritten counters. See the
+  [guide](../docs/gemini-cache-replay.md), [decision](../docs/upstream/v0.13.3-input-cache-followup.md)
+  and [checks](../docs/DEVELOPMENT.md#input-cache-compatibility-verification).
 
 ## Gemini schema compatibility
 

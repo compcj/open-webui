@@ -5,6 +5,7 @@
 	import CommentButton from '$lib/components/comments/CommentButton.svelte';
 	import ModelSettingsLabel from './ModelSettingsLabel.svelte';
 	import ToolSchemaCompatibility from './ToolSchemaCompatibility.svelte';
+	import RequestCompatibility from './RequestCompatibility.svelte';
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 	import { beforeNavigate, goto } from '$app/navigation';
@@ -1424,6 +1425,17 @@
 											() => info.meta.tool_schema_compatibility ?? null,
 											(value) => (info.meta.tool_schema_compatibility = value)
 										}
+									/>
+									<RequestCompatibility
+										bind:reasoningContentReplay={
+											() => info.meta.reasoning_content_replay ?? true,
+											(value) => (info.meta.reasoning_content_replay = value)
+										}
+										bind:extraBodyCompatibility={
+											() => info.meta.extra_body_compatibility ?? false,
+											(value) => (info.meta.extra_body_compatibility = value)
+										}
+										disabled={readOnly}
 									/>
 
 									<div class="flex min-w-0 flex-col gap-2">

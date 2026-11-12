@@ -235,6 +235,20 @@ approval resumes. Signed text keeps its original content and response boundaries
 independent of existing `reasoning_details` and the optional schema compatibility profile.
 See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) for scope and troubleshooting.
 
+模型编辑页提供 **回传推理内容 / Replay reasoning content**（默认开启）：只回传上游实际返回的
+`reasoning_content`，关闭后不回传该字段，已有 `reasoning_details` 和 Gemini 签名独立保留。
+**extra_body 兼容模式 / Extra body compatibility** 默认关闭；开启后展开自定义参数中的 `extra_body` 对象，
+显式顶层参数优先。缓存/会话标识字符串保持原值；请求过滤器每轮处理未重复加工的输入，模型提示词在本次请求内冻结。
+工具收尾保留定义、设置 `tool_choice=none` 并在末尾添加 user 提示，后端继续阻止额外执行。
+DeepSeek 缓存读取计数纳入多轮统计；未返回计数仍表示未知。详见[输入缓存兼容说明](docs/gemini-cache-replay.md#openai-兼容参数与续轮--openai-compatible-requests)。
+
+Model settings offer **Replay reasoning content** (on by default), preserving only the provider's actual
+`reasoning_content`, independently of `reasoning_details` and Gemini signatures. **Extra body compatibility**
+(off by default) flattens an `extra_body` object with explicit top-level precedence. Cache/session strings
+stay strings, filters receive fresh input each round, and model prompts remain frozen within the request.
+Final stops retain tools with `tool_choice=none` and a trailing user instruction; backend execution remains
+blocked. Multi-call cache accounting includes DeepSeek counters, with missing measurements kept unknown.
+
 ### 上下文压缩 / Context compaction
 
 管理员在 **设置 → 界面 → 上下文压缩** 选择 **关闭／原版压缩／V2压缩**。

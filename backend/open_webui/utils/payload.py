@@ -145,6 +145,8 @@ def apply_model_params_to_body(params: dict, form_data: dict, mappings: dict[str
 
 
 def apply_params_to_form_data(form_data: dict, model: dict, params: dict | None = None) -> dict:
+    from open_webui.utils.openai_compatibility import parse_custom_parameters
+
     payload_params = form_data.pop('params', {}) or {}
     params = payload_params if params is None else dict(params)
     custom_params = params.pop('custom_params', {})
@@ -166,14 +168,9 @@ def apply_params_to_form_data(form_data: dict, model: dict, params: dict | None 
             del params[key]
 
     if custom_params:
-        for key, value in custom_params.items():
-            # Reasoning effort is a literal string, including JSON-looking legacy choices.
-            if isinstance(value, str) and key != 'reasoning_effort':
-                try:
-                    custom_params[key] = JSONCodec.loads(value)
-                except JSONCodec.JSONDecodeError:
-                    pass
-
+        custom_params = parse_custom_parameters(
+            custom_params, JSONCodec, preserve_openai_strings=model.get('owned_by') != 'ollama'
+        )
         params = _overlay_params(params, custom_params)
 
     if model.get('owned_by') == 'ollama':
@@ -227,21 +224,13 @@ def remove_open_webui_params(params: dict) -> dict:
 
 # inplace function: form_data is modified
 def apply_model_params_to_body_openai(params: dict, form_data: dict) -> dict:
+    from open_webui.utils.openai_compatibility import parse_custom_parameters
+
     params = remove_open_webui_params(params)
 
     custom_params = params.pop('custom_params', {})
     if custom_params:
-        # Attempt to parse custom_params if they are strings
-        for key, value in custom_params.items():
-            # Reasoning effort is a literal string, including JSON-looking legacy choices.
-            if isinstance(value, str) and key != 'reasoning_effort':
-                try:
-                    # Attempt to parse the string as JSON
-                    custom_params[key] = JSONCodec.loads(value)
-                except JSONCodec.JSONDecodeError:
-                    # If it fails, keep the original string
-                    pass
-
+        custom_params = parse_custom_parameters(custom_params, JSONCodec)
         # If there are custom parameters, we need to apply them first
         params = _overlay_params(params, custom_params)
 

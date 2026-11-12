@@ -106,11 +106,17 @@ See [backend rules](backend/AGENTS.md#tool-citation-prefix-contract),
 
 Before changing provider dispatch or replay, preserve the [tool continuation and Gemini signature
 contract](backend/AGENTS.md#tool-continuation-prompts-and-gemini-signatures). Prepare a server model's
-system prompt once on the reply-owned input before the first transport copy; tool continuations reuse
-that prepared input. Keep Gemini Chat Completions `extra_content.google.thought_signature` opaque and
+system prompt once per selected model in the reply request. Request filters run each round on detached,
+unfiltered input; their output receives the frozen model prompt at dispatch. Intentional filter rewrites remain
+supported. Preserve content-block cache annotations and final-stop tool definitions. Keep Gemini Chat
+Completions `extra_content.google.thought_signature` opaque and
 separate from `reasoning_details`, with original message/call and batch boundaries. Preserve signed
 text and earlier stream output without repeating tools. See the [replay guide](docs/gemini-cache-replay.md)
 and [regression checks](docs/DEVELOPMENT.md#gemini-cache-replay-verification).
+OpenAI-compatible model metadata defaults `reasoning_content_replay` on and
+`extra_body_compatibility` off. Replay only actual upstream reasoning content; keep `reasoning_details`
+independent. Enabled extra-body expansion precedes final budgeting, with explicit top-level precedence
+and no nested metadata authority. See [input-cache checks](docs/DEVELOPMENT.md#input-cache-compatibility-verification).
 
 ## Context compaction contracts
 

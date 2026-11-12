@@ -133,7 +133,7 @@ def runtime():
         and node.value.value.func.id == 'generate_chat_completion'
     )
     wrapper = ast.parse(
-        'async def dispatch_followup():\n    global messages\n    if messages is None:\n        messages = list(form_data["messages"])\n'
+        'async def dispatch_followup():\n    global messages\n    foreign_output_ids = set()\n    filter_input = None\n    continuation_input = form_data\n    replay_model = model\n    if messages is None:\n        messages = list(form_data["messages"])\n'
     )
     wrapper.body[0].body.extend(followup.body[: dispatch_index + 1])
     ns['messages'] = None

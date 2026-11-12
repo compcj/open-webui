@@ -90,7 +90,7 @@ from open_webui.utils.ask_user import stage_ask_user_tool_calls
 from open_webui.utils.audit import log_model_usage
 from open_webui.utils.gemini_signatures import gemini_signature_fields, strip_gemini_signature
 from open_webui.utils.auth import get_verified_user_by_id
-from open_webui.utils.chat import generate_chat_completion
+from open_webui.utils.chat import generate_chat_completion, prepare_chat_system_prompt
 from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.context_compaction import apply_summary_checkpoint, compact_messages_for_request
@@ -2294,7 +2294,7 @@ async def convert_url_images_to_base64(form_data, user=None):
                         image_url_payload['detail'] = image_url_data['detail']
                     new_content.append(
                         {
-                            'type': item['type'],
+                            **item,
                             'image_url': image_url_payload,
                         }
                     )
@@ -2356,21 +2356,26 @@ def get_reasoning_format(model: dict) -> str | None:
         'thinking': Ollama expects reasoning in the native thinking field.
         'think_tags': wrap reasoning in <think> tags inside content.
         'reasoning_content': llama.cpp supports reasoning_content as a top-level field.
-        None: skip reasoning (safe default for strict providers).
+        'provider_reasoning_content': replay only an actual upstream field.
+        None: skip reasoning_content when disabled for this model.
     """
     provider = model.get('provider', '')
     if model.get('owned_by') == 'ollama':
         return 'thinking'
+    if (model.get('info', {}).get('meta') or {}).get('reasoning_content_replay', True) is False:
+        return None
     if provider == 'llama.cpp':
         return 'reasoning_content'
-    return None
+    return 'provider_reasoning_content'
 
 
 def strip_reasoning_details(output: list) -> list:
     from open_webui.utils.gemini_signatures import strip_gemini_signature
 
     return [
-        strip_gemini_signature({key: value for key, value in item.items() if key != 'reasoning_details'})
+        strip_gemini_signature(
+            {key: value for key, value in item.items() if key not in {'reasoning_details', 'reasoning_content'}}
+        )
         if isinstance(item, dict)
         else item
         for item in output
@@ -3689,19 +3694,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         )
         await convert_url_images_to_base64(form_data, user=user)
 
-    if ENABLE_FUNCTIONS:
-        try:
-            form_data, _ = await process_filter_functions(
-                request=request,
-                filter_context=filter_context,
-                filter_functions=filter_functions,
-                filter_type='request',
-                form_data=form_data,
-                extra_params=extra_params,
-            )
-        except Exception as e:
-            raise Exception(f'{e}')
-
     # The cached summary path can only replay prefixes without automatically
     # injected private source material. Explicitly use the saved history otherwise.
     request_context = metadata.get('request_context') or {}
@@ -3767,13 +3759,39 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         index = next((i for i, item in enumerate(messages) if item.get('_current_response_output')), len(messages))
         messages[index:index] = copy.deepcopy(private_context)
 
+    if filter_functions:
+        from open_webui.utils.request_filter_context import snapshot_request_filter_input, copy_request_filter_input
+
+        # Filters see the complete request each time, without their earlier edits.
+        # Nonempty filters already use eager legacy compaction above.
+        request.state.request_filter_input = snapshot_request_filter_input(form_data)
+        form_data, _ = await process_filter_functions(
+            request=request,
+            filter_context=filter_context,
+            filter_functions=filter_functions,
+            filter_type='request',
+            form_data=copy_request_filter_input(request.state.request_filter_input, metadata=form_data.get('metadata')),
+            extra_params=extra_params,
+        )
+
     # Request filters may route away from the model used to reconstruct history.
     if form_data.get('model') != model['id']:
-        form_data['messages'] = [strip_gemini_signature(message) for message in form_data['messages']]
+        form_data['messages'] = [
+            strip_gemini_signature({key: value for key, value in message.items() if key != 'reasoning_content'})
+            for message in form_data['messages']
+        ]
+        if filter_functions:
+            request.state.request_filter_input['messages'] = [
+                strip_gemini_signature({key: value for key, value in message.items() if key != 'reasoning_content'})
+                for message in request.state.request_filter_input['messages']
+            ]
     form_data = normalize_messages_for_model(form_data)
     metadata['_current_response_output_indices'] = [
         i for i, message in enumerate(form_data['messages']) if message.pop('_current_response_output', False)
     ]
+    if filter_functions:
+        for message in request.state.request_filter_input['messages']:
+            message.pop('_current_response_output', None)
     return form_data, metadata, events, False
 
 
@@ -4223,6 +4241,10 @@ async def resume_tool_calls(request, form_data, user, model, metadata, message) 
             ]
         ),
     }
+    from open_webui.utils.request_filter_context import copy_request_filter_input
+
+    # Approval filters must not contaminate the later canonical request, even on denial.
+    form_data = copy_request_filter_input(form_data, metadata=form_data.get('metadata'))
     await convert_url_images_to_base64(form_data, user=user)
     if ENABLE_FUNCTIONS:
         filter_functions = await get_filter_functions(request, model, metadata.get('filter_ids', []))
@@ -4595,7 +4617,7 @@ def update_assistant_message_from_stream(assistant_message, raw) -> bool:
             content = delta.get('content')
             reasoning_content = delta.get('reasoning_content') or delta.get('reasoning') or delta.get('thinking')
 
-            if reasoning_content:
+            if reasoning_content or isinstance(delta.get('reasoning_content'), str):
                 output = assistant_message.setdefault('output', [])
                 if not output or output[-1].get('type') != 'reasoning':
                     output.append(
@@ -4612,7 +4634,12 @@ def update_assistant_message_from_stream(assistant_message, raw) -> bool:
                         }
                     )
 
-                append_output_text(output[-1], reasoning_content)
+                if isinstance(delta.get('reasoning_content'), str):
+                    output[-1]['reasoning_content'] = (
+                        output[-1].get('reasoning_content', '') + delta['reasoning_content']
+                    )
+                if reasoning_content:
+                    append_output_text(output[-1], reasoning_content)
 
             if content:
                 output = assistant_message.get('output')
@@ -5181,7 +5208,11 @@ async def non_streaming_chat_response_handler(response, ctx):
                         if native_details:
                             reasoning_details = [item for item in detail_items if item not in native_details]
                         response_output = []
-                        if reasoning_content or reasoning_details:
+                        if (
+                            reasoning_content
+                            or reasoning_details
+                            or isinstance(choice_message.get('reasoning_content'), str)
+                        ):
                             reasoning_item = {
                                 'type': 'reasoning',
                                 'id': output_id('r'),
@@ -5198,6 +5229,8 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 reasoning_item['reasoning_details'] = (
                                     reasoning_details if isinstance(reasoning_details, list) else [reasoning_details]
                                 )
+                            if isinstance(choice_message.get('reasoning_content'), str):
+                                reasoning_item['reasoning_content'] = choice_message['reasoning_content']
                             response_output.append(reasoning_item)
                         response_output.append(
                             {
@@ -5317,6 +5350,8 @@ async def non_streaming_chat_response_handler(response, ctx):
 
 
 async def streaming_chat_response_handler(response, ctx):
+    from open_webui.utils.request_filter_context import copy_request_filter_input
+
     request = ctx['request']
 
     form_data = ctx['form_data']
@@ -6498,20 +6533,32 @@ async def streaming_chat_response_handler(response, ctx):
                                         await save_current_response_stream()
                                         data = None
                                     existing_reasoning_item = next(
-                                        (item for item in reversed(output) if item.get('type') == 'reasoning'),
+                                        (
+                                            item
+                                            for item in reversed(output)
+                                            if item.get('type') == 'reasoning' and id(item) not in stream_prefix
+                                        ),
                                         None,
                                     )
                                     message_index = next(
-                                        (i for i, item in enumerate(output) if item.get('type') == 'message'),
+                                        (
+                                            i
+                                            for i, item in enumerate(output)
+                                            if item.get('type') == 'message' and id(item) not in stream_prefix
+                                        ),
                                         None,
                                     )
-                                    if reasoning_content or (
-                                        reasoning_detail_items
-                                        and (
-                                            existing_reasoning_item
-                                            or any(
-                                                item.get('text') or item.get('summary') or item.get('data')
-                                                for item in reasoning_detail_items
+                                    if (
+                                        reasoning_content
+                                        or isinstance(delta.get('reasoning_content'), str)
+                                        or (
+                                            reasoning_detail_items
+                                            and (
+                                                existing_reasoning_item
+                                                or any(
+                                                    item.get('text') or item.get('summary') or item.get('data')
+                                                    for item in reasoning_detail_items
+                                                )
                                             )
                                         )
                                     ):
@@ -6523,7 +6570,11 @@ async def streaming_chat_response_handler(response, ctx):
                                         )
 
                                         if reasoning_item is None:
-                                            if not output or output[-1].get('type') != 'reasoning':
+                                            if (
+                                                not output
+                                                or output[-1].get('type') != 'reasoning'
+                                                or id(output[-1]) in stream_prefix
+                                            ):
                                                 reasoning_item = {
                                                     'type': 'reasoning',
                                                     'id': output_id('r'),
@@ -6551,6 +6602,13 @@ async def streaming_chat_response_handler(response, ctx):
                                                 )
                                             else:
                                                 reasoning_item = output[-1]
+
+                                        if isinstance(delta.get('reasoning_content'), str):
+                                            reasoning_item['reasoning_content'] = (
+                                                reasoning_item.get('reasoning_content', '') + delta['reasoning_content']
+                                            )
+                                            if signed_message is not None:
+                                                reasoning_item['reasoning_content_message_id'] = signed_message['id']
 
                                         if reasoning_content:
                                             # Append to reasoning content
@@ -6807,6 +6865,11 @@ async def streaming_chat_response_handler(response, ctx):
                                             {'type': 'output_text', 'text': ''.join(raw_message_parts)}
                                         ]
                                         signed_message.update(signature)
+                                        for item in current_output:
+                                            if item.get('type') == 'reasoning' and 'reasoning_content' in item:
+                                                # Signed text is ordered first in stored output. Keep its
+                                                # raw reasoning in the same provider message on replay.
+                                                item['reasoning_content_message_id'] = signed_message['id']
                                         output = [*prefix, signed_message, *current_output]
                                         stream_size = 0
                                         await flush_pending_delta_data()
@@ -7056,7 +7119,18 @@ async def streaming_chat_response_handler(response, ctx):
                 )
                 final_answer_requested = form_data.get('tool_choice') == 'none'
                 stop_reason = None
-                messages = list(form_data['messages'])
+                foreign_output_ids = set()
+                filter_input = getattr(request.state, 'request_filter_input', None)
+                continuation_input = filter_input if filter_input is not None else form_data
+                replay_model = model
+                model_pool = getattr(getattr(getattr(request, 'app', None), 'state', None), 'MODELS', {})
+                if form_data.get('model') != model.get('id'):
+                    replay_model = model_pool.get(form_data.get('model')) or model
+                messages = (
+                    copy.deepcopy(continuation_input['messages'])
+                    if filter_input is not None
+                    else list(form_data['messages'])
+                )
                 citations_enabled = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get(
                     'citations', True
                 )
@@ -7495,7 +7569,7 @@ async def streaming_chat_response_handler(response, ctx):
 
                     try:
                         new_form_data = {
-                            **form_data,
+                            **continuation_input,
                             'stream': True,
                             'metadata': metadata,
                         }
@@ -7510,7 +7584,7 @@ async def streaming_chat_response_handler(response, ctx):
                         if not use_stateful:
                             new_form_data.pop('previous_response_id', None)
                         if ENABLE_RESPONSES_API_STATEFUL and last_response_id and use_stateful:
-                            system_message = get_system_message(form_data['messages'])
+                            system_message = get_system_message(continuation_input['messages'])
                             # The provider already owns the preceding calls/history.
                             # Send only this batch's new results, with their frozen citations.
                             current_call_ids = {
@@ -7521,7 +7595,7 @@ async def streaming_chat_response_handler(response, ctx):
                             stateful_messages = convert_output_to_messages(
                                 [item for item in output if item.get('call_id') in current_call_ids],
                                 raw=True,
-                                reasoning_format=get_reasoning_format(model),
+                                reasoning_format=get_reasoning_format(replay_model),
                                 include_tool_images=model.get('info', {})
                                 .get('meta', {})
                                 .get('capabilities', {})
@@ -7539,7 +7613,7 @@ async def streaming_chat_response_handler(response, ctx):
                             tool_messages = convert_output_to_messages(
                                 output,
                                 raw=True,
-                                reasoning_format=get_reasoning_format(model),
+                                reasoning_format=get_reasoning_format(replay_model),
                                 flatten_tool_images=True,
                                 include_tool_images=model.get('info', {})
                                 .get('meta', {})
@@ -7567,7 +7641,9 @@ async def streaming_chat_response_handler(response, ctx):
                             if current_usage and tool_messages:
                                 tool_messages[0]['usage'] = current_usage
 
-                            user_prompt = get_last_user_message_item(form_data['messages'])
+                            user_prompt = get_last_user_message_item(
+                                messages if filter_input is not None else form_data['messages']
+                            )
                             if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
                                 for message in tool_messages:
                                     message['_context_message_id'] = metadata['message_id']
@@ -7634,6 +7710,14 @@ async def streaming_chat_response_handler(response, ctx):
                                             metadata,
                                             form_data['model'],
                                             request.app.state.MODELS,
+                                            system_prompt=(
+                                                get_content_from_message(
+                                                    get_system_message(form_data['messages']) or {}
+                                                )
+                                                or ''
+                                            )
+                                            if filter_input is not None
+                                            else '',
                                             form_data=summary_form_data,
                                             bypass_system_prompt=True,
                                         )
@@ -7720,6 +7804,8 @@ async def streaming_chat_response_handler(response, ctx):
                                 else admitted_tool_output_ids,
                             )
 
+                        if filter_input is not None:
+                            new_form_data = copy_request_filter_input(new_form_data, metadata=metadata)
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                         if filter_functions:
@@ -7733,12 +7819,21 @@ async def streaming_chat_response_handler(response, ctx):
                             )
 
                         if new_form_data.get('model') != form_data.get('model'):
+                            foreign_output_ids.update(item.get('id') or id(item) for item in output)
                             new_form_data['messages'] = [
-                                strip_gemini_signature(message) for message in new_form_data['messages']
+                                strip_gemini_signature(
+                                    {key: value for key, value in message.items() if key != 'reasoning_content'}
+                                )
+                                for message in new_form_data['messages']
                             ]
                             # This projection accumulates rounds; do not resurrect old
                             # signatures after the new model returns its own next call.
-                            messages = [strip_gemini_signature(message) for message in messages]
+                            messages = [
+                                strip_gemini_signature(
+                                    {key: value for key, value in message.items() if key != 'reasoning_content'}
+                                )
+                                for message in messages
+                            ]
 
                         final_answer_requested = bool(stop_reason) or (
                             max_tool_call_iterations is not None and tool_call_iterations >= max_tool_call_iterations
@@ -7746,6 +7841,8 @@ async def streaming_chat_response_handler(response, ctx):
                         if final_answer_requested:
                             new_form_data = final_answer_payload(new_form_data)
                         new_form_data = normalize_messages_for_model(new_form_data)
+                        if filter_input is not None:
+                            new_form_data = await prepare_chat_system_prompt(request, new_form_data, user)
 
                         res = await generate_chat_completion(
                             request,
@@ -7755,6 +7852,11 @@ async def streaming_chat_response_handler(response, ctx):
                         )
 
                         if isinstance(res, StreamingResponse):
+                            replay_model = (
+                                model
+                                if new_form_data.get('model') == model.get('id')
+                                else model_pool.get(new_form_data.get('model')) or model
+                            )
                             # Reset response-relative output indices; keep prior output as the UI history prefix.
                             prior_output = list(full_output())
                             # Trim the trailing empty placeholder message
@@ -8000,15 +8102,26 @@ async def streaming_chat_response_handler(response, ctx):
 
                         try:
                             new_form_data = {
-                                **form_data,
+                                **continuation_input,
                                 'stream': True,
                                 'metadata': metadata,
                                 'messages': [
                                     *messages,
                                     *convert_output_to_messages(
-                                        output,
+                                        [
+                                            strip_gemini_signature(
+                                                {
+                                                    key: value
+                                                    for key, value in item.items()
+                                                    if key != 'reasoning_content'
+                                                }
+                                            )
+                                            if (item.get('id') or id(item)) in foreign_output_ids
+                                            else item
+                                            for item in output
+                                        ],
                                         raw=True,
-                                        reasoning_format=get_reasoning_format(model),
+                                        reasoning_format=get_reasoning_format(replay_model),
                                         flatten_tool_images=True,
                                         include_tool_images=model.get('info', {})
                                         .get('meta', {})
@@ -8023,7 +8136,7 @@ async def streaming_chat_response_handler(response, ctx):
                             }
 
                             if getattr(getattr(request, 'state', None), 'context_compaction', {}).get('mode') == 'v2':
-                                for message in new_form_data['messages'][len(form_data['messages']) :]:
+                                for message in new_form_data['messages'][len(messages) :]:
                                     message['_context_message_id'] = metadata['message_id']
                                     for ref in message.get('_tool_result_refs', []):
                                         ref['message_id'] = metadata['message_id']
@@ -8048,6 +8161,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     else [],
                                 )
 
+                            if filter_input is not None:
+                                new_form_data = copy_request_filter_input(new_form_data, metadata=metadata)
                             new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                             if filter_functions:
@@ -8061,11 +8176,22 @@ async def streaming_chat_response_handler(response, ctx):
                                 )
 
                             if new_form_data.get('model') != form_data.get('model'):
+                                foreign_output_ids.update(item.get('id') or id(item) for item in output)
                                 new_form_data['messages'] = [
-                                    strip_gemini_signature(message) for message in new_form_data['messages']
+                                    strip_gemini_signature(
+                                        {key: value for key, value in message.items() if key != 'reasoning_content'}
+                                    )
+                                    for message in new_form_data['messages']
                                 ]
-                                messages = [strip_gemini_signature(message) for message in messages]
+                                messages = [
+                                    strip_gemini_signature(
+                                        {key: value for key, value in message.items() if key != 'reasoning_content'}
+                                    )
+                                    for message in messages
+                                ]
                             new_form_data = normalize_messages_for_model(new_form_data)
+                            if filter_input is not None:
+                                new_form_data = await prepare_chat_system_prompt(request, new_form_data, user)
 
                             res = await generate_chat_completion(
                                 request,
@@ -8075,6 +8201,11 @@ async def streaming_chat_response_handler(response, ctx):
                             )
 
                             if isinstance(res, StreamingResponse):
+                                replay_model = (
+                                    model
+                                    if new_form_data.get('model') == model.get('id')
+                                    else model_pool.get(new_form_data.get('model')) or model
+                                )
                                 try:
                                     await stream_body_handler(res, new_form_data)
                                 finally:

@@ -35,8 +35,13 @@ from open_webui.utils.filter import (
     process_filter_functions,
 )
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.misc import add_or_update_system_message
 from open_webui.utils.models import check_model_access, get_all_models
-from open_webui.utils.payload import apply_system_prompt_to_body, convert_chat_completions_payload_to_ollama
+from open_webui.utils.payload import (
+    apply_system_prompt_to_body,
+    convert_chat_completions_payload_to_ollama,
+    resolve_system_prompt,
+)
 from open_webui.utils.response import (
     convert_ollama_response_to_chat_completions,
     convert_ollama_stream_to_chat_completions,
@@ -219,19 +224,33 @@ async def generate_direct_chat_completion(
 
 
 async def prepare_chat_system_prompt(request: Request, form_data: dict, user: Any) -> dict:
-    """Freeze the model prompt on the reply input shared by all tool continuations."""
+    """Add a request-frozen model prompt to a fresh, filtered reply input."""
     if getattr(request.state, 'direct', False) and form_data['model'] == getattr(request.state, 'model', {}).get('id'):
         return form_data
 
-    model_info = await Models.get_model_by_id(form_data['model'])
-    if model_info is None:
+    prompts = getattr(request.state, '_chat_system_prompt_cache', None)
+    # A reply request can inherit a shallow state copy; never populate another
+    # reply's cache dictionary. Resolved values themselves are immutable text.
+    prompts = dict(prompts) if isinstance(prompts, dict) else {}
+    request.state._chat_system_prompt_cache = prompts
+    model_id = form_data['model']
+    if model_id not in prompts:
+        model_info = await Models.get_model_by_id(model_id)
+        metadata = {**form_data.get('metadata', {}), **getattr(request.state, 'metadata', {})}
+        prompts[model_id] = (
+            await resolve_system_prompt(model_info.params.model_dump().get('system'), metadata, user)
+            if model_info is not None
+            else ''
+        )
+    system = prompts[model_id]
+    if not system:
         return form_data
 
-    # Transport dispatch intentionally copies its input. Preparing only that copy
-    # drops the model prompt when middleware starts the first tool continuation.
+    # Filters see fresh canonical history each round. Reuse the resolved text,
+    # rather than re-evaluating variables or borrowing a previous filter result.
     body = {**form_data, 'messages': deepcopy(form_data.get('messages', []))}
-    metadata = {**form_data.get('metadata', {}), **getattr(request.state, 'metadata', {})}
-    return await apply_system_prompt_to_body(model_info.params.model_dump().get('system'), body, metadata, user)
+    body['messages'] = add_or_update_system_message(system, body['messages'])
+    return body
 
 
 async def generate_chat_completion(

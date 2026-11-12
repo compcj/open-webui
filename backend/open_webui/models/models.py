@@ -226,6 +226,16 @@ class ModelMeta(BaseModel):
         default=None,
         description='Explicit tool schema compatibility; absent inherits the base model, then defaults to no conversion.',
     )
+    reasoning_content_replay: bool = Field(
+        default=True,
+        strict=True,
+        description='Replay saved reasoning_content for compatible model providers.',
+    )
+    extra_body_compatibility: bool = Field(
+        default=False,
+        strict=True,
+        description='Expand SDK-style extra_body parameters into the provider request body.',
+    )
     context_window: int | None = Field(
         default=None,
         gt=0,

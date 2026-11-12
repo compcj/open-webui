@@ -492,6 +492,26 @@ Report collected tests and actual outcomes; a missing dependency is not a passed
 build or live gateway acceptance is established by these tests. See the
 [user guide](gemini-cache-replay.md) and [dated validation record](upstream/v0.13.3-gemini-cache-followup.md).
 
+### Input-cache compatibility verification
+
+Use the isolated environment described above. Run these suites together with Gemini replay verification
+when changing request preparation or provider conversion:
+
+```sh
+python -m pytest backend/tests/test_prompt_cache_replay.py backend/tests/test_openai_compatibility_params.py backend/tests/test_reasoning_content_replay.py backend/tests/test_request_filter_context.py backend/tests/test_request_filter_replay.py backend/tests/test_request_filter_continuations.py backend/tests/test_cache_usage.py backend/tests/test_final_answer_payload.py backend/tests/test_subagent_model_order.py backend/tests/test_model_controls_compat.py backend/tests/test_model_tool_schema_compatibility.py backend/tests/test_tool_result_adapters.py -q
+npm run test:frontend -- --run src/lib/utils/model-controls.test.ts src/lib/utils/model-tool-schema.test.ts src/lib/apis/model-tool-schema.test.ts
+npm run check
+```
+
+Check model-editor switch defaults, explicit false, save/reload and read-only rendering. The backend
+suites cover exact upstream reasoning versus display-only text, independent reasoning details/native
+signatures, filter mutation isolation and denial, stop-execution guards, literal cache/routing strings,
+opt-in extra-body precedence before budgets, complete system/cache blocks, configured schema ordering,
+and single-count usage aliases with SQLite analytics. Stateful Responses retains provider-owned history;
+filters cannot retroactively rewrite it. Do not equate these tests with live cache measurements or a
+production build. Record pre-existing frontend diagnostics separately. See the
+[decision record](upstream/v0.13.3-input-cache-followup.md) for compatibility choices.
+
 ### Search1API endpoint verification
 
 Use Python 3.11/3.12 and the installed development dependencies. The provider tests mock HTTP;

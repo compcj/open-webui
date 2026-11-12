@@ -52,7 +52,8 @@ async def get_subagent_models(request: Request, user: UserModel, model: dict) ->
     model_ids = subagents.get('model_ids') or []
     if not model_ids:
         return []
-    candidates = [model for model_id, model in request.app.state.MODELS.items() if model_id in model_ids]
+    model_pool = request.app.state.MODELS
+    candidates = [model_pool[model_id] for model_id in dict.fromkeys(model_ids) if model_id in model_pool]
     return [
         {
             'id': model['id'],

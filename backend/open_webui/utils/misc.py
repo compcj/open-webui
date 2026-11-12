@@ -496,6 +496,8 @@ def convert_output_to_messages(
               (for legacy providers that expect reasoning as tagged content).
             - ``'reasoning_content'``: set as ``reasoning_content`` top-level field
               (for llama.cpp, which routes it via the chat template).
+            - ``'provider_reasoning_content'``: replay only the exact upstream
+              field; never infer it from displayed reasoning or parsed tags.
         flatten_tool_images: Move tool output images into a following user
             message for Chat Completions providers.
         include_tool_images: Disable visual inputs for models without vision,
@@ -521,8 +523,10 @@ def convert_output_to_messages(
     pending_tool_calls = []
     pending_content = []
     pending_reasoning = []  # Only populated for top-level structured reasoning fields.
+    pending_provider_reasoning = []
     pending_reasoning_details = []
     pending_signature = {}
+    pending_message_id = None
     pending_tool_image_urls = []
     pending_tool_outputs = []
 
@@ -540,9 +544,14 @@ def convert_output_to_messages(
 
     def flush_pending():
         nonlocal pending_content, pending_tool_calls, pending_reasoning, pending_reasoning_details, pending_tool_refs
-        nonlocal pending_signature
+        nonlocal pending_signature, pending_provider_reasoning, pending_message_id
         if not (
-            pending_content or pending_tool_calls or pending_reasoning or pending_reasoning_details or pending_signature
+            pending_content
+            or pending_tool_calls
+            or pending_reasoning
+            or pending_provider_reasoning
+            or pending_reasoning_details
+            or pending_signature
         ):
             return
 
@@ -554,7 +563,9 @@ def convert_output_to_messages(
             **pending_signature,
         }
 
-        if pending_reasoning:
+        if pending_provider_reasoning:
+            message['reasoning_content'] = ''.join(pending_provider_reasoning)
+        elif pending_reasoning:
             if reasoning_format == 'thinking':
                 message['thinking'] = '\n'.join(pending_reasoning)
             else:
@@ -571,8 +582,10 @@ def convert_output_to_messages(
         pending_tool_refs = []
         pending_tool_calls = []
         pending_reasoning = []
+        pending_provider_reasoning = []
         pending_reasoning_details = []
         pending_signature = {}
+        pending_message_id = None
 
     def flush_tool_images():
         nonlocal pending_tool_image_urls
@@ -669,6 +682,7 @@ def convert_output_to_messages(
             if pending_signature or (signature and pending_content):
                 flush_pending()
             pending_signature = signature
+            pending_message_id = item.get('id')
             # Extract text from output_text content parts
             content_parts = item.get('content', [])
             text = ''
@@ -704,6 +718,20 @@ def convert_output_to_messages(
             pending_tool_outputs.append(item)
 
         elif item_type == 'reasoning':
+            provider_reasoning = item.get('reasoning_content')
+            if (
+                raw
+                and reasoning_format in {'provider_reasoning_content', 'reasoning_content'}
+                and isinstance(provider_reasoning, str)
+            ):
+                same_signed_message = (
+                    pending_signature
+                    and pending_message_id
+                    and item.get('reasoning_content_message_id') == pending_message_id
+                )
+                if (pending_content or pending_signature) and not same_signed_message:
+                    flush_pending()
+                pending_provider_reasoning.append(provider_reasoning)
             reasoning_details = item.get('reasoning_details') if raw else None
             if reasoning_details:
                 reasoning_details = reasoning_details if isinstance(reasoning_details, list) else [reasoning_details]
@@ -730,7 +758,9 @@ def convert_output_to_messages(
                     start_tag = item.get('start_tag', '<think>')
                     end_tag = item.get('end_tag', '</think>')
                     pending_content.append(f'{start_tag}{reasoning_text}{end_tag}')
-                elif reasoning_format in {'thinking', 'reasoning_content'}:
+                elif reasoning_format == 'thinking' or (
+                    reasoning_format == 'reasoning_content' and not pending_provider_reasoning
+                ):
                     # Native providers: collect for their top-level reasoning field.
                     pending_reasoning.append(reasoning_text)
 
@@ -844,32 +874,58 @@ def merge_system_messages(messages: list[dict]) -> list[dict]:
     insert their own system message; this function consolidates
     them.
     """
-    system_contents: list[str] = []
+    from copy import deepcopy
+
+    system_messages: list[dict] = []
     other_messages: list[dict] = []
 
     for message in messages:
         if message.get('role') == 'system':
-            content = get_content_from_message(message)
-            if content:
-                system_contents.append(content)
+            if message.get('content'):
+                system_messages.append(message)
         else:
             other_messages.append(message)
 
-    if not system_contents:
+    if not system_messages:
         return other_messages
 
-    merged = {'role': 'system', 'content': '\n'.join(system_contents)}
+    if len(system_messages) == 1:
+        return [deepcopy(system_messages[0]), *other_messages]
+
+    if all(isinstance(message['content'], str) for message in system_messages):
+        content = '\n'.join(message['content'] for message in system_messages)
+    else:
+        content = []
+        for index, message in enumerate(system_messages):
+            value = message['content']
+            if isinstance(value, list):
+                # Keep exact cached blocks. Joining their text would move cache boundaries.
+                blocks = deepcopy(value)
+                if index and isinstance(system_messages[index - 1]['content'], list) and content and blocks:
+                    # Keep the old separator when plain neighboring text can carry it.
+                    # Never alter annotated blocks or create whitespace-only blocks.
+                    previous, first = content[-1], blocks[0]
+                    if previous.get('type') == 'text' and set(previous) == {'type', 'text'}:
+                        previous['text'] += '\n'
+                    elif first.get('type') == 'text' and set(first) == {'type', 'text'}:
+                        first['text'] = '\n' + first['text']
+                content.extend(blocks)
+            else:
+                text = str(value)
+                if index:
+                    text = '\n' + text
+                if index + 1 < len(system_messages) and isinstance(system_messages[index + 1]['content'], list):
+                    text += '\n'
+                content.append({'type': 'text', 'text': text})
+    merged = {**deepcopy(system_messages[0]), 'content': content}
     return [merged, *other_messages]
 
 
 def update_message_content(message: dict, content: str, append: bool = True) -> dict:
     if isinstance(message['content'], list):
-        for item in message['content']:
-            if item['type'] == 'text':
-                if append:
-                    item['text'] = f'{item["text"]}\n{content}'
-                else:
-                    item['text'] = f'{content}\n{item["text"]}'
+        # Inject once without changing existing text or their cache annotations.
+        injected = {'type': 'text', 'text': f'\n{content}' if append else f'{content}\n'}
+        message['content'] = [*message['content'], injected] if append else [injected, *message['content']]
     else:
         if append:
             message['content'] = f'{message["content"]}\n{content}'

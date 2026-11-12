@@ -682,7 +682,10 @@ async def test_native_continuation_fills_all_result_ids_before_provider_send(run
     )
     wrapper = ast.parse('async def dispatch_followup():\n    pass\n')
     wrapper.body[0].body = (
-        ast.parse("messages = list(form_data['messages'])").body + followup.body[: dispatch_index + 1]
+        ast.parse(
+            "filter_input = None\ncontinuation_input = form_data\nreplay_model = model\nmessages = list(form_data['messages'])"
+        ).body
+        + followup.body[: dispatch_index + 1]
     )
     exec(compile(ast.fix_missing_locations(wrapper), 'native_provenance_followup', 'exec'), ns)
     output = native_output()
@@ -960,6 +963,7 @@ async def test_code_execution_admits_only_new_saved_result_before_followup(runti
         model_id='model',
         form_data={'model': 'model', 'messages': []},
         new_form_data={'messages': []},
+        messages=[],
         ci_item=current,
         full_output=lambda: [old, current],
         Chats=SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=persist),

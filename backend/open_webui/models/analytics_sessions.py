@@ -100,6 +100,7 @@ def session_query(
             json_text(db, ChatMessage.usage, 'cache_read_input_tokens'),
             json_text(db, ChatMessage.usage, 'input_tokens_details', 'cached_tokens'),
             json_text(db, ChatMessage.usage, 'prompt_tokens_details', 'cached_tokens'),
+            json_text(db, ChatMessage.usage, 'prompt_cache_hit_tokens'),
         ),
         'cache_write': func.coalesce(
             json_text(db, ChatMessage.usage, 'cache_creation_input_tokens'),

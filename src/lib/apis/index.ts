@@ -1883,6 +1883,8 @@ export interface ModelMeta {
 	available_reasoning_effort?: string[];
 	context_window?: number | null;
 	tool_schema_compatibility?: 'default' | 'gemini' | null;
+	reasoning_content_replay?: boolean;
+	extra_body_compatibility?: boolean;
 	default_reasoning_effort?: string;
 	background_image_url?: string | null;
 	tags?: { name: string }[];

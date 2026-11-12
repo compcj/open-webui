@@ -39,6 +39,48 @@ remains independent. Model-switch projections remove old signatures without alte
 request-filter routing changes also clean outgoing and accumulated tool-continuation projections.
 V2 counts signature fields and includes them in input fingerprints.
 
+## OpenAI 兼容参数与续轮 / OpenAI-compatible requests
+
+模型编辑页提供两个独立开关；`extra_body` 展开在服务端 OpenAI 兼容传输中处理：
+
+| 设置                                           | 默认 | 行为                                                                                             |
+| ---------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------ |
+| 回传推理内容 / Replay reasoning content        | 开启 | 保存并回传上游实际返回的 `reasoning_content`，包括空字符串与原始空白；关闭后不回传该字段。       |
+| extra_body 兼容模式 / Extra body compatibility | 关闭 | 开启后把 `extra_body` 对象展开到发送请求的顶层；显式顶层参数优先，不做深层合并。非对象返回 400。 |
+
+推理回传不从展示文字、`reasoning` 别名或 `<think>` 标签猜测原始字段，不修复旧历史中已丢失的内容。
+已有 `reasoning_details`、原生签名封装和 Ollama `thinking` 保持独立。`extra_body` 展开发生在最终预算检查前；
+其中的 `metadata` 不能覆盖 WebUI 的聊天身份。关闭时保持原有嵌套发送方式。
+`prompt_cache_key`、`prompt_cache_retention`、`session_id`、`user`、`safety_identifier`、`service_tier`
+等已知字符串参数不会因为值看似数字、布尔值或 JSON 而被转换成其他类型；显式 JSON 引号字符串仍可解码。
+WebUI 不自动生成缓存键或替中转选择路由。
+
+请求过滤器仍在每次请求与续轮运行，并可主动改写前缀或路由模型。每轮输入来自未经过该过滤器加工的副本，
+避免累计追加提示词或重复修改工具定义；过滤后注入本次请求已解析的模型提示词。过滤器看到冻结的私有上下文，
+审批恢复仍在执行工具前进行过滤校验。不同请求（包括审批恢复）仍有自己的准备阶段。
+Stateful Responses 仍只发送新结果及系统上下文，无法改写供应商已持有的历史。
+
+规范化保留全部系统内容块以及已提供的 `cache_control` / `prompt_cache_breakpoint`，新增提示词只注入一次。
+工具达到上限或触发重复失败保护时保留工具定义，设置 `tool_choice=none`，把收尾提示放在末尾 user 消息；
+供应商继续请求工具也不会触发额外执行。委派工具的模型列表按配置顺序排列，访问权限检查保持不变。
+DeepSeek `prompt_cache_hit_tokens` 与其他供应商字段统一统计到 `cache_read_input_tokens`，跨轮只累计一次；
+旧历史中仍保存的字段可被分析页读取，已经覆盖丢失的历史总数无法恢复。
+
+**Replay reasoning content** defaults on and replays only the actual upstream field, preserving empty
+strings and whitespace. Disabling it leaves `reasoning_details`, native envelopes and Ollama thinking
+independent. Old display-only reasoning cannot establish the original field. **Extra body compatibility**
+defaults off; enabling it requires an object, expands once before final budgeting, and lets explicit
+top-level values win without deep merging. Nested metadata cannot supply WebUI identity. Known cache
+and routing string parameters retain their type; no cache keys or routes are generated.
+
+Request filters still run each round and may deliberately rewrite prefixes or route models. Each sees
+a fresh canonical copy, including frozen private context, followed by the request's frozen model prompt.
+Approval preflight remains before tool effects. Stateful Responses preserves its reduced continuation
+semantics. Existing cache annotations and system blocks survive conversion. Final-answer requests keep
+tools with `tool_choice=none` and a trailing user prompt; extra execution remains blocked. Configured
+subagent ordering is stable. Cache-read aliases normalize once before multi-call accumulation; missing
+measurements remain unknown and overwritten historical totals cannot be recovered.
+
 ## 缓存排错 / Cache troubleshooting
 
 这些修复消除 WebUI 在上述路径中丢失模型提示词或签名的问题，不新增显式缓存创建、TTL 或路由控制。
@@ -59,6 +101,8 @@ signatures or credentials while investigating.
 
 回归命令见[开发指南](DEVELOPMENT.md#gemini-cache-replay-verification)，原因和本地验收范围见
 [修复记录](upstream/v0.13.3-gemini-cache-followup.md)。模拟测试不代表真实中转的缓存命中率或费用降幅。
+后续参数、过滤器和统计选择见[输入缓存修复记录](upstream/v0.13.3-input-cache-followup.md)，
+回归命令见[兼容性验证](DEVELOPMENT.md#input-cache-compatibility-verification)。
 
 See the [regression commands](DEVELOPMENT.md#gemini-cache-replay-verification) and
 [implementation record](upstream/v0.13.3-gemini-cache-followup.md). Mocked checks do not establish a
