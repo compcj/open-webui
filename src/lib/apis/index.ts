@@ -1881,6 +1881,7 @@ export interface ModelMeta {
 	capabilities?: Record<string, boolean | undefined>;
 	profile_image_url?: string;
 	available_reasoning_effort?: string[];
+	intelligence_score?: number | null;
 	context_window?: number | null;
 	tool_schema_compatibility?: 'default' | 'gemini' | null;
 	reasoning_content_replay?: boolean;

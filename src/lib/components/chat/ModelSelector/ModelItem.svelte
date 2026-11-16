@@ -10,6 +10,7 @@
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ModelScoreBadge from '$lib/components/common/ModelScoreBadge.svelte';
 	import { copyToClipboard, removeFormattings, sanitizeResponseContent } from '$lib/utils';
 	import { resolveLocalizedModelDescription } from '$lib/utils/localizedContent';
 	import ArrowUpTray from '$lib/components/icons/ArrowUpTray.svelte';
@@ -61,7 +62,12 @@
 	role="option"
 	aria-selected={isSelected}
 	aria-label={$i18n.t('Select {{modelName}} model', { modelName: item.label })}
-	aria-describedby={localizedDescription ? `model-description-${index}` : undefined}
+	aria-describedby={[
+		localizedDescription ? `model-description-${index}` : '',
+		item.model?.info?.meta?.intelligence_score != null ? `model-score-${index}` : ''
+	]
+		.filter(Boolean)
+		.join(' ') || undefined}
 	class="focus-ring group/item relative flex h-8 w-full cursor-pointer select-none items-center rounded-xl px-2 text-left text-[0.8125rem] font-normal text-gray-700 outline-hidden transition-colors duration-75 dark:text-gray-100 {($settings?.highContrastMode ??
 	false)
 		? 'hover:bg-gray-200 dark:hover:bg-gray-800'
@@ -118,6 +124,11 @@
 					/>
 				</Tooltip>
 			</div>
+
+			<ModelScoreBadge
+				id={`model-score-${index}`}
+				score={item.model?.info?.meta?.intelligence_score}
+			/>
 
 			<div class="flex min-w-0 items-center">
 				<Tooltip content={`${item.label} (${item.value})`} placement="top-start">

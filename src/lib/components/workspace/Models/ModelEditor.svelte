@@ -4,6 +4,7 @@
 	let comments: CommentsRequest | null = null;
 	import CommentButton from '$lib/components/comments/CommentButton.svelte';
 	import ModelSettingsLabel from './ModelSettingsLabel.svelte';
+	import ModelScoreBadge from '$lib/components/common/ModelScoreBadge.svelte';
 	import ToolSchemaCompatibility from './ToolSchemaCompatibility.svelte';
 	import RequestCompatibility from './RequestCompatibility.svelte';
 	import { toast } from 'svelte-sonner';
@@ -221,6 +222,7 @@
 			// https://docs.openwebui.com/license.
 			profile_image_url: `${WEBUI_BASE_URL}/static/favicon.png`,
 			background_image_url: null as string | null,
+			intelligence_score: null as number | null,
 			context_window: null as number | null,
 			tool_schema_compatibility: null,
 			voice: undefined as { voice?: string } | undefined,
@@ -1378,6 +1380,40 @@
 												}
 											/>
 										{/if}
+									</div>
+
+									<div class="my-3">
+										<label
+											for={`${formId}-intelligence-score`}
+											class="block text-xs text-gray-600 dark:text-gray-400"
+										>
+											{$i18n.t('Intelligence score')}
+										</label>
+										<div class="mt-1 flex items-center gap-3">
+											<input
+												id={`${formId}-intelligence-score`}
+												type="number"
+												min="0"
+												max="99"
+												step="1"
+												placeholder="0–99"
+												class="w-24 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-850"
+												aria-describedby={`${formId}-intelligence-score-help`}
+												value={info.meta.intelligence_score ?? ''}
+												on:input={(event) => {
+													info.meta.intelligence_score =
+														event.currentTarget.value === ''
+															? null
+															: event.currentTarget.valueAsNumber;
+												}}
+											/>
+											<ModelScoreBadge score={info.meta.intelligence_score} />
+										</div>
+										<p id={`${formId}-intelligence-score-help`} class="mt-1 text-xs text-gray-500">
+											{$i18n.t(
+												'Set a score from 0 to 99 to indicate model intelligence. Leave empty to hide.'
+											)}
+										</p>
 									</div>
 
 									<div class="mb-2">

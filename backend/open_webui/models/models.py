@@ -218,6 +218,13 @@ class ModelMeta(BaseModel):
     profile_image_url: str | None = None
     background_image_url: str | None = None
     description: str | None = Field(default=None, description='User-facing description of the model.')
+    intelligence_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=99,
+        strict=True,
+        description='Optional user-configured intelligence score shown before the model name; not a provider parameter.',
+    )
     i18n: dict[str, Any] | None = None
     capabilities: dict | None = None
     knowledge: list[Any] | None = None

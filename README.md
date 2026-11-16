@@ -103,6 +103,12 @@ The inventory covers current additions and extensions to upstream features, with
 | 知识库写入 / Knowledge writes                  | 独立默认关闭的写入开关；在已有知识库创建 Markdown/文本，替换、局部编辑或追加检索文本，保留原始上传；部分索引失败如实报告。                                                                               |
 | 知识库直接导入 / Direct knowledge import       | 将网页、文件 URL 或当前管理员终端文件直接入库；源正文不经过模型消息，可处理超过模型上下文的文档，沿用解析器、大小/类型和实时权限限制。详见[写入与导入指南](docs/knowledge-write-tools.md)。              |
 
+模型编辑页可配置 **智能评分（0–99 的整数）**，在模型选择列表和 `@` 模型建议中以紫色徽标显示在名称前；留空隐藏，0 分也会显示。评分随模型配置保存，仅用于展示。
+
+Configure an optional **intelligence score (an integer from 0 to 99)** in the model editor. A violet
+badge appears before the name in the model picker and `@` model suggestions. Leave it empty to hide
+the badge; zero is a valid score. Scores are saved with the model configuration and are for display only.
+
 ### 功能与设计决策差异 / Behavior and design differences
 
 表中明确注明沿用上游的部分属于升级兼容约束；分支差异体现在其余配置、权限、数据和执行规则。

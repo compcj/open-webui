@@ -7,6 +7,7 @@
 	import { models } from '$lib/stores';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ModelScoreBadge from '$lib/components/common/ModelScoreBadge.svelte';
 	import {
 		resolveLocalizedModelDescription,
 		resolveLocalizedModelName
@@ -98,8 +99,11 @@
 							e.currentTarget.src = '/favicon.png';
 						}}
 					/>
-					<div class="min-w-0 truncate">
-						{resolveLocalizedModelName(model, $i18n.language)}
+					<div class="flex min-w-0 items-center gap-2">
+						<ModelScoreBadge score={model.info?.meta?.intelligence_score} />
+						<div class="min-w-0 truncate">
+							{resolveLocalizedModelName(model, $i18n.language)}
+						</div>
 					</div>
 				</div>
 			</button>
