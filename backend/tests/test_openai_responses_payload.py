@@ -19,6 +19,32 @@ def load_remap():
 remap_reasoning_effort_for_responses = load_remap()
 
 
+@pytest.mark.parametrize(
+    'limits,expected',
+    [
+        ({'max_output_tokens': 32000}, 32000),
+        ({'max_output_tokens': 32000, 'max_tokens': 16000}, 16000),
+        ({'max_output_tokens': 32000, 'max_completion_tokens': 24000}, 24000),
+        ({'max_output_tokens': 32000, 'max_tokens': 16000, 'max_completion_tokens': 24000}, 24000),
+    ],
+)
+def test_v2_output_reserve_matches_responses_wire_limit(limits, expected):
+    from open_webui.utils import context_compaction_v2 as v2
+
+    namespace = {'remap_reasoning_effort_for_responses': remap_reasoning_effort_for_responses}
+    load_functions(namespace, 'routers/openai.py', {'convert_to_responses_payload'})
+    payload = {'model': 'synthetic', 'messages': [{'role': 'user', 'content': 'Continue'}], **limits}
+    models = {'synthetic': {'info': {'meta': {'context_window': 100000}}}}
+    budget = v2.resolve_budget(v2.CompactionSettings(), 'synthetic', models, payload)
+    wire = namespace['convert_to_responses_payload'](deepcopy(payload))
+
+    assert wire['max_output_tokens'] == expected
+    assert budget.output_reserve == wire['max_output_tokens']
+    assert budget.input_budget == 95000 - expected
+    assert budget.threshold == min(90000, budget.input_budget)
+    assert 'max_tokens' not in wire and 'max_completion_tokens' not in wire
+
+
 def test_remaps_reasoning_effort_to_nested_reasoning():
     payload = {
         'model': 'openai/gpt-5.6-sol',

@@ -130,7 +130,8 @@ and [verification steps](DEVELOPMENT.md#tool-citation-cache-verification).
 1. `C` = 当前模型 `meta.context_window` → 基础模型 → 全局缺省值。
    Ollama 显式配置较小的正 `num_ctx` 时取较小值。
 2. `B = floor(C × effective_window_percent / 100) − configured_output_allowance`。
-   输出额度按最终请求的 `max_completion_tokens`、`max_tokens` 或 Ollama `num_predict` 解析；
+   输出额度按最终请求的 `max_completion_tokens`、`max_tokens`、Responses `max_output_tokens` 或 Ollama `num_predict` 解析；
+   同一请求同时设置多个 OpenAI 输出参数时，依次优先使用 `max_completion_tokens`、`max_tokens`、`max_output_tokens`，与 Responses 转换一致。
    未设置正输出额度时为 0，依靠有效窗口余量。
 3. `T = min(floor(C × trigger_percent / 100), B)`。
 4. 占用达到 `T` 时尝试压缩；`T − 占用 < floor(C × reminder_percent / 100)` 时加入提醒。
@@ -138,6 +139,11 @@ and [verification steps](DEVELOPMENT.md#tool-citation-cache-verification).
 With defaults and no configured output allowance, `C = 262144`, `B = 249036`, `T = 235929`;
 the reminder distance is `26214` tokens. Compression targets complete recent groups within the
 20000-token preference while protecting the current user input and unfinished tool calls.
+
+Responses `max_output_tokens` also reserves output capacity. If multiple OpenAI output limits are
+present in the final request, `max_completion_tokens` takes precedence over `max_tokens`, then
+`max_output_tokens`, matching transport conversion. With `C = 100000` and only
+`max_output_tokens = 32000`, the default input budget and compaction trigger are both `63000`.
 
 计数发生在模型参数及知识库、技能、附件、系统提示和工具定义完成注入之后；首轮、工具续调、批准恢复、
 代码执行续调都经过相同检查。使用 tiktoken 估算文本，并为多模态内容计入保守额度；供应商分词方式与图像计费

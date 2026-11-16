@@ -67,6 +67,28 @@ class BudgetTests(IsolatedCase):
         self.assertEqual((b.context_window, b.input_budget, b.threshold), (6000, 4700, 4700))
         self.assertEqual(m.resolve_budget(cfg, 'custom', models, {}).input_budget, 7600)
 
+    def test_responses_output_reserve_inherits_custom_params(self):
+        m = importlib.import_module('open_webui.utils.context_compaction_v2')
+        models = {
+            'custom': {'info': {'base_model_id': 'base'}},
+            'base': {
+                'info': {
+                    'meta': {'context_window': 100000},
+                    'params': {'custom_params': {'max_output_tokens': 32000}},
+                }
+            },
+        }
+        settings = m.CompactionSettings()
+        inherited = m.resolve_budget(settings, 'custom', models, {})
+        self.assertEqual((inherited.output_reserve, inherited.input_budget, inherited.threshold), (32000, 63000, 63000))
+
+    def test_final_responses_output_reserve_overrides_model_chat_limit(self):
+        m = importlib.import_module('open_webui.utils.context_compaction_v2')
+        # A final Responses limit wins over a persisted Chat Completions default.
+        models = {'custom': {'info': {'meta': {'context_window': 100000}, 'params': {'max_tokens': 8000}}}}
+        explicit = m.resolve_budget(m.CompactionSettings(), 'custom', models, {'max_output_tokens': 40000})
+        self.assertEqual((explicit.output_reserve, explicit.input_budget, explicit.threshold), (40000, 55000, 55000))
+
     def test_chinese_tools_and_multimodal_are_counted(self):
         m = importlib.import_module('open_webui.utils.context_compaction_v2')
         plain = {'messages': [{'role': 'user', 'content': '请保留全部重要信息。' * 100}]}

@@ -168,11 +168,12 @@ def resolve_budget(settings, model_id: str, models: dict, payload: dict, stored_
     params = inherited_params(chain)
     options = as_dict(payload.get('options'))
     # The final transport payload wins over persisted model defaults.
+    # Responses conversion gives Chat Completions limits precedence over max_output_tokens.
     output = next(
         (
             n
             for source in (payload, options, params)
-            for key in ('max_completion_tokens', 'max_tokens', 'num_predict')
+            for key in ('max_completion_tokens', 'max_tokens', 'max_output_tokens', 'num_predict')
             if (n := positive_int(source.get(key)))
         ),
         0,

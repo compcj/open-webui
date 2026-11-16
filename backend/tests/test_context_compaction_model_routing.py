@@ -16,8 +16,16 @@ from test_web_tool_citations import load_functions
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('preset', [False, True])
-@pytest.mark.parametrize('tokens,compacts', [(89999, False), (90000, True)])
-async def test_saved_100k_window_at_openai_send_boundary(monkeypatch, preset, tokens, compacts):
+@pytest.mark.parametrize(
+    'limits,tokens,compacts',
+    [
+        ({}, 89999, False),
+        ({}, 90000, True),
+        ({'max_output_tokens': 32000}, 62999, False),
+        ({'max_output_tokens': 32000}, 63000, True),
+    ],
+)
+async def test_saved_100k_window_at_openai_send_boundary(monkeypatch, preset, limits, tokens, compacts):
     selected_id = 'preset' if preset else 'connection.provider-model'
     base_id = 'connection.provider-model'
     saved = {
@@ -41,6 +49,7 @@ async def test_saved_100k_window_at_openai_send_boundary(monkeypatch, preset, to
     }
     payload = {
         'model': selected_id,
+        **limits,
         'messages': [
             {'role': 'system', 'content': 'rules'},
             {'role': 'user', 'content': '', '_context_message_id': 'old'},
@@ -88,7 +97,13 @@ async def test_saved_100k_window_at_openai_send_boundary(monkeypatch, preset, to
         BYPASS_MODEL_ACCESS_CONTROL=False,
         Models=storage,
         check_model_access=AsyncMock(),
-        get_openai_connection=AsyncMock(return_value=('https://provider.invalid/v1', '', {'prefix_id': 'connection'})),
+        get_openai_connection=AsyncMock(
+            return_value=(
+                'https://provider.invalid/v1',
+                '',
+                {'prefix_id': 'connection', 'api_type': 'responses' if limits else 'chat_completions'},
+            )
+        ),
         strip_provider_model_prefix=strip_provider_model_prefix,
         is_openai_new_model=lambda model: False,
         get_headers_and_cookies=AsyncMock(return_value=({}, {})),
@@ -109,9 +124,11 @@ async def test_saved_100k_window_at_openai_send_boundary(monkeypatch, preset, to
         await namespace['generate_chat_completion'](request, payload, SimpleNamespace(role='admin'))
     usage = request.state.context_compaction['last_usage']
     assert usage['context_window'] == 100000
-    assert usage['threshold'] == 90000
+    assert usage['input_budget'] == 95000 - limits.get('max_output_tokens', 0)
+    assert usage['threshold'] == min(90000, usage['input_budget'])
     assert usage['model'] == selected_id
     assert sent['model'] == 'provider-model'
+    assert sent.get('max_output_tokens') == limits.get('max_output_tokens')
     assert 'context_window' not in sent
     assert summary.await_count == int(compacts)
     assert store.save_checkpoint.await_count == int(compacts)
