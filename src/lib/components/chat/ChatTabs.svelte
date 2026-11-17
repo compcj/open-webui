@@ -551,6 +551,14 @@
 		)
 			void view.browseDirectory(directory);
 	};
+	export const refreshFiles = () => {
+		if (!viewReady || !terminalFilesAvailable) return;
+		for (const tab of tabs.tabs) {
+			if (tab.kind === 'files' && tab.terminalId === $selectedTerminalId) {
+				void fileViews[tab.id]?.refreshDirectory?.();
+			}
+		}
+	};
 	const openFile = (path: string, selector: string, page?: number | null) => {
 		if (!terminalAccessible(selector)) return;
 		path = path.replace(/\\/g, '/').replace(/\/{2,}/g, '/');

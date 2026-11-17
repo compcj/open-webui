@@ -2018,7 +2018,7 @@
 			if (!data?.path) return;
 			showFileNavDir.set(data.path);
 		} else if (type === 'terminal:run_command' && !terminalContext?.file) {
-			showFileNavDir.set('/');
+			terminalTabs?.refreshFiles();
 		}
 	};
 
