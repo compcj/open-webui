@@ -55,6 +55,15 @@ V2 counts signature fields and includes them in input fingerprints.
 等已知字符串参数不会因为值看似数字、布尔值或 JSON 而被转换成其他类型；显式 JSON 引号字符串仍可解码。
 WebUI 不自动生成缓存键或替中转选择路由。
 
+如果直连 DeepSeek、首次提问就提示缺少 `reasoning_content`，即使已开启回传，也可能来自自动加载的
+记忆、技能、终端或知识库上下文。它们不是模型生成的回复，没有对应推理；DeepSeek
+[工具调用文档](https://api-docs.deepseek.com/guides/tool_calls#inserting-tool-calls-mid-conversation)
+明确区分了客户端插入的调用与模型调用。服务端 Chat Completions 在最终预算检查前将这些已授权的
+自动上下文转换成系统上下文，不补造推理内容。实际工具调用仍完整回传上游推理。
+该转换只读取服务端冻结上下文的调用身份，不根据工具名称或客户端标记识别，也不修改保存的聊天输出。
+这是应在后续上游合并中保留的关键差异 **D04a**；固定上游源码证据、选择系统上下文而非补造空推理的
+原因，以及角色规范化和预算边界见[技术决策](upstream/v0.13.3-private-context-followup.md)。
+
 请求过滤器仍在每次请求与续轮运行，并可主动改写前缀或路由模型。每轮输入来自未经过该过滤器加工的副本，
 避免累计追加提示词或重复修改工具定义；过滤后注入本次请求已解析的模型提示词。过滤器看到冻结的私有上下文，
 审批恢复仍在执行工具前进行过滤校验。不同请求（包括审批恢复）仍有自己的准备阶段。
@@ -72,6 +81,13 @@ independent. Old display-only reasoning cannot establish the original field. **E
 defaults off; enabling it requires an object, expands once before final budgeting, and lets explicit
 top-level values win without deep merging. Nested metadata cannot supply WebUI identity. Known cache
 and routing string parameters retain their type; no cache keys or routes are generated.
+
+Automatic memory, skill, terminal and knowledge context can otherwise introduce synthetic tool calls
+before the first response, triggering DeepSeek's missing-reasoning error even with replay enabled.
+Server Chat Completions projects these authorized pairs to system context before final budgeting,
+using only the frozen server-side call identities. Actual provider reasoning is never fabricated;
+real tool replay, stored outputs, approval snapshots and other protocols retain their existing behavior.
+This is retained fork difference **D04a**; see the [technical decision and merge checklist](upstream/v0.13.3-private-context-followup.md).
 
 Request filters still run each round and may deliberately rewrite prefixes or route models. Each sees
 a fresh canonical copy, including frozen private context, followed by the request's frozen model prompt.

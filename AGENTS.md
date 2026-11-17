@@ -118,6 +118,15 @@ OpenAI-compatible model metadata defaults `reasoning_content_replay` on and
 independent. Enabled extra-body expansion precedes final budgeting, with explicit top-level precedence
 and no nested metadata authority. See [input-cache checks](docs/DEVELOPMENT.md#input-cache-compatibility-verification).
 
+Retain critical fork difference **D04a**: server Chat Completions projects only automatic context
+pairs identified by `request.state.private_tool_context` into system context before model role
+conversion and final budgeting. Preserve single-leading-system normalization and the frozen internal
+pairs for approval and legacy summary exclusion. Never fabricate reasoning or classify by tool name,
+client metadata, URL or model name; real calls, Responses and native protocols keep their replay rules.
+Recheck this boundary when merging upstream hidden-context changes. See the
+[technical decision and upstream evidence](docs/upstream/v0.13.3-private-context-followup.md) and
+[backend contract](backend/AGENTS.md#input-cache-compatibility).
+
 ## Context compaction contracts
 
 - Compaction is globally `off`, `legacy`, or `v2`; an absent mode maps the old enable flag to

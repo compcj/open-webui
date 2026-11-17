@@ -457,6 +457,16 @@ and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
   Keep raw reasoning within its provider response, including code continuations. When signed text is
   reordered before reasoning, preserve their exact message-ID association for early and late raw deltas.
   Later code projections must not restore carriers already invalidated by a model switch.
+- Critical fork difference D04a: server Chat Completions projects automatic context pairs identified only by trusted
+  `request.state.private_tool_context` IDs to system context before final budgeting. Never invent
+  reasoning for these synthetic calls or reclassify actual calls by tool name/client metadata.
+  Preserve the frozen internal pairs for approval matching and legacy summary exclusion; native
+  transports and Responses keep their existing representation. Preserve single-leading-system
+  normalization and model role conversion, dropping empty synthetic assistant carriers. Mixed
+  batches must keep real assistant calls adjacent to their results, with source text and cache annotations intact.
+  This protocol-scoped projection is independent of the reasoning-replay toggle. Do not replace it
+  with empty reasoning fields, model/URL detection or new tool-result provenance. See the
+  [technical decision and merge checks](../docs/upstream/v0.13.3-private-context-followup.md).
 - `meta.extra_body_compatibility` defaults false. Enabled expansion requires a JSON object, flattens
   once, and gives explicit top-level fields precedence, including false/empty values. Expand before
   final budget validation and native internal-field stripping; nested metadata cannot replace WebUI

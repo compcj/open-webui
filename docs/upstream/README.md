@@ -74,6 +74,13 @@ The [v0.13.3 input-cache follow-up](v0.13.3-input-cache-followup.md) records per
 and extra-body switches, fresh request-filter inputs, content-block preservation and cache usage
 normalization. Read it alongside the Gemini record when changing compatible gateways or continuations.
 
+The [2026-11-17 automatic-context follow-up](v0.13.3-private-context-followup.md) records critical
+fork difference **D04a** against the pinned official v0.13.3 tree: server Chat Completions projects
+authorized automatic context to system messages before role conversion and final budgeting, while
+keeping internal approval snapshots and real provider reasoning intact. It extends D04 and the
+input-cache contract; it does not replace the dated full-tree/history audit. Read its merge checklist
+before adopting upstream changes to hidden output, reasoning replay or provider request shaping.
+
 ## Search1API endpoint follow-up
 
 The [v0.12.2 Search1API endpoint follow-up](v0.12.2-search1api-endpoint-followup.md) records the

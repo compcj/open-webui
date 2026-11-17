@@ -1611,6 +1611,14 @@ async def generate_chat_completion(
             'role': user.role,
         }
 
+    is_responses = api_config.get('api_type') == 'responses'
+    if not is_native and not is_responses:
+        from open_webui.utils.openai_compatibility import project_private_tool_context
+
+        # Automatic memory/skills/terminal context is not a provider tool turn.
+        # Project before role conversion and budgeting; retain real reasoning.
+        payload = project_private_tool_context(payload, getattr(request.state, 'private_tool_context', None) or [])
+
     # Check if model is a reasoning model that needs special handling
     if not is_native and is_openai_new_model(payload['model']):
         payload = openai_reasoning_model_handler(payload)
@@ -1631,8 +1639,6 @@ async def generate_chat_completion(
             payload['logit_bias'] = JSONCodec.loads(logit_bias)
 
     headers, cookies = await get_headers_and_cookies(request, url, key, api_config, metadata, user=user)
-
-    is_responses = api_config.get('api_type') == 'responses'
 
     # Explicit continuation keeps llama.cpp from echoing the prefill in streamed replies.
     if (

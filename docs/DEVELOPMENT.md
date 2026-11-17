@@ -498,7 +498,7 @@ Use the isolated environment described above. Run these suites together with Gem
 when changing request preparation or provider conversion:
 
 ```sh
-python -m pytest backend/tests/test_prompt_cache_replay.py backend/tests/test_openai_compatibility_params.py backend/tests/test_reasoning_content_replay.py backend/tests/test_request_filter_context.py backend/tests/test_request_filter_replay.py backend/tests/test_request_filter_continuations.py backend/tests/test_cache_usage.py backend/tests/test_final_answer_payload.py backend/tests/test_subagent_model_order.py backend/tests/test_model_controls_compat.py backend/tests/test_model_tool_schema_compatibility.py backend/tests/test_tool_result_adapters.py -q
+python -m pytest backend/tests/test_prompt_cache_replay.py backend/tests/test_private_context_transport.py backend/tests/test_openai_compatibility_params.py backend/tests/test_reasoning_content_replay.py backend/tests/test_request_filter_context.py backend/tests/test_request_filter_replay.py backend/tests/test_request_filter_continuations.py backend/tests/test_cache_usage.py backend/tests/test_final_answer_payload.py backend/tests/test_subagent_model_order.py backend/tests/test_model_controls_compat.py backend/tests/test_model_tool_schema_compatibility.py backend/tests/test_tool_result_adapters.py -q
 npm run test:frontend -- --run src/lib/utils/model-controls.test.ts src/lib/utils/model-tool-schema.test.ts src/lib/apis/model-tool-schema.test.ts
 npm run check
 ```
@@ -509,8 +509,20 @@ signatures, filter mutation isolation and denial, stop-execution guards, literal
 opt-in extra-body precedence before budgets, complete system/cache blocks, configured schema ordering,
 and single-count usage aliases with SQLite analytics. Stateful Responses retains provider-owned history;
 filters cannot retroactively rewrite it. Do not equate these tests with live cache measurements or a
-production build. Record pre-existing frontend diagnostics separately. See the
-[decision record](upstream/v0.13.3-input-cache-followup.md) for compatibility choices.
+production build. Automatic-context transport checks cover first requests with replay enabled/disabled,
+exact pre-budget projections, frozen prefixes, filter edits, mixed call/result boundaries and unchanged
+native/Responses behavior. Record pre-existing frontend diagnostics separately. See the
+[decision record](upstream/v0.13.3-input-cache-followup.md) for compatibility choices and
+[D04a](upstream/v0.13.3-private-context-followup.md) for the automatic-context transport choice and
+upstream merge checklist. Its focused regression is:
+
+```sh
+python -m pytest backend/tests/test_private_context_transport.py -q
+```
+
+Use both the input-cache and Gemini replay selections above for provider-boundary changes; the focused
+suite alone does not verify streaming, approvals or all compaction paths. It also checks single-leading
+system normalization, OpenAI role conversion and removal of empty synthetic llama.cpp prefills.
 
 ### Search1API endpoint verification
 

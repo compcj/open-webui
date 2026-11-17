@@ -127,6 +127,7 @@ the badge; zero is a valid score. Scores are saved with the model configuration 
 | 默认暴露面           | 个人 Integrations 默认关闭，关闭时停用已有个人工具/终端连接（含管理员），保留配置；模型 Direct Connections 独立。Cookie 转发默认关闭，Apps/Tool Search/Realtime 等沿用原有默认，不因整合主动开启。                    |
 | 权限失败与 App 写入  | Redis 撤权检查不可用时返回可重试拒绝并保留登录 Cookie。App 私有交互与公开写入分开，App 返回后重新检查写权限，频道/私有群组权限仍适用。                                                                                |
 | 原生协议和工具信任   | 协议、Gemini Schema 模式不按 URL/模型名推测；签名思考绑定协议/连接/模型/原文。仅服务器注册的内置身份可做分发和精确结果处理，外部同名工具不获得特权。                                                                  |
+| 自动上下文与推理兼容 | **关键差异 D04a**：Chat Completions 将自动上下文作为系统消息发送，保留私有快照与真实工具推理。见[技术选择](docs/upstream/v0.13.3-private-context-followup.md)。                                                       |
 | 构建、发布与协作     | 保留分支 GHCR 工作流，移除 PyPI、Docker Hub 复制和 Helm 通知；标准镜像为主要支持目标。根/前后端 AGENTS 为统一规则来源，工具适配文件仅引用，发布仍需单独授权。                                                         |
 
 ### 已采用的上游功能及适配 / Adopted upstream features
@@ -243,13 +244,22 @@ See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) f
 
 模型编辑页提供 **回传推理内容 / Replay reasoning content**（默认开启）：只回传上游实际返回的
 `reasoning_content`，关闭后不回传该字段，已有 `reasoning_details` 和 Gemini 签名独立保留。
+服务端 Chat Completions 将自动加载的记忆、技能和终端等上下文作为系统上下文发送，避免首轮合成工具调用
+触发 DeepSeek 思考模式的推理回传校验；模型实际生成的工具调用仍按原始推理回放。
+这是相对官方 v0.13.3 的关键传输差异：在角色转换和最终预算前处理，按服务端身份识别自动上下文，
+不按模型名猜测，也不改变 Responses、原生协议或已有审批快照。详见[D04a 技术决策与合并检查](docs/upstream/v0.13.3-private-context-followup.md)。
 **extra_body 兼容模式 / Extra body compatibility** 默认关闭；开启后展开自定义参数中的 `extra_body` 对象，
 显式顶层参数优先。缓存/会话标识字符串保持原值；请求过滤器每轮处理未重复加工的输入，模型提示词在本次请求内冻结。
 工具收尾保留定义、设置 `tool_choice=none` 并在末尾添加 user 提示，后端继续阻止额外执行。
 DeepSeek 缓存读取计数纳入多轮统计；未返回计数仍表示未知。详见[输入缓存兼容说明](docs/gemini-cache-replay.md#openai-兼容参数与续轮--openai-compatible-requests)。
 
 Model settings offer **Replay reasoning content** (on by default), preserving only the provider's actual
-`reasoning_content`, independently of `reasoning_details` and Gemini signatures. **Extra body compatibility**
+`reasoning_content`, independently of `reasoning_details` and Gemini signatures. Server Chat Completions
+sends automatically loaded memory, skills and terminal context as system context, avoiding synthetic
+first-turn tool calls that fail DeepSeek thinking validation. Actual model calls retain original reasoning.
+This retained difference from upstream v0.13.3 is protocol-scoped, runs before role conversion and final
+budgeting, and preserves frozen internal snapshots. See the [D04a technical decision](docs/upstream/v0.13.3-private-context-followup.md).
+**Extra body compatibility**
 (off by default) flattens an `extra_body` object with explicit top-level precedence. Cache/session strings
 stay strings, filters receive fresh input each round, and model prompts remain frozen within the request.
 Final stops retain tools with `tool_choice=none` and a trailing user instruction; backend execution remains
@@ -424,6 +434,7 @@ These are retained fixes against the pinned upstream baseline; the audit links t
 | 引用证据与前缀           | 空摘要不伪装正文，搜索/正文来源连续编号；审批、保存、续写保持原始结果与固定引用，避免为追加来源重写全部输入前缀。                                                |
 | 模型权限与推理值         | 修复本分支旧控件迁移时遗漏管理员响应中的 access grants；旧推理值迁移/重置、空显式选项及 JSON 类型变化保持语义，自定义推理字符串不误解析为数字/对象。             |
 | Responses 推理参数       | 将 `reasoning_effort` 转为 `reasoning.effort`，删除无效的平面键（含 `null`）并保留其他 reasoning 配置；这是当前仍保留的分支修复。                                |
+| DeepSeek 首轮思考请求    | 自动上下文不再伪装成工具回复，避免首次提问缺少推理而被拒绝；保留真实推理、冻结前缀和工具配对，同时避免 llama.cpp 空 assistant 误触发续写。                       |
 | 偏好保存和输入界面       | 仅按变化字段排队保存，避免并发设置覆盖和跨账号旧保存；修复窄输入区选择器遮挡、滚动和下拉定位，保留上游 Tab/中文输入法补全。                                      |
 | 技能导入与编辑           | 修复 ClawHub owner/歧义 slug、URL MIME/重定向 TLS、旧 OpenClaw 文件迁移和版本竞争；概览内容不成为被截断的编辑源，过期修订比较不覆盖新草稿。                      |
 | 图像上下文与附件         | 同一生成图片不重复附加；保存、审批恢复和继续对话保留可用视觉输入，编辑关闭时不误注册编辑工具。                                                                   |

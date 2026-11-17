@@ -1,6 +1,7 @@
 """Pure helpers for explicit OpenAI-compatible parameter handling."""
 
 from copy import deepcopy
+import json
 
 
 _STRING_PARAMETERS = frozenset(
@@ -46,3 +47,73 @@ def expand_extra_body(payload: dict, enabled: bool = False) -> dict:
     expanded = {**extra_body, **payload}
     expanded.pop('extra_body', None)
     return deepcopy(expanded)
+
+
+def project_private_tool_context(payload: dict, private_context: list[dict]) -> dict:
+    """Send server-injected context without impersonating a model's tool response.
+
+    Thinking providers can require original reasoning for every assistant call.
+    These request-local pairs never came from a provider. Only IDs registered in
+    server state qualify; real calls and the frozen internal snapshot stay intact.
+    """
+    private_ids = {
+        call['id'] for message in private_context for call in message.get('tool_calls') or [] if call.get('id')
+    }
+    if not private_ids:
+        return payload
+
+    messages = payload.get('messages') or []
+    results = {message.get('tool_call_id'): message for message in messages if message.get('role') == 'tool'}
+    paired_private_ids = private_ids.intersection(results)
+    calls = {
+        call['id']
+        for message in messages
+        if message.get('role') == 'assistant'
+        for call in message.get('tool_calls') or []
+        if call.get('id') in paired_private_ids
+    }
+    if not calls:
+        return payload
+
+    projected = []
+    for original in messages:
+        message = deepcopy(original)
+        if message.get('role') == 'assistant' and any(
+            call.get('id') in calls for call in message.get('tool_calls') or []
+        ):
+            # A filter may combine synthetic and real calls into one batch. Put
+            # context before the real assistant turn, never between calls/results.
+            for call in message['tool_calls']:
+                if call.get('id') not in calls:
+                    continue
+                source = json.dumps(call['function'], ensure_ascii=False)
+                header = f'Automatically loaded context (source: {source}):\n'
+                content = deepcopy(results[call['id']].get('content', ''))
+                if isinstance(content, list):
+                    content = [
+                        {'type': 'text', 'text': header},
+                        *[{**part, 'type': 'text'} if part.get('type') == 'input_text' else part for part in content],
+                    ]
+                else:
+                    content = header + (content or '')
+                projected.append({'role': 'system', 'content': content})
+            remaining = [call for call in message['tool_calls'] if call.get('id') not in calls]
+            if remaining:
+                message['tool_calls'] = remaining
+            else:
+                message.pop('tool_calls')
+                if not message.get('content') and not any(
+                    message.get(key) for key in ('reasoning_content', 'reasoning_details', 'extra_content')
+                ):
+                    # llama.cpp adds an empty reasoning field to synthetic pairs;
+                    # it is not a real assistant response or a Continue prefill.
+                    continue
+        elif message.get('role') == 'tool' and message.get('tool_call_id') in calls:
+            continue
+        projected.append(message)
+
+    from open_webui.utils.misc import merge_system_messages
+
+    # Preserve the existing single-leading-system contract and cache blocks.
+    # Frozen source text yields the same prefix on every continuation.
+    return {**payload, 'messages': merge_system_messages(projected)}
