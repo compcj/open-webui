@@ -42,8 +42,6 @@
 		channelId,
 		channelRequestQueues,
 		terminalServers,
-		showTabs,
-		showFileNavPath,
 		showFileNavDir,
 		pyodideWorker,
 		desktopEvent
@@ -66,6 +64,7 @@
 	import { getAllTags } from '$lib/apis/chats';
 	import { chatCompletion } from '$lib/apis/openai';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
+	import { displayTerminalFile } from '$lib/utils/terminal-files';
 	import {
 		addOpenAIConnection,
 		removeOpenAIConnection,
@@ -74,13 +73,7 @@
 	} from '$lib/utils/connections';
 
 	import { COMMUNITY_ORIGINS, WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
-	import {
-		bestMatchingLanguage,
-		cleanText,
-		displayFileHandler,
-		getUserTimezone,
-		removeAllDetails
-	} from '$lib/utils';
+	import { bestMatchingLanguage, cleanText, getUserTimezone, removeAllDetails } from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
 	import { initializeTether, renewTetherSession } from '$lib/utils/tether';
 
@@ -540,8 +533,10 @@
 		};
 	};
 
-	const executeTool = async (data, cb, chatId, current = () => true) => {
+	/** @param {string | null | undefined} sessionId */
+	const executeTool = async (data, cb, sessionId, current = () => true) => {
 		if (!current()) return;
+		const displayChatId = $chatId || null;
 		if (!$config?.features?.enable_tool_servers) {
 			cb?.({ error: 'Tool servers are disabled' });
 			return;
@@ -568,7 +563,7 @@
 				data?.name,
 				serverParams,
 				toolServerData,
-				chatId
+				sessionId ?? undefined
 			);
 
 			if (!current()) return;
@@ -579,17 +574,18 @@
 			const output =
 				inlineDisplayFile && result?.exists !== false
 					? Array.isArray(res)
-						? [terminalFileResult(result, params, toolServer.url, chatId)]
-						: terminalFileResult(result, params, toolServer.url, chatId)
+						? [terminalFileResult(result, params, toolServer.url, sessionId)]
+						: terminalFileResult(result, params, toolServer.url, sessionId)
 					: res;
 
-			if (data?.name === 'display_file' && params?.path && !inlineDisplayFile && !chatId) {
+			if (data?.name === 'display_file' && params?.path && !inlineDisplayFile && !sessionId) {
 				if (result?.exists !== false) {
-					displayFileHandler(
-						result?.path ?? params.path,
-						{ showTabs, showFileNavPath },
-						{ page: params?.page }
-					);
+					displayTerminalFile({
+						chatId: displayChatId,
+						terminalId: toolServer.url,
+						path: result?.path ?? params.path,
+						page: params.page
+					});
 				}
 			}
 

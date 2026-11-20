@@ -367,7 +367,6 @@ type Settings = {
 	iframeSandboxAllowForms?: boolean;
 	iframeSandboxAllowSameOrigin?: boolean;
 	iframeSandboxAllowDownloads?: boolean;
-	showFilesOnTerminalSelect?: boolean;
 	scrollOnBranchChange?: boolean;
 	scrollOnResponseGeneration?: boolean;
 	terminalFileDisplay?: 'sidebar' | 'inline';
@@ -527,6 +526,7 @@ type Config = {
 		enable_tags_generation: boolean;
 		enable_direct_connections: boolean;
 		enable_direct_integrations?: boolean;
+		show_files_on_terminal_select?: boolean;
 		enable_tether?: boolean;
 		terminal_preview_base_url?: string;
 		enable_version_update_check: boolean;

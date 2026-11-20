@@ -4050,7 +4050,7 @@
 	"settings.personal.interface.sections.input.title": "输入",
 	"settings.personal.interface.sections.ui.title": "界面",
 	"settings.personal.interface.sections.voice.title": "语音",
-	"settings.personal.interface.showFilesOnTerminalSelect.description": "选择终端后打开文件浏览器。",
+	"settings.personal.interface.showFilesOnTerminalSelect.description": "任何用户在桌面端选择终端时，自动打开文件列表。",
 	"settings.personal.interface.showFilesOnTerminalSelect.label": "选择终端时显示文件",
 	"settings.personal.interface.showFormattingToolbar.description": "在富文本编辑器中显示格式化控件。",
 	"settings.personal.interface.showFormattingToolbar.label": "显示文本格式工具栏",

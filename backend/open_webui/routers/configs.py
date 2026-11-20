@@ -42,6 +42,7 @@ CONNECTIONS_CONFIG_KEYS = {
     'ENABLE_DIRECT_CONNECTIONS': 'direct.enable',
     'ENABLE_DIRECT_INTEGRATIONS': 'direct.integrations.enable',
     'ENABLE_TETHER': 'tether.enable',
+    'SHOW_FILES_ON_TERMINAL_SELECT': 'terminal.show_files_on_select',
     'TERMINAL_PREVIEW_BASE_URL': 'terminal.preview.base_url',
     'ENABLE_BASE_MODELS_CACHE': 'models.base_models_cache',
 }
@@ -190,6 +191,7 @@ class ConnectionsConfigForm(BaseModel):
     ENABLE_DIRECT_CONNECTIONS: bool = False
     ENABLE_DIRECT_INTEGRATIONS: bool = False
     ENABLE_TETHER: bool = False
+    SHOW_FILES_ON_TERMINAL_SELECT: bool = False
     TERMINAL_PREVIEW_BASE_URL: str = ''
     ENABLE_BASE_MODELS_CACHE: bool = False
 

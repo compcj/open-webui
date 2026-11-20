@@ -78,6 +78,8 @@
 
 	let servers: ToolServerConnection[] | null = null;
 	let connectionsConfig: ConnectionsConfig | null = null;
+	let savingFilePreference = false;
+	$: showFilesOnTerminalSelect = connectionsConfig?.SHOW_FILES_ON_TERMINAL_SELECT ?? false;
 	let showConnectionModal = false;
 
 	// Terminal server admin connections
@@ -380,6 +382,29 @@
 							target="_blank">{$i18n.t('Learn more about Open Terminal')} ↗</a
 						>
 					</div>
+					<AdminSettingRow
+						label={$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.label')}
+						description={$i18n.t(
+							'settings.personal.interface.showFilesOnTerminalSelect.description'
+						)}
+						let:labelId
+					>
+						<Switch
+							bind:state={showFilesOnTerminalSelect}
+							disabled={savingFilePreference}
+							on:change={async (event) => {
+								savingFilePreference = true;
+								try {
+									await updateConnections({ SHOW_FILES_ON_TERMINAL_SELECT: event.detail });
+								} finally {
+									showFilesOnTerminalSelect =
+										connectionsConfig?.SHOW_FILES_ON_TERMINAL_SELECT ?? false;
+									savingFilePreference = false;
+								}
+							}}
+							ariaLabelledbyId={labelId}
+						/>
+					</AdminSettingRow>
 				</AdminSettingSection>
 			</fieldset>
 

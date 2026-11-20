@@ -80,6 +80,7 @@ export type ConnectionsConfig = {
 	ENABLE_BASE_MODELS_CACHE?: boolean;
 	ENABLE_DIRECT_INTEGRATIONS?: boolean;
 	ENABLE_TETHER?: boolean;
+	SHOW_FILES_ON_TERMINAL_SELECT?: boolean;
 	TERMINAL_PREVIEW_BASE_URL?: string;
 };
 

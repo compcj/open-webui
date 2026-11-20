@@ -8,26 +8,32 @@ const declaration: any = parse(source)
 	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
 	.find((node: any) => node.id?.name === 'terminalEventHandler');
 
-const createChat = (options: { terminalContext?: any; files?: any[] } = {}) => {
+const createChat = (options: { terminalContext?: any; files?: any[]; inline?: boolean } = {}) => {
 	const showFileNavDir = { set: vi.fn() };
 	const refreshFiles = vi.fn();
+	const displayTerminalFile = vi.fn();
 	const handler = new Function(
 		'deps',
 		transpileModule(
-			`const { showFileNavDir, terminalTabs, terminalContext, history } = deps;
-			const $selectedTerminalId = 'terminal-a', $settings = {};
+			`const { showFileNavDir, terminalTabs, terminalContext, history, displayTerminalFile, $settings } = deps;
+			const $selectedTerminalId = 'terminal-a', $chatId = 'chat-a';
 			const ${source.slice(declaration.start, declaration.end)};
 			return terminalEventHandler;`,
 			{ compilerOptions: { target: ScriptTarget.ES2022 } }
 		).outputText
 	)({
 		showFileNavDir,
+		displayTerminalFile,
+		$settings: { terminalFileDisplay: options.inline ? 'inline' : 'sidebar' },
 		terminalTabs: { refreshFiles },
 		terminalContext: options.terminalContext ?? null,
 		history: { messages: { user: { files: options.files ?? [] } } }
 	});
 	return {
 		runCommand: () => handler('terminal:run_command', {}, { parentId: 'user' }),
+		display: (path: string) =>
+			handler('terminal:display_file', { path, page: 3 }, { parentId: 'user' }),
+		displayTerminalFile,
 		showFileNavDir,
 		refreshFiles
 	};
@@ -57,6 +63,48 @@ describe('terminal command events', () => {
 		chat.runCommand();
 		expect(chat.showFileNavDir.set).not.toHaveBeenCalled();
 		expect(chat.refreshFiles).not.toHaveBeenCalled();
+	});
+});
+
+describe('displaying terminal files', () => {
+	it('sends each model file to its chat and terminal, including its target page', () => {
+		const chat = createChat();
+		chat.display('/work/a.pdf');
+		chat.display('/work/b.pdf');
+		expect(chat.displayTerminalFile.mock.calls).toEqual(
+			['/work/a.pdf', '/work/b.pdf'].map((path) => [
+				{ chatId: 'chat-a', terminalId: 'terminal-a', path, page: 3, refreshOnly: false }
+			])
+		);
+		expect(chat.showFileNavDir.set).not.toHaveBeenCalled();
+	});
+
+	it('keeps inline files in the message', () => {
+		const chat = createChat({ inline: true });
+		chat.display('/work/a.pdf');
+		expect(chat.displayTerminalFile).not.toHaveBeenCalled();
+		expect(chat.showFileNavDir.set).not.toHaveBeenCalled();
+	});
+
+	it('refreshes only the matching attached preview without requesting a directory', () => {
+		const chat = createChat({
+			files: [{ type: 'filesystem', terminal_id: 'terminal-a' }],
+			terminalContext: { file: { path: '/work/a.pdf' } }
+		});
+		chat.display('/work/b.pdf');
+		chat.display('/work/a.pdf');
+		expect(chat.displayTerminalFile.mock.calls).toEqual([
+			[
+				{
+					chatId: 'chat-a',
+					terminalId: 'terminal-a',
+					path: '/work/a.pdf',
+					page: 3,
+					refreshOnly: true
+				}
+			]
+		]);
+		expect(chat.showFileNavDir.set).not.toHaveBeenCalled();
 	});
 });
 

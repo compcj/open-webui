@@ -91,15 +91,20 @@
 		}
 	};
 
-	const selectDirect = async (terminal: (typeof directTerminals)[0]) => {
-		const newId = $selectedTerminalId === terminal.url ? null : terminal.url;
+	const selectTerminal = (id: string) => {
+		const newId = $selectedTerminalId === id ? null : id;
 		selectedTerminalId.set(newId);
 		if (
 			newId &&
-			($settings?.showFilesOnTerminalSelect ?? true) &&
+			$config?.features?.show_files_on_terminal_select === true &&
 			window.matchMedia('(min-width: 1024px)').matches
 		)
 			showTabs.set('files');
+		return newId;
+	};
+
+	const selectDirect = async (terminal: (typeof directTerminals)[0]) => {
+		const newId = selectTerminal(terminal.url);
 
 		// Enable the selected direct terminal, disable all others
 		const updatedServers = ($settings?.terminalServers ?? []).map((s) => ({
@@ -119,14 +124,7 @@
 	};
 
 	const selectSystem = async (terminal: (typeof systemTerminals)[0]) => {
-		const newId = $selectedTerminalId === terminal.id ? null : terminal.id;
-		selectedTerminalId.set(newId);
-		if (
-			newId &&
-			($settings?.showFilesOnTerminalSelect ?? true) &&
-			window.matchMedia('(min-width: 1024px)').matches
-		)
-			showTabs.set('files');
+		selectTerminal(terminal.id);
 
 		// Disable all direct terminals when switching to a system terminal
 		if ($settings?.terminalServers?.some((s) => s.enabled)) {

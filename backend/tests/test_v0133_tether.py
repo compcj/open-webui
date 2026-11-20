@@ -58,25 +58,63 @@ async def test_disabled_tether_discovery_does_not_contact_relay():
     hub.presences.assert_not_awaited()
 
 
-def test_legacy_connections_payload_does_not_reset_new_settings():
+@pytest.fixture
+def connections_form():
     tree = ast.parse((ROOT / 'routers/configs.py').read_text(encoding='utf-8'))
     model = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ConnectionsConfigForm')
     ns = {'BaseModel': BaseModel, 'field_validator': field_validator}
     exec(compile(ast.Module(body=[model], type_ignores=[]), '<connections-form>', 'exec'), ns)
-    form = ns['ConnectionsConfigForm'](ENABLE_DIRECT_CONNECTIONS=True, ENABLE_BASE_MODELS_CACHE=False)
+    return ns['ConnectionsConfigForm']
+
+
+def test_legacy_connections_payload_does_not_reset_new_settings(connections_form):
+    form = connections_form(ENABLE_DIRECT_CONNECTIONS=True, ENABLE_BASE_MODELS_CACHE=False)
     assert 'ENABLE_TETHER' not in form.model_dump(exclude_unset=True)
     assert 'TERMINAL_PREVIEW_BASE_URL' not in form.model_dump(exclude_unset=True)
     assert form.ENABLE_TETHER is False
+    assert form.SHOW_FILES_ON_TERMINAL_SELECT is False
+    assert 'SHOW_FILES_ON_TERMINAL_SELECT' not in form.model_dump(exclude_unset=True)
 
 
-def test_environment_defaults_keep_tether_and_preview_disabled():
+@pytest.mark.asyncio
+async def test_terminal_selection_setting_survives_partial_updates(connections_form):
+    module = ast.parse((ROOT / 'routers/configs.py').read_text(encoding='utf-8'))
+    keys = next(
+        node.value
+        for node in module.body
+        if isinstance(node, ast.Assign) and node.targets[0].id == 'CONNECTIONS_CONFIG_KEYS'
+    )
+    storage = {}
+    ns = {
+        'Config': SimpleNamespace(
+            upsert=AsyncMock(side_effect=storage.update),
+            get_many=AsyncMock(side_effect=lambda *keys: {k: storage[k] for k in keys if k in storage}),
+        ),
+        'CONNECTIONS_CONFIG_KEYS': ast.literal_eval(keys),
+        'publish_event': AsyncMock(),
+        'EVENTS': SimpleNamespace(CONFIG_CONNECTIONS_UPDATED='updated'),
+    }
+    load_functions(
+        'routers/configs.py',
+        {'get_config_values', 'config_updates', 'set_connections_config', 'get_connections_config'},
+        ns,
+    )
+    for enabled in (True, False):
+        await ns['set_connections_config'](None, connections_form(SHOW_FILES_ON_TERMINAL_SELECT=enabled))
+        await ns['set_connections_config'](None, connections_form(ENABLE_DIRECT_CONNECTIONS=True))
+        assert storage['terminal.show_files_on_select'] is enabled
+        assert (await ns['get_connections_config'](None))['SHOW_FILES_ON_TERMINAL_SELECT'] is enabled
+
+
+def test_environment_defaults_keep_tether_preview_and_automatic_files_disabled():
     tree = ast.parse((ROOT / 'config.py').read_text(encoding='utf-8'))
     selected = [
         n
         for n in tree.body
         if isinstance(n, ast.Assign)
         and any(
-            isinstance(target, ast.Name) and target.id in {'ENABLE_TETHER', 'TERMINAL_PREVIEW_BASE_URL'}
+            isinstance(target, ast.Name)
+            and target.id in {'ENABLE_TETHER', 'TERMINAL_PREVIEW_BASE_URL', 'SHOW_FILES_ON_TERMINAL_SELECT'}
             for target in n.targets
         )
     ]
@@ -84,6 +122,7 @@ def test_environment_defaults_keep_tether_and_preview_disabled():
     exec(compile(ast.Module(body=selected, type_ignores=[]), '<config-defaults>', 'exec'), ns)
     assert ns['ENABLE_TETHER'] is False
     assert ns['TERMINAL_PREVIEW_BASE_URL'] == ''
+    assert ns['SHOW_FILES_ON_TERMINAL_SELECT'] is False
 
 
 @pytest.mark.asyncio

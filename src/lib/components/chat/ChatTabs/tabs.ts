@@ -132,21 +132,17 @@ export function activateTab(state: PanelTabs, id: string): PanelTabs {
 	};
 }
 
-export function openTab(state: PanelTabs, tab: PanelTab): PanelTabs {
-	return activateTab(
-		state.tabs.some((item) => item.id === tab.id)
-			? state
-			: {
-					...state,
-					tabs: [...state.tabs, tab],
-					groups: state.groups.map((group) =>
-						group.id === state.activeGroupId
-							? { ...group, tabIds: [...group.tabIds, tab.id] }
-							: group
-					)
-				},
-		tab.id
-	);
+export function openTab(state: PanelTabs, tab: PanelTab, activate = true): PanelTabs {
+	if (!state.tabs.some((item) => item.id === tab.id)) {
+		state = {
+			...state,
+			tabs: [...state.tabs, tab],
+			groups: state.groups.map((group) =>
+				group.id === state.activeGroupId ? { ...group, tabIds: [...group.tabIds, tab.id] } : group
+			)
+		};
+	}
+	return activate || !state.activeId ? activateTab(state, tab.id) : state;
 }
 
 export function openTabInSidePanel(state: PanelTabs, tab: PanelTab): PanelTabs {

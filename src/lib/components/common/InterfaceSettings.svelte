@@ -77,7 +77,6 @@
 	let richTextInput = true;
 	let showFormattingToolbar = false;
 	let showInputSelections = false;
-	let showFilesOnTerminalSelect = true;
 	let insertPromptAsRichText = false;
 	let promptAutocomplete = false;
 
@@ -363,7 +362,6 @@
 		richTextInput = currentSettings?.richTextInput ?? true;
 		showFormattingToolbar = currentSettings?.showFormattingToolbar ?? false;
 		showInputSelections = currentSettings?.showInputSelections ?? false;
-		showFilesOnTerminalSelect = currentSettings?.showFilesOnTerminalSelect ?? true;
 		insertPromptAsRichText = currentSettings?.insertPromptAsRichText ?? false;
 		promptAutocomplete = currentSettings?.promptAutocomplete ?? false;
 
@@ -1520,10 +1518,6 @@
 		</p>
 	</div>
 
-	<!-- Retired terminal setting: keep its translations.
-	{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.label')}
-	{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.description')}
-	-->
 	{#if hasTerminal}
 		<div>
 			<div class={settingRowClass}>
@@ -1552,33 +1546,6 @@
 			</div>
 			<p class={settingDescriptionClass}>
 				{$i18n.t('settings.personal.interface.terminalFileDisplay.description')}
-			</p>
-		</div>
-
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="show-files-on-terminal-select-label"
-					class={settingLabelClass}
-					for="show-files-on-terminal-select-label-control"
-				>
-					{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="show-files-on-terminal-select-label"
-						tooltip={true}
-						bind:state={showFilesOnTerminalSelect}
-						inherited={isDefaultSetting('showFilesOnTerminalSelect')}
-						on:change={() => {
-							saveSettings({ showFilesOnTerminalSelect });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.description')}
 			</p>
 		</div>
 	{/if}

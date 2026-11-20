@@ -1,12 +1,9 @@
 import type { ResourceComment } from '$lib/apis/comments';
-import type { Writable } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
 import sha256 from 'js-sha256';
 import { parse as parseYaml } from 'yaml';
 import DOMPurify, { type UponSanitizeAttributeHookEvent } from 'dompurify';
 import { WEBUI_BASE_URL } from '$lib/constants';
-import type { FileNavOpenRequest } from '$lib/stores';
-import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
 
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -2474,28 +2471,6 @@ export const parseFrontmatter = (content: string): Record<string, unknown> => {
 
 export const formatSkillName = (name) => {
 	return name.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-};
-
-/**
- * Open the file browser panel to display a specific file.
- * Used by both the direct tool execution path (client-side) and the
- * backend event path (server-side) so behaviour is consistent.
- *
- * Stores are passed in by the caller to keep this utility pure.
- */
-export const displayFileHandler = (
-	path: string,
-	stores: {
-		showTabs: Pick<Writable<boolean>, 'set'>;
-		showFileNavPath: Writable<FileNavOpenRequest | null>;
-	},
-	options: { page?: unknown } = {}
-) => {
-	if (path) {
-		stores.showTabs.set(true);
-		const page = normalizeDocumentTargetPage(options.page);
-		stores.showFileNavPath.set(page ? { path, page } : path);
-	}
 };
 
 export function groupReplies(items: ResourceComment[], parentId: string) {

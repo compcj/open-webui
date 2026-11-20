@@ -107,6 +107,7 @@
 	import XMark from '../icons/XMark.svelte';
 	import SplitPanel from '../icons/SplitPanel.svelte';
 	import { isSavedChatId } from '$lib/utils/chatId';
+	import { onTerminalFileDisplay, type TerminalFileDisplay } from '$lib/utils/terminal-files';
 
 	const i18n = getContext<any>('i18n');
 	const temporaryContext: any = getContext('temporary-context');
@@ -170,6 +171,7 @@
 	let sideViews: Record<string, SideChat> = {};
 	let viewEntry: ReturnType<typeof chatViewEntry> | null = null;
 	let viewReady = false;
+	let pendingFileDisplays: TerminalFileDisplay[] = [];
 	let viewError = '';
 	let switchVersion = 0;
 	let promotion: Promise<void> | null = null;
@@ -211,6 +213,7 @@
 	};
 
 	export function prepareChatSwitch() {
+		pendingFileDisplays = [];
 		stopTerminalChoice?.(false);
 		stopTerminalChoice = null;
 		captureView();
@@ -319,6 +322,7 @@
 	};
 	$: persistPanels(tabs, $selectedTerminalId, viewReady);
 	$: if (viewEntry && viewEntry.userId !== $user?.id) {
+		pendingFileDisplays = [];
 		viewReady = false;
 		viewEntry = null;
 		tabs = emptyTabs();
@@ -364,6 +368,7 @@
 			requestClose: () => Promise<boolean>;
 			browseDirectory?: (path: string) => unknown;
 			refreshDirectory?: () => unknown;
+			refreshFile?: (path: string) => unknown;
 			revealPage?: (page: number | null) => void;
 			captureView?: () => any;
 		}
@@ -513,12 +518,16 @@
 			}
 		};
 	};
-	const openPanel = (tab: PanelTab, inSidePanel = false) => {
+	const openPanel = (tab: PanelTab, placement: 'active' | 'side' | 'background' = 'active') => {
 		if (!viewReady || !viewEntry) return;
 		hasOpenedTabs = true;
-		tabs = inSidePanel ? openTabInSidePanel(tabs, tab) : openTab(tabs, tab);
-		changeChatView(viewEntry, { ...viewEntry.state, panels: tabs });
-		showTabs.set(true);
+		tabs =
+			placement === 'side'
+				? openTabInSidePanel(tabs, tab)
+				: openTab(tabs, tab, placement === 'active');
+		if (tabs !== viewEntry.state.panels)
+			changeChatView(viewEntry, { ...viewEntry.state, panels: tabs });
+		if (placement !== 'background') showTabs.set(true);
 	};
 	const openFiles = (selector = $selectedTerminalId, directory?: string, newTab = false) => {
 		if (selector ? !terminalAccessible(selector) : !showFilesTab) return;
@@ -559,23 +568,51 @@
 			}
 		}
 	};
-	const openFile = (path: string, selector: string, page?: number | null) => {
+	const openFile = (
+		path: string,
+		selector: string,
+		page?: number | null,
+		placement: 'active' | 'background' = 'active'
+	) => {
 		if (!terminalAccessible(selector)) return;
 		path = path.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
-		const id =
-			tabs.tabs.find(
-				(tab) =>
-					tab.kind === 'file' && !tab.untitled && tab.terminalId === selector && tab.path === path
-			)?.id ?? fileTabId(selector, path);
-		openPanel({
-			id,
-			kind: 'file',
-			label: path.split('/').pop() || path,
-			terminalId: selector,
-			path,
-			page
-		});
+		const existing = tabs.tabs.find(
+			(tab) =>
+				tab.kind === 'file' && !tab.untitled && tab.terminalId === selector && tab.path === path
+		);
+		const id = existing?.id ?? fileTabId(selector, path);
+		if (existing && page != null && page !== existing.page) {
+			tabs = { ...tabs, tabs: tabs.tabs.map((tab) => (tab.id === id ? { ...tab, page } : tab)) };
+		}
+		openPanel(
+			{
+				id,
+				kind: 'file',
+				label: path.split('/').pop() || path,
+				terminalId: selector,
+				path,
+				page
+			},
+			placement
+		);
 		if (page != null) fileViews[id]?.revealPage?.(page);
+	};
+	const applyFileDisplays = () => {
+		const requests = pendingFileDisplays;
+		pendingFileDisplays = [];
+		for (const request of requests) {
+			if (request.chatId !== (chatId || null) || request.terminalId !== $selectedTerminalId)
+				continue;
+			if (request.refreshOnly) {
+				if (!terminalAccessible(request.terminalId)) continue;
+				for (const tab of tabs.tabs) {
+					if (tab.terminalId === request.terminalId)
+						void fileViews[tab.id]?.refreshFile?.(request.path);
+				}
+			} else {
+				openFile(request.path, request.terminalId, request.page, 'background');
+			}
+		}
 	};
 	const newFile = () => {
 		if (!terminalFilesAvailable || !selectedConnection) return;
@@ -593,7 +630,7 @@
 	};
 	const openFeature = (
 		kind: 'artifacts' | 'preview' | 'voice' | 'comments' | 'side',
-		inSidePanel = false
+		placement: 'active' | 'side' = 'active'
 	) => {
 		if (!availableViews.some((view) => view.kind === kind && view.available)) return;
 		const view = availableViews.find((view) => view.kind === kind)!;
@@ -612,11 +649,11 @@
 					sideChatNumber,
 					initialPrompt
 				},
-				inSidePanel
+				placement
 			);
 			return;
 		}
-		openPanel({ id: kind, kind, label: view.label }, inSidePanel);
+		openPanel({ id: kind, kind, label: view.label }, placement);
 	};
 
 	type SplitDrop = PanelRect & { groupId: string; edge: SplitEdge | null };
@@ -1334,7 +1371,7 @@
 	)
 		sideChatRequest.set(null);
 	$: if (viewReady && $showTabs === 'side') {
-		if (canSideChat) openFeature('side', true);
+		if (canSideChat) openFeature('side', 'side');
 		else sideChatRequest.set(null);
 		showTabs.set(tabs.tabs.length > 0);
 	}
@@ -1347,7 +1384,7 @@
 		openFeature('comments');
 	}
 	$: if (viewReady && $showArtifacts && showArtifactsTab) {
-		openFeature('artifacts', true);
+		openFeature('artifacts', 'side');
 		showArtifacts.set(false);
 	}
 	$: if (viewReady && $showEmbeds && showPreviewTab) {
@@ -1356,6 +1393,14 @@
 	}
 	$: if (viewReady && $showCallOverlay) openFeature('voice');
 	$: if (viewReady && $showTabs === 'voice') openFeature('voice');
+	$: if (
+		pendingFileDisplays.length &&
+		viewReady &&
+		!chatLoading &&
+		(viewEntry?.chatId || null) === (chatId || null)
+	) {
+		applyFileDisplays();
+	}
 	$: if (viewReady && terminalFilesAvailable && ($showTabs === 'files' || $showFileNavDir)) {
 		const directory = $showFileNavDir;
 		showFileNavDir.set(null);
@@ -1406,6 +1451,11 @@
 	};
 
 	onMount(() => {
+		const unsubscribeFileDisplays = onTerminalFileDisplay((request) => {
+			if (request.chatId === (chatId || null) && request.terminalId === $selectedTerminalId) {
+				pendingFileDisplays = [...pendingFileDisplays, request];
+			}
+		});
 		const unregisterCapture = registerChatViewCapture(captureView);
 		const unsubscribeViews = chatViewChanges.subscribe(() => {
 			if (viewEntry && viewReady) {
@@ -1435,6 +1485,7 @@
 		init();
 
 		return () => {
+			unsubscribeFileDisplays();
 			unregisterCapture();
 			unsubscribeViews();
 			document.removeEventListener('keydown', handleWorkspaceShortcut, true);

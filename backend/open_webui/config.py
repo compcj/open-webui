@@ -224,6 +224,7 @@ if CUSTOM_NAME:
 ENABLE_DIRECT_CONNECTIONS = os.getenv('ENABLE_DIRECT_CONNECTIONS', 'False').lower() == 'true'
 ENABLE_DIRECT_INTEGRATIONS = os.getenv('ENABLE_DIRECT_INTEGRATIONS', 'False').lower() == 'true'
 ENABLE_TETHER = os.getenv('ENABLE_TETHER', 'False').lower() == 'true'
+SHOW_FILES_ON_TERMINAL_SELECT = os.getenv('SHOW_FILES_ON_TERMINAL_SELECT', 'False').lower() == 'true'
 TERMINAL_PREVIEW_BASE_URL = os.getenv('TERMINAL_PREVIEW_BASE_URL', '').strip().rstrip('/')
 
 # OLLAMA_BASE_URL
@@ -3012,6 +3013,7 @@ DEFAULT_CONFIG = {
     'direct.enable': ENABLE_DIRECT_CONNECTIONS,
     'direct.integrations.enable': ENABLE_DIRECT_INTEGRATIONS,
     'tether.enable': ENABLE_TETHER,
+    'terminal.show_files_on_select': SHOW_FILES_ON_TERMINAL_SELECT,
     'terminal.preview.base_url': TERMINAL_PREVIEW_BASE_URL,
     'ollama.enable': ENABLE_OLLAMA_API,
     'ollama.base_urls': OLLAMA_BASE_URLS,

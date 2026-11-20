@@ -13,6 +13,25 @@ import {
 
 const sideTab = (id: string): PanelTab => ({ id, kind: 'side', label: id });
 
+it('adds background file tabs without changing the selected tabs, pane or navigation history', () => {
+	const file: PanelTab = { id: 'report', kind: 'file', label: 'Report' };
+	const split = openTabInSidePanel(setMainChatTab(emptyTabs(), true), sideTab('side'));
+	const initial = activateTab(split, mainChatTabId);
+	const next = openTab(initial, file, false);
+	expect(next.tabs).toContainEqual(file);
+	expect(next.activeId).toBe(mainChatTabId);
+	expect(next.activeGroupId).toBe(initial.activeGroupId);
+	expect(next.groups.map((group) => group.activeId)).toEqual(
+		initial.groups.map((group) => group.activeId)
+	);
+	expect(next.layout).toEqual(initial.layout);
+	expect(next.history).toEqual(initial.history);
+
+	const otherPane = activateTab(next, 'side');
+	expect(openTab(otherPane, file, false)).toBe(otherPane);
+	expect(openTab(otherPane, file).activeId).toBe(file.id);
+});
+
 describe('opening a tab in the side panel', () => {
 	it('creates a right pane and keeps the main chat visible', () => {
 		const initial = openTab(setMainChatTab(emptyTabs(), true), {

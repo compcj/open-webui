@@ -143,6 +143,12 @@ Previously integrated v0.12.1 and v0.12.2 capabilities include: revision compari
 messages, Standard call avatars, Azure Realtime, and per-chat terminal file operations including
 notebooks, bulk deletion and ZIP downloads. File comparisons read from the same chat context.
 
+管理员可在「设置 → 扩展功能 → 终端」中为所有人开启「选择终端时显示文件」，默认关闭。
+桌面端开启后，选择终端会打开文件列表。模型通过 `display_file` 展示到标签页的文件会在后台打开，点击文件标签即可查看。
+
+In Admin Settings → Integrations → Terminal, admins can enable **Show Files on Terminal Select** for everyone.
+It defaults to off and applies to desktop terminal selection. Files displayed in tabs by `display_file` open in the background.
+
 共享聊天仅所有者可发起普通或 Realtime 通话，管理员也不能代替其他所有者；切换到他人的聊天会结束通话。
 旧转写继续保留作者归属与私人语音元数据过滤，普通语音听写保持原有权限。
 

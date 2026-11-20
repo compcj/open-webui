@@ -2648,6 +2648,7 @@ async def get_app_config(request: Request):
         'direct.enable',
         'direct.integrations.enable',
         'tether.enable',
+        'terminal.show_files_on_select',
         'terminal.preview.base_url',
         'terminal_server.connections',
         'folders.enable',
@@ -2770,6 +2771,7 @@ async def get_app_config(request: Request):
                     'enable_tools': ENABLE_TOOLS,
                     'enable_functions': ENABLE_FUNCTIONS,
                     'enable_tool_servers': ENABLE_TOOL_SERVERS,
+                    'show_files_on_terminal_select': config.get('terminal.show_files_on_select', False),
                     'enable_terminal_servers': ENABLE_TOOL_SERVERS
                     and any(
                         connection.get('enabled', True)

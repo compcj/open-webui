@@ -63,7 +63,6 @@
 		selectedFolder,
 		showEmbeds,
 		selectedTerminalId,
-		showFileNavPath,
 		showFileNavDir,
 		chatRequestQueues,
 		desktopEvent
@@ -84,7 +83,6 @@
 		processDetails,
 		removeAllDetails,
 		getCodeBlockContents,
-		displayFileHandler,
 		getUsageTokenCount,
 		isRasterImageContentType
 	} from '$lib/utils';
@@ -101,6 +99,7 @@
 	import { acquireWakeLock } from '$lib/utils/wakeLock';
 	import { routeAvatarAnimation } from '$lib/utils/voice-avatar';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
+	import { displayTerminalFile } from '$lib/utils/terminal-files';
 	import { getTemporaryConnectionSessionId } from '$lib/utils/connection-headers';
 	import {
 		fillReasoningEffortFromLastUsed,
@@ -2004,17 +2003,26 @@
 		const attachment = history.messages[message?.parentId]?.files?.find(
 			(file: any) => file.type === 'filesystem'
 		);
-		if (attachment) {
-			if (attachment.terminal_id && attachment.terminal_id !== $selectedTerminalId) return;
-			if (type === 'terminal:display_file' && terminalContext?.file?.path === data.path)
-				showFileNavDir.set(data.path);
+		if (attachment?.terminal_id && attachment.terminal_id !== $selectedTerminalId) return;
+		if (type === 'terminal:display_file') {
+			if (!data?.path || !$selectedTerminalId) return;
+			if (
+				attachment
+					? terminalContext?.file?.path !== data.path
+					: $settings?.terminalFileDisplay === 'inline'
+			)
+				return;
+			displayTerminalFile({
+				chatId: $chatId,
+				terminalId: $selectedTerminalId,
+				path: data.path,
+				page: data.page,
+				refreshOnly: !!attachment
+			});
 			return;
 		}
-		if (type === 'terminal:display_file') {
-			if (!data?.path) return;
-			if ($settings?.terminalFileDisplay === 'inline') return;
-			displayFileHandler(data.path, { showTabs, showFileNavPath }, { page: data?.page });
-		} else if (type === 'terminal:write_file' || type === 'terminal:replace_file_content') {
+		if (attachment) return;
+		if (type === 'terminal:write_file' || type === 'terminal:replace_file_content') {
 			if (!data?.path) return;
 			showFileNavDir.set(data.path);
 		} else if (type === 'terminal:run_command' && !terminalContext?.file) {

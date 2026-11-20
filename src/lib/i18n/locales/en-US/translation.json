@@ -4060,7 +4060,7 @@
 	"settings.personal.interface.sections.input.title": "Input",
 	"settings.personal.interface.sections.ui.title": "UI",
 	"settings.personal.interface.sections.voice.title": "Voice",
-	"settings.personal.interface.showFilesOnTerminalSelect.description": "Open the file browser after selecting a terminal.",
+	"settings.personal.interface.showFilesOnTerminalSelect.description": "Open the file browser when any user selects a terminal on desktop.",
 	"settings.personal.interface.showFilesOnTerminalSelect.label": "Show Files on Terminal Select",
 	"settings.personal.interface.showFormattingToolbar.description": "Show formatting controls in the rich text composer.",
 	"settings.personal.interface.showFormattingToolbar.label": "Show Formatting Toolbar",

@@ -274,6 +274,14 @@
 	export const hasUnsavedChanges = () => dirty || saving;
 	export const browseDirectory = (path: string) => loadDir(path);
 	export const refreshDirectory = () => !selectedFile && refreshBrowser();
+	export const refreshFile = (path: string) => {
+		if (!comparison && selectedFile && selectedFile === normalizePath(path)) {
+			return openEntry(
+				{ name: selectedFile.split('/').pop()!, type: 'file', size: 0 },
+				{ refresh: true }
+			);
+		}
+	};
 	export const revealPage = (page: number | null) => {
 		documentTargetPage = normalizeDocumentTargetPage(page);
 	};
@@ -2483,10 +2491,7 @@
 			if (comparison) return;
 
 			if (selectedFile) {
-				if (selectedFile === filePath) {
-					const fileName = selectedFile.split('/').pop() ?? '';
-					await openEntry({ name: fileName, type: 'file', size: 0 }, { refresh: true });
-				}
+				await refreshFile(filePath);
 			} else {
 				if (currentPath.startsWith(dir) || dir.startsWith(currentPath)) {
 					await refreshBrowser();
@@ -2519,7 +2524,7 @@
 							type: 'file',
 							writable: currentWritable
 						},
-						{ page: initialFile.page }
+						{ page: initialFile.page, refresh: true }
 					);
 				} else {
 					await loadDir(initialView?.directory ?? initialDirectory ?? savedPath, {
