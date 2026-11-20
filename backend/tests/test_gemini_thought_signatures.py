@@ -39,6 +39,102 @@ def tool_delta(*, signature=False, arguments='{}', name='test_tool', call_id='ca
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('grouped', [False, True])
+@pytest.mark.parametrize('indices', [({}, {'index': None}), ({'index': 0}, {'index': 0})], ids=['absent', 'repeated'])
+async def test_parallel_tool_calls_execute_and_finish_after_stop(stream_runtime, grouped, indices):
+    calls = [
+        {
+            **indices[0],
+            'id': 'call-a',
+            'type': 'function',
+            'function': {'name': 'search_web', 'arguments': '{"query":"first query"}'},
+            'extra_content': SIGNATURE,
+        },
+        {
+            **indices[1],
+            'id': 'call-b',
+            'type': 'function',
+            'function': {'name': 'search_web', 'arguments': '{"query":"second query"}'},
+        },
+    ]
+    batches = [calls] if grouped else [[call] for call in calls]
+    chunks = [{'choices': [{'index': 0, 'delta': {'role': 'assistant', 'tool_calls': batch}}]} for batch in batches]
+    queries = []
+
+    async def search_web(query):
+        queries.append(query)
+        return query + ' result'
+
+    def setup(ctx, ns, response_for):
+        load_functions(ns, 'utils/middleware.py', {'execute_tool_call'})
+        load_functions(ns, 'utils/tools.py', {'get_updated_tool_function'})
+        ctx['metadata']['tools'] = {
+            'search_web': {
+                'type': 'builtin',
+                'tool_id': 'builtin:search_web',
+                'callable': search_web,
+                'spec': {'parameters': {'type': 'object', 'properties': {'query': {'type': 'string'}}}},
+            }
+        }
+        ns['process_tool_result'].side_effect = lambda request, name, result, *args: (result, [], [])
+
+    await stream_runtime.run(
+        [*chunks, chat_chunk(finish_reason='stop'), 'data: [DONE]\n\n'],
+        follow_up=[chat_chunk('Finished', 'stop'), 'data: [DONE]\n\n'],
+        setup=setup,
+    )
+
+    assert queries == ['first query', 'second query']
+    stream_runtime.ns['generate_chat_completion'].assert_awaited_once()
+    messages = stream_runtime.ns['generate_chat_completion'].await_args.args[1]['messages']
+    assert [call for msg in messages for call in msg.get('tool_calls', [])] == [
+        {key: value for key, value in call.items() if key != 'index'} for call in calls
+    ]
+    assert [(msg['tool_call_id'], msg['content']) for msg in messages if msg['role'] == 'tool'] == [
+        ('call-a', 'first query result'),
+        ('call-b', 'second query result'),
+    ]
+    assert stream_runtime.saved['done'] is True
+    assert stream_runtime.ns['get_output_text'](stream_runtime.saved['output']) == 'Finished'
+
+
+@pytest.mark.asyncio
+async def test_repeated_indexless_declaration_keeps_one_signed_execution(calls_runtime):
+    ns = calls_runtime.ns
+    ns['new_tool_round'] = True
+    ns['prior_output'] = [{'type': 'function_call_output', 'call_id': 'reused', 'status': 'completed'}]
+    call = {'id': 'reused', 'function': {'name': 'write_record', 'arguments': '{"x":1}'}}
+    await ns['ingest_delta']([call, {**call, 'extra_content': SIGNATURE}])
+    await ns['ingest_delta']([{'id': 'reused', 'function': {'name': 'write_record', 'arguments': '{"x":2}'}}])
+    await ns['queue_stream_calls']()
+    await ns['execute_queued_calls']()
+    ns['execute_tool_call'].assert_awaited_once()
+    executed = ns['execute_tool_call'].await_args.args[-1]
+    assert executed['id'] != 'reused'
+    assert json.loads(executed['function']['arguments']) == {'x': 1}
+    assert ns['output'][0]['extra_content'] == SIGNATURE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('count', [1, 2])
+async def test_anonymous_fragment_needs_an_unambiguous_pending_call(calls_runtime, count):
+    ns = calls_runtime.ns
+    await ns['ingest_delta']([{'id': f'call-{idx}', 'function': {'name': 'write_record'}} for idx in range(count)])
+    await ns['ingest_delta']([{'function': {'arguments': '{"x":1}'}}])
+    await ns['queue_stream_calls']()
+    await ns['execute_queued_calls']()
+    if count == 1:
+        ns['execute_tool_call'].assert_awaited_once()
+        assert json.loads(ns['execute_tool_call'].await_args.args[-1]['function']['arguments']) == {'x': 1}
+    else:
+        ns['execute_tool_call'].assert_not_awaited()
+        assert {item['call_id']: item['status'] for item in ns['output'] if item['type'] == 'function_call'} == {
+            'call-0': 'failed',
+            'call-1': 'failed',
+        }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('late', [False, True])
 @pytest.mark.parametrize('temporary', [False, True])
 async def test_tool_signature_survives_stream_save_reload_and_followup(stream_runtime, late, temporary):
@@ -165,19 +261,29 @@ def test_model_switch_strips_both_provider_replay_formats(stream_runtime):
 
 
 @pytest.mark.asyncio
-async def test_interleaved_tool_signatures_arrive_without_function_deltas(calls_runtime):
+@pytest.mark.parametrize('indexed', [True, False])
+async def test_interleaved_tool_signatures_arrive_without_function_deltas(calls_runtime, indexed):
     ns = calls_runtime.ns
+    identities = [{'index': idx} if indexed else {'id': f'call-{idx}'} for idx in range(2)]
     calls = [
-        {'index': index, 'id': f'call-{index}', 'function': {'name': 'write_record', 'arguments': '{"x":'}}
-        for index in range(2)
+        {**identity, 'id': f'call-{idx}', 'function': {'name': 'write_record', 'arguments': '{"x":'}}
+        for idx, identity in enumerate(identities)
     ]
     await ns['ingest_delta'](calls)
     for index in [1, 0]:
-        await ns['ingest_delta']([{'index': index, 'function': {'arguments': f'{index}}}'}}])
+        identity = identities[index]
+        await ns['ingest_delta']([{**identity, 'function': {'arguments': f'{index}}}'}}])
         extra = {'google': {'thought_signature': f' opaque-{index}=\n'}}
-        await ns['ingest_delta']([{'index': index, 'extra_content': extra}])
-        await ns['ingest_delta']([{'index': index, 'extra_content': copy.deepcopy(extra)}])
-        await ns['ingest_delta']([{'index': index, 'extra_content': {'google': {'thought_signature': ''}}}])
+        await ns['ingest_delta']([{**identity, 'extra_content': extra}])
+        await ns['ingest_delta']([{**identity, 'extra_content': copy.deepcopy(extra)}])
+        await ns['ingest_delta']([{**identity, 'extra_content': {'google': {'thought_signature': ''}}}])
+    events = [entry.args[0] for entry in ns['emit_response_completion_event'].await_args_list]
+    assert [(e['item_id'], e['delta']) for e in events if e['type'] == 'response.function_call_arguments.delta'] == [
+        ('call-0', '{"x":'),
+        ('call-1', '{"x":'),
+        ('call-1', '1}'),
+        ('call-0', '0}'),
+    ]
     await ns['queue_stream_calls']()
     await ns['execute_queued_calls']()
     for index, item in enumerate(ns['output']):

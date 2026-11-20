@@ -160,6 +160,8 @@ def runtime():
             'append_to_text_field',
             'get_response_completion_event_data',
             '_deduplicate_tool_calls',
+            '_merge_streamed_tool_call',
+            '_complete_argument_object',
             '_split_tool_calls',
             'prepare_tool_execution',
             'tool_result_content',

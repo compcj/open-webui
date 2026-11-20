@@ -454,6 +454,99 @@ def merge_streamed_reasoning_details(target: list, details) -> None:
                 existing[key] = value
 
 
+def _complete_argument_object(arguments: str | None) -> bool:
+    try:
+        return isinstance(JSONCodec.loads(arguments), dict)
+    except (TypeError, ValueError, RecursionError):
+        return False
+
+
+def _merge_streamed_tool_call(
+    delta: dict, calls: list[dict], round_ids: dict[str, str], history: tuple[list[dict], ...]
+) -> tuple[dict, str] | None:
+    """Collect one Chat Completions delta and return its argument event, if present."""
+    index = delta.get('index')
+    provider_id = delta.get('id')
+    function = delta.get('function') or {}
+    arguments = function.get('arguments')
+    if arguments is not None and not isinstance(arguments, str):
+        arguments = JSONCodec.dumps(arguments)
+    signature = gemini_signature_fields(delta)
+    known_id = round_ids.get(provider_id)
+
+    if provider_id:
+        # Gemini can omit or repeat the index for distinct parallel calls. An explicit
+        # ID disambiguates them, including after a fresh round remapped a reused ID.
+        current = next(
+            (
+                call
+                for call in calls
+                if call['id'] == known_id and (index is None or call.get('index') in (None, index))
+            ),
+            None,
+        )
+        if current is None and index is not None:
+            # An indexed start without a provider ID already has a published local ID.
+            current = next(
+                (call for call in calls if call.get('index') == index and call['id'] not in round_ids.values()), None
+            )
+    else:
+        if index is None and (not calls or function.get('name') or not (arguments or signature)):
+            return None
+        matches = [call for call in calls if index is None or call.get('index') == index]
+        if len(matches) > 1:
+            # Unattributable fragments must never turn incomplete arguments into effects.
+            if arguments or signature or function.get('name'):
+                for call in matches:
+                    call['execution_error'] = INCOMPLETE_CALL_ERROR
+            return None
+        current = next(iter(matches), None)
+
+    if current is None:
+        call_id = known_id
+        if provider_id and call_id is None:
+            already_used = any(
+                item.get('call_id') == provider_id
+                for items in history
+                for item in items
+                if item.get('type') in ('function_call', 'function_call_output')
+            )
+            if not already_used:
+                call_id = provider_id
+        arguments = arguments or ''
+        current = {
+            **delta,
+            'id': call_id or output_id('fc'),
+            'function': {**function, 'name': function.get('name') or '', 'arguments': arguments},
+        }
+        calls.append(current)
+    else:
+        previous = current['function']
+        if (
+            index is None
+            and provider_id
+            and function.get('name')
+            and _complete_argument_object(arguments)
+            and _complete_argument_object(previous['arguments'])
+        ):
+            # Repeated whole declarations share an execution ID. Appending their JSON
+            # would turn them into multiple calls in _split_tool_calls.
+            if function['name'] == previous['name'] and arguments == previous['arguments']:
+                current.update(signature)
+            return None
+        current.update(signature)
+        if index is not None:
+            current['index'] = index
+        if function.get('name'):
+            previous['name'] = function['name']
+        if arguments is not None:
+            append_to_text_field(previous, 'arguments', arguments)
+
+    if provider_id:
+        round_ids[provider_id] = current['id']
+    return (current, arguments) if arguments is not None else None
+
+
 def _deduplicate_tool_calls(tool_calls: list[dict], handled_output: list[dict]) -> list[dict]:
     """Keep each execution call ID once; completed results remain authoritative across resumes."""
     seen = {
@@ -6314,78 +6407,14 @@ async def streaming_chat_response_handler(response, ctx):
 
                                     delta_tool_calls = delta.get('tool_calls', None)
                                     if delta_tool_calls:
+                                        argument_deltas = []
+                                        history = (prior_output, output) if new_tool_round else ()
                                         for delta_tool_call in delta_tool_calls:
-                                            tool_call_index = delta_tool_call.get('index')
-
-                                            if tool_call_index is not None:
-                                                # Check if the tool call already exists
-                                                current_response_tool_call = None
-                                                for response_tool_call in response_tool_calls:
-                                                    if response_tool_call.get('index') == tool_call_index:
-                                                        current_response_tool_call = response_tool_call
-                                                        break
-
-                                                if current_response_tool_call is None:
-                                                    # Add the new tool call
-                                                    delta_tool_call.setdefault('function', {})
-                                                    if delta_tool_call['function'].get('name') is None:
-                                                        delta_tool_call['function']['name'] = ''
-                                                    provider_call_id = delta_tool_call.get('id')
-                                                    if new_tool_round and provider_call_id:
-                                                        # Providers may restart IDs (e.g. call_0) after each
-                                                        # executed round. Keep one mapping for this response,
-                                                        # including duplicate entries and argument fragments.
-                                                        # Saved execution queues still use the original IDs.
-                                                        if provider_call_id not in round_tool_call_ids:
-                                                            existing_call_ids = {
-                                                                item.get('call_id')
-                                                                for item in prior_output + output
-                                                                if item.get('type')
-                                                                in ('function_call', 'function_call_output')
-                                                            }
-                                                            round_tool_call_ids[provider_call_id] = (
-                                                                output_id('fc')
-                                                                if provider_call_id in existing_call_ids
-                                                                else provider_call_id
-                                                            )
-                                                        delta_tool_call['id'] = round_tool_call_ids[provider_call_id]
-                                                    else:
-                                                        delta_tool_call['id'] = provider_call_id or output_id('fc')
-                                                    delta_arguments = delta_tool_call['function'].get('arguments')
-                                                    if not isinstance(delta_arguments, str):
-                                                        delta_tool_call['function']['arguments'] = (
-                                                            ''
-                                                            if delta_arguments is None
-                                                            else JSONCodec.dumps(delta_arguments)
-                                                        )
-                                                    response_tool_calls.append(delta_tool_call)
-                                                else:
-                                                    # Update the existing tool call
-                                                    current_response_tool_call.update(
-                                                        gemini_signature_fields(delta_tool_call)
-                                                    )
-                                                    delta_name = delta_tool_call.get('function', {}).get('name')
-                                                    delta_arguments = delta_tool_call.get('function', {}).get(
-                                                        'arguments'
-                                                    )
-
-                                                    if delta_name:
-                                                        current_response_tool_call['function']['name'] = delta_name
-
-                                                    if delta_arguments is not None:
-                                                        if not isinstance(delta_arguments, str):
-                                                            delta_arguments = JSONCodec.dumps(delta_arguments)
-                                                        current_response_tool_call.setdefault('function', {})
-                                                        if not isinstance(
-                                                            current_response_tool_call['function'].get('arguments'),
-                                                            str,
-                                                        ):
-                                                            current_response_tool_call['function']['arguments'] = ''
-                                                        append_to_text_field(
-                                                            current_response_tool_call['function'],
-                                                            'arguments',
-                                                            delta_arguments,
-                                                        )
+                                            argument_delta = _merge_streamed_tool_call(
+                                                delta_tool_call, response_tool_calls, round_tool_call_ids, history
+                                            )
+                                            if argument_delta is not None:
+                                                argument_deltas.append(argument_delta)
 
                                         # Emit pending tool calls in real-time as Responses events.
                                         if response_tool_calls:
@@ -6432,32 +6461,19 @@ async def streaming_chat_response_handler(response, ctx):
                                                     )
                                                     item['arguments'] = func.get('arguments', '')
 
-                                            for delta_tool_call in delta_tool_calls:
-                                                tool_call_index = delta_tool_call.get('index')
-                                                current_response_tool_call = next(
-                                                    (
-                                                        tc
-                                                        for tc in response_tool_calls
-                                                        if tc.get('index') == tool_call_index
-                                                    ),
-                                                    None,
-                                                )
+                                            for current_response_tool_call, delta_arguments in argument_deltas:
                                                 if current_response_tool_call not in pending_response_tool_calls:
                                                     continue
-                                                call_id = current_response_tool_call.get('id')
-                                                output_index, _ = output_by_call_id.get(call_id, (len(output) - 1, {}))
-                                                delta_arguments = delta_tool_call.get('function', {}).get('arguments')
-                                                if delta_arguments is not None:
-                                                    if not isinstance(delta_arguments, str):
-                                                        delta_arguments = JSONCodec.dumps(delta_arguments)
-                                                    await emit_response_completion_event(
-                                                        {
-                                                            'type': 'response.function_call_arguments.delta',
-                                                            'item_id': call_id,
-                                                            'output_index': output_index,
-                                                            'delta': delta_arguments,
-                                                        }
-                                                    )
+                                                call_id = current_response_tool_call['id']
+                                                output_index, _ = output_by_call_id[call_id]
+                                                await emit_response_completion_event(
+                                                    {
+                                                        'type': 'response.function_call_arguments.delta',
+                                                        'item_id': call_id,
+                                                        'output_index': output_index,
+                                                        'delta': delta_arguments,
+                                                    }
+                                                )
 
                                             data = None
                                             delta_type = 'tool_call'

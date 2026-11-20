@@ -74,7 +74,14 @@ def runtime():
     tree = load_functions(
         ns,
         'utils/middleware.py',
-        {'_split_tool_calls', '_deduplicate_tool_calls', 'append_to_text_field', 'prepare_tool_execution'},
+        {
+            '_split_tool_calls',
+            '_deduplicate_tool_calls',
+            '_merge_streamed_tool_call',
+            '_complete_argument_object',
+            'append_to_text_field',
+            'prepare_tool_execution',
+        },
     )
 
     def calls(node, name):
