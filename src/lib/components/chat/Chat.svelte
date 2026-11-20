@@ -2211,7 +2211,55 @@
 	};
 	$: syncChatRoom($socket, $chatId, $temporaryChatEnabled);
 
+	const openBrowserTabRequest = async (
+		event: any,
+		reply: (value: any) => void,
+		current: () => boolean
+	) => {
+		const data = event.data.data;
+		const message = history.messages[event.message_id];
+		if (
+			!message ||
+			message.role !== 'assistant' ||
+			(message.user_id && message.user_id !== $user?.id)
+		) {
+			reply({ status: 'unavailable' });
+			return;
+		}
+		// The first tool call can arrive before the new saved chat's HTTP response.
+		if (!$chatId && current()) chatId.set(event.chat_id);
+		await tick();
+		const active = () => current() && $socket?.id === data.session_id && $chatId === event.chat_id;
+		try {
+			const result = active()
+				? await terminalTabs?.openBrowserTabForTool(event.chat_id, data.terminal_id, active)
+				: undefined;
+			if (current()) reply(result ?? { status: 'unavailable' });
+		} catch {
+			if (current()) reply({ status: 'unconfirmed' });
+		}
+	};
+
 	const chatEventHandler = async (event: any, cb: any) => {
+		if (event?.data?.type === 'request:open_browser_tab') {
+			if (
+				embedded ||
+				event.shared ||
+				typeof cb !== 'function' ||
+				!$socket?.id ||
+				event.data.data?.session_id !== $socket.id
+			)
+				return;
+			if (temporaryController.identity || event.temporary_context) {
+				if (event.rpc_id)
+					await temporaryController
+						.receive(event, cb, openBrowserTabRequest)
+						.catch(reportTemporaryError);
+			} else {
+				await openBrowserTabRequest(event, cb, temporaryController.capture());
+			}
+			return;
+		}
 		// The root layout delegates browser RPCs through the page-local listener below.
 		if (isTemporaryContextRpc(event)) return;
 		if (
@@ -5660,6 +5708,11 @@
 		// Only send terminal_id if the model has terminal capability enabled
 		const terminalEnabled =
 			$config?.features?.enable_tool_servers && (model.info?.meta?.capabilities?.terminal ?? true);
+		const canOpenBrowserTab =
+			terminalEnabled &&
+			!embedded &&
+			requestTerminalId &&
+			requestTerminalId === $selectedTerminalId;
 		const useChatVariablesFallback =
 			!_chatId || $temporaryChatEnabled || isTemporaryChatId(_chatId);
 
@@ -5716,7 +5769,10 @@
 								: [])
 						]
 					: [],
-				features: getFeatures(),
+				features: {
+					...getFeatures(),
+					...(canOpenBrowserTab ? { terminal_browser_tab: true } : {})
+				},
 				image_generation_engine_id: getFeatures().image_generation
 					? imageGenerationEngineId
 					: undefined,

@@ -353,7 +353,7 @@
 		const connection = tabConnection(tab);
 		if (connection) {
 			delete sessionFailures[tab.id];
-			void createViewSession(owner, tab.id, connection);
+			return createViewSession(owner, tab.id, connection);
 		}
 	};
 
@@ -843,8 +843,31 @@
 			browserBaseUrl: proxyBase,
 			connection: connection ?? undefined
 		});
-		if (viewEntry && viewReady) startSession(viewEntry, tabs.tabs.find((tab) => tab.id === id)!);
+		if (viewEntry && viewReady)
+			return startSession(viewEntry, tabs.tabs.find((tab) => tab.id === id)!);
 	};
+	export async function openBrowserTabForTool(
+		id: string,
+		selector: string,
+		current: () => boolean
+	) {
+		await promotion;
+		await viewEntry?.load;
+		await terminalFeaturesReady;
+		if (
+			!current() ||
+			!viewReady ||
+			viewEntry?.chatId !== id ||
+			viewEntry.userId !== $user?.id ||
+			selector !== $selectedTerminalId ||
+			chatId !== id
+		)
+			return { status: 'unavailable' };
+		const pending = openBrowser(undefined, selector);
+		if (!pending) return { status: 'unavailable' };
+		const session = await pending;
+		return session ? { session_id: session.id, mode: session.mode } : { status: 'unconfirmed' };
+	}
 	const closeTab = async (id: string) => {
 		if (id === mainChatTabId) return;
 		if (closing.has(id)) return;
@@ -1262,10 +1285,11 @@
 			/* Files remain available when interactive terminals are disabled. */
 		}
 	};
+	let terminalFeaturesReady: Promise<void>;
 	$: {
 		selectedConnection;
 		chatId;
-		void checkTerminal();
+		terminalFeaturesReady = checkTerminal();
 	}
 
 	$: if (mounted && !chatLoading && $user?.id && chatId !== tabsChatId) {

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { writable } from 'svelte/store';
 import { getChatView, updateChatView } from '$lib/apis/chats/view';
 import { terminalRequest, type TerminalConnection } from '$lib/apis/terminal';
-import { createBrowserSession } from '$lib/apis/terminal/browser';
+import { createBrowserSession, type BrowserSession } from '$lib/apis/terminal/browser';
 import { isSavedChatId } from '$lib/utils/chatId';
 import {
 	emptyTabs,
@@ -21,6 +21,8 @@ export type EditorDraft = {
 	dirty: boolean;
 };
 
+type ViewSession = { id: string; mode?: BrowserSession['mode'] };
+
 type Entry = {
 	instanceId: string;
 	userId: string;
@@ -28,7 +30,7 @@ type Entry = {
 	state: ChatViewState;
 	drafts: Map<string, any>;
 	transient: Record<string, any>;
-	pending: Map<string, Promise<void>>;
+	pending: Map<string, Promise<ViewSession | undefined>>;
 	revision: number;
 	persistedRevision: number;
 	loaded: boolean;
@@ -181,17 +183,18 @@ export function createViewSession(entry: Entry, id: string, connection: Terminal
 	const pending = entry.pending.get(id);
 	if (pending) return pending;
 	const tab = entry.state.panels.tabs.find((tab) => tab.id === id);
-	if (!tab) return Promise.resolve();
+	if (!tab) return Promise.resolve(undefined);
 	delete entry.sessionErrors[id];
 	const request = (async () => {
 		try {
-			const session =
+			const session: ViewSession =
 				tab.kind === 'browser'
 					? await createBrowserSession(connection, entry.chatId, tab.path ?? '')
 					: await terminalRequest<{ id: string }>(connection, entry.chatId, '/api/terminals', {
 							method: 'POST'
 						});
 			updateViewTab(entry, id, { sessionId: session.id });
+			return { id: session.id, mode: session.mode };
 		} catch (error) {
 			entry.sessionErrors[id] = String(error);
 		} finally {

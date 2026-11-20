@@ -79,6 +79,10 @@ Tether has an independent admin switch, off by default. Saved personal tool/term
 
 Isolated Proxy preview requires a separate hostname configured through `TERMINAL_PREVIEW_BASE_URL`, HTTPS outside explicit local development, and a preview-only reverse-proxy route. It defaults off. Tickets last five minutes and active panels renew authorization every minute. Sandboxed pages cannot use DOM cookies/localStorage; use Chrome for full browser capabilities. See [deployment and limits](docs/terminal-preview.md).
 
+在主聊天中选定支持浏览器操作的 Open Terminal 后，模型可以调用 `browser_open_tab` 打开新的空白标签页，再用返回的会话 ID 在同一页导航、读取和点击。交互操作需要终端提供 Chrome。
+
+In the main chat, a model can call `browser_open_tab` on a selected Open Terminal with browser tools. The tool opens a blank tab and returns its session ID for navigation, reading and clicking. These interactions require Chrome on the terminal.
+
 ### 新增功能与扩展 / Fork additions and extensions
 
 以下是相对官方 v0.13.3 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。

@@ -159,6 +159,7 @@ from open_webui.utils.task import (
 )
 from open_webui.utils.tether import get_terminal_connections
 from open_webui.utils.terminals import filter_user_terminal_tools, upload_files_to_terminal
+from open_webui.utils.browser import register_browser_open_tab
 from open_webui.utils.tool_approval import (
     complete_tool_call,
     frozen_tool_context_key,
@@ -3466,6 +3467,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 tool_specs = tool_server.pop('specs', [])
 
                 for tool in tool_specs:
+                    if (
+                        terminal_id
+                        and tool_server.get('is_terminal') is True
+                        and tool['name'].startswith('browser_')
+                        and (terminal_id in terminal_connection_ids or tool_server.get('url') != terminal_id)
+                    ):
+                        # A tab's session_id is valid only on the terminal that created it.
+                        continue
                     tools_dict[tool['name']] = {
                         'spec': (
                             get_builtin_tool_spec(display_file)
@@ -3550,6 +3559,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     tools_dict[name] = {**tools_dict[name], 'file_tool': tool_dict}
 
         await filter_user_terminal_tools(request, user, tools_dict, metadata, extra_params)
+        register_browser_open_tab(tools_dict, metadata, event_caller)
 
         if tools_dict:
             # Always store resolved tools in metadata so downstream consumers
