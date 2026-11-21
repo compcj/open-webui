@@ -142,6 +142,7 @@
 	import ValvesModal from '../workspace/common/ValvesModal.svelte';
 	import Note from '../icons/Note.svelte';
 	import AskUserCard from './AskUserCard.svelte';
+	import type { AskUserPrompt } from './askUser';
 	import { goto } from '$app/navigation';
 	import InputModal from '../common/InputModal.svelte';
 	import Skeleton from './Messages/Skeleton.svelte';
@@ -150,16 +151,6 @@
 	import TaskList from './Messages/ResponseMessage/TaskList.svelte';
 
 	const i18n: any = getContext('i18n');
-
-	type AskUserPrompt = {
-		id?: string;
-		show: boolean;
-		questions: any[];
-		allowOther: boolean;
-		timeoutMs: number | null;
-		onConfirm: (value: any) => void;
-		onCancel: () => void;
-	};
 
 	export let onUpload: Function = (e) => {};
 	export let onChange: Function = () => {};

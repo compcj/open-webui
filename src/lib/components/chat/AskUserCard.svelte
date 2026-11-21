@@ -1,45 +1,27 @@
 <script lang="ts">
-	import { createEventDispatcher, getContext } from 'svelte';
-	import { onDestroy } from 'svelte';
+	import { createEventDispatcher, getContext, onDestroy } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
 	import { settings } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import {
+		getAskUserResult,
+		hasAskUserAnswer,
+		type AskUserAnswer,
+		type AskUserOption,
+		type AskUserQuestion,
+		type AskUserResult
+	} from './askUser';
 
 	const i18n: Writable<i18nType> = getContext('i18n');
-	const dispatch = createEventDispatcher();
-
-	type AskUserOption = {
-		label: string;
-		description: string;
-	};
-
-	type AskUserQuestion = {
-		id: string;
-		header: string;
-		question: string;
-		options: AskUserOption[];
-		allow_other?: boolean;
-	};
-
-	type DraftAnswer =
-		| {
-				type: 'option';
-				option_index: number;
-				label: string;
-				description: string;
-		  }
-		| {
-				type: 'other';
-				text: string;
-		  };
+	const dispatch = createEventDispatcher<{ confirm: AskUserResult; cancel: void }>();
 
 	export let show = false;
 	export let questions: AskUserQuestion[] = [];
 	export let allowOther = true;
 	export let timeoutMs: number | null = null;
 
-	let answers: Record<string, DraftAnswer> = {};
+	let answers: Record<string, AskUserAnswer> = {};
 	let questionIndex = 0;
 	let wasOpen = false;
 	let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -76,106 +58,48 @@
 
 	onDestroy(clearAutoCancel);
 
-	const questionAllowsOther = (question: AskUserQuestion) => question.allow_other ?? allowOther;
-
 	$: question = questions[questionIndex];
 	$: selectedAnswer = question ? answers[question.id] : undefined;
+	$: hasOptions = Boolean(question?.options?.length);
+	$: result = getAskUserResult(questions, answers);
+	$: direction = ($settings?.chatDirection?.toLowerCase() ?? 'auto') as 'ltr' | 'rtl' | 'auto';
 
-	const hasAnswers = (selected = answers) =>
-		questions.length > 0 &&
-		questions.every((question) => {
-			const answer = selected[question.id];
-			return answer?.type === 'option' || (answer?.type === 'other' && answer.text.trim() !== '');
-		});
-
-	$: complete = hasAnswers(answers);
-
-	const submit = (selected = answers) => {
-		if (!hasAnswers(selected)) {
-			return;
-		}
-
-		const normalized: Record<string, DraftAnswer> = {};
-		for (const question of questions) {
-			const answer = selected[question.id];
-			if (answer?.type === 'option') {
-				normalized[question.id] = answer;
-			} else if (answer?.type === 'other') {
-				normalized[question.id] = {
-					type: 'other',
-					text: answer.text.trim()
-				};
-			}
-		}
-
+	const submit = (result: AskUserResult | null) => {
+		if (!result) return;
+		clearAutoCancel();
 		show = false;
-		dispatch('confirm', {
-			status: 'answered',
-			answers: normalized
-		});
+		dispatch('confirm', result);
 	};
 
-	const advance = (selected = answers) => {
+	const advance = () => {
+		if (!hasAskUserAnswer(answers[question.id])) return;
 		if (questionIndex < questions.length - 1) {
 			questionIndex += 1;
-		} else if (hasAnswers(selected)) {
-			submit(selected);
+		} else {
+			submit(getAskUserResult(questions, answers));
 		}
 	};
 
-	const selectOption = (question: AskUserQuestion, option: AskUserOption, index: number) => {
-		const selected: Record<string, DraftAnswer> = {
+	const selectOption = (option: AskUserOption, index: number) => {
+		answers = {
 			...answers,
 			[question.id]: {
 				type: 'option',
 				option_index: index,
 				label: option.label,
-				description: option.description
+				description: option.description ?? ''
 			}
 		};
-		answers = selected;
-		advance(selected);
+		advance();
 	};
 
-	const selectOther = (question: AskUserQuestion) => {
-		const existing = answers[question.id];
-		answers = {
-			...answers,
-			[question.id]: {
-				type: 'other',
-				text: existing?.type === 'other' ? existing.text : ''
-			}
-		};
-	};
-
-	const updateOther = (question: AskUserQuestion, text: string) => {
-		answers = {
-			...answers,
-			[question.id]: {
-				type: 'other',
-				text
-			}
-		};
-	};
-
-	const isSelectedOption = (question: AskUserQuestion, index: number) => {
-		const answer = answers[question.id];
-		return answer?.type === 'option' && answer.option_index === index;
-	};
-
-	const isSelectedOther = (question: AskUserQuestion) => answers[question.id]?.type === 'other';
-
-	const otherText = (question: AskUserQuestion) => {
-		const answer = answers[question.id];
-		return answer?.type === 'other' ? answer.text : '';
+	const setTextAnswer = (text: string) => {
+		answers = { ...answers, [question.id]: { type: 'other', text } };
 	};
 </script>
 
 {#if show}
-	<section
-		dir={$settings?.chatDirection ?? 'auto'}
-		class="my-1 rounded-2xl bg-gray-50/70 px-3.5 py-3 dark:bg-white/[0.035]"
-	>
+	<section dir={direction} class="my-1 rounded-2xl bg-gray-50/70 px-3.5 py-3 dark:bg-white/[0.035]">
 		<div class="space-y-2">
 			{#if question}
 				{#key question.id}
@@ -201,29 +125,32 @@
 						<div class="space-y-1">
 							<div class="space-y-0.5">
 								{#each question.options || [] as option, optionIndex}
+									{@const selected =
+										selectedAnswer?.type === 'option' &&
+										selectedAnswer.option_index === optionIndex}
 									<button
 										type="button"
-										class="group flex w-full min-w-0 items-baseline gap-2 rounded-lg py-1.5 text-start transition-colors {isSelectedOption(
-											question,
-											optionIndex
-										)
+										aria-pressed={selected}
+										class="group flex w-full min-w-0 items-baseline gap-2 rounded-lg py-1.5 text-start transition-colors {selected
 											? 'text-gray-950 dark:text-white'
 											: 'text-gray-700 hover:text-gray-950 dark:text-gray-300 dark:hover:text-white'}"
-										on:click={() => selectOption(question, option, optionIndex)}
+										on:click={() => selectOption(option, optionIndex)}
 									>
-										<span class="min-w-0 shrink-0 text-xs">{option.label}</span>
-										<Tooltip
-											as="span"
-											className="min-w-0 flex-1"
-											content={option.description}
-											placement="top-start"
-										>
-											<span
-												class="block truncate text-xs leading-relaxed text-gray-500 transition-colors group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+										<span class="min-w-0 break-words text-xs">{option.label}</span>
+										{#if option.description}
+											<Tooltip
+												as="span"
+												className="min-w-0 flex-1"
+												content={option.description}
+												placement="top-start"
 											>
-												{option.description}
-											</span>
-										</Tooltip>
+												<span
+													class="block truncate text-xs leading-relaxed text-gray-500 transition-colors group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+												>
+													{option.description}
+												</span>
+											</Tooltip>
+										{/if}
 										{#if optionIndex === 0}
 											<span
 												class="shrink-0 rounded-full bg-gray-200/70 px-1.5 py-0.5 text-[0.625rem] text-gray-500 dark:bg-white/[0.08] dark:text-gray-400"
@@ -235,32 +162,21 @@
 								{/each}
 							</div>
 
-							{#if questionAllowsOther(question)}
-								<div class="flex min-w-0 items-baseline gap-2 rounded-lg py-1.5">
-									<div
-										class="shrink-0 text-xs {isSelectedOther(question)
-											? 'text-gray-950 dark:text-white'
-											: 'text-gray-700 dark:text-gray-300'}"
-									>
-										{$i18n.t('Other')}
-									</div>
-									<input
-										aria-label={$i18n.t('Other')}
-										dir={$settings?.chatDirection ?? 'auto'}
-										class="min-w-0 flex-1 bg-transparent text-xs text-gray-800 outline-hidden placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-500"
+							{#if question.allow_other ?? allowOther}
+								<label class="block space-y-1 py-1">
+									{#if hasOptions}
+										<span class="text-xs text-gray-700 dark:text-gray-300">{$i18n.t('Other')}</span>
+									{/if}
+									<textarea
+										aria-label={hasOptions ? $i18n.t('Other') : question.question}
+										dir={direction}
+										rows={hasOptions ? 2 : 4}
+										class="block w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-transparent px-2.5 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:border-gray-400 dark:border-gray-700 dark:text-gray-100"
 										placeholder={$i18n.t('Type your answer')}
-										value={otherText(question)}
-										on:focus={() => selectOther(question)}
-										on:input={(event) =>
-											updateOther(question, (event.currentTarget as HTMLInputElement).value)}
-										on:keydown={(event) => {
-											if (event.key === 'Enter') {
-												event.preventDefault();
-												advance();
-											}
-										}}
-									/>
-								</div>
+										value={selectedAnswer?.type === 'other' ? selectedAnswer.text : ''}
+										on:input={(event) => setTextAnswer(event.currentTarget.value)}
+									></textarea>
+								</label>
 							{/if}
 						</div>
 					</div>
@@ -289,7 +205,8 @@
 					<button
 						type="button"
 						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-						on:click={() => (questionIndex += 1)}
+						disabled={!hasAskUserAnswer(selectedAnswer)}
+						on:click={advance}
 					>
 						{$i18n.t('Next')}
 					</button>
@@ -297,8 +214,8 @@
 					<button
 						type="button"
 						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
-						disabled={!complete}
-						on:click={() => submit()}
+						disabled={!result}
+						on:click={() => submit(result)}
 					>
 						{$i18n.t('Submit answers')}
 					</button>

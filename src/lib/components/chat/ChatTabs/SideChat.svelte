@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { AskUserResult } from '../askUser';
 	import { resolveToolApprovalMode } from '$lib/utils/toolPermissions';
 	import { getContext, onMount, setContext, tick } from 'svelte';
 	import type { TerminalCredential } from '$lib/apis/terminal';
@@ -333,8 +334,11 @@
 		onConfirm: (value: any) => resolveInteraction(interaction, value),
 		onCancel: () => resolveInteraction(interaction, { status: 'cancelled', answers: {} })
 	};
-	const resolvePendingAskUser = async (action: 'answer' | 'reject', answers?: unknown) => {
-		const { message, call } = pendingAskUser;
+	const resolvePendingAskUser = async (
+		{ message, call }: NonNullable<typeof pendingAskUser>,
+		action: 'answer' | 'reject',
+		answers?: unknown
+	) => {
 		error = '';
 		try {
 			await resolveChatMessageToolCall(
@@ -358,18 +362,15 @@
 			.filter((message) => (message.user_id ? message.user_id === $user?.id : !isShared))
 			.map(getPendingAskUserFromMessage)
 			.find(Boolean) ?? null;
-	$: savedAskUserPrompt = pendingAskUser
-		? {
-				show: true,
-				questions: Array.isArray(pendingAskUser.args?.questions)
-					? pendingAskUser.args.questions
-					: [],
-				allowOther: pendingAskUser.args?.allow_other !== false,
-				timeoutMs: null,
-				onConfirm: (value: any) => void resolvePendingAskUser('answer', value?.answers ?? {}),
-				onCancel: () => void resolvePendingAskUser('reject')
-			}
-		: null;
+	$: savedAskUserPrompt = ((pending) =>
+		pending
+			? {
+					...pending.prompt,
+					onConfirm: (value: AskUserResult) =>
+						void resolvePendingAskUser(pending, 'answer', value.answers),
+					onCancel: () => void resolvePendingAskUser(pending, 'reject')
+				}
+			: null)(pendingAskUser);
 	let system = [
 		systemPrompt,
 		'This is a separate side conversation. Earlier messages are reference context only. Answer the side question; do not continue the parent task.'

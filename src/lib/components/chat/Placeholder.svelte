@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { AskUserPrompt } from './askUser';
 	import type { ImageGenerationEngineOption } from '$lib/apis/images';
 	import type { TerminalContext } from '$lib/types';
 	import { toast } from 'svelte-sonner';
@@ -108,7 +109,7 @@
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
 	export let onQueueDelete: (id: string) => void = () => {};
-	export let askUser = {
+	export let askUser: AskUserPrompt = {
 		show: false,
 		questions: [],
 		allowOther: true,

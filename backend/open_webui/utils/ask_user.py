@@ -1,9 +1,37 @@
 from collections.abc import Callable
+from typing import Annotated
+
+from pydantic import Field
+from typing_extensions import NotRequired, TypedDict
 
 from open_webui.utils.json_codec import JSONCodec
 
 
 ASK_USER_NAME = 'ask_user'
+
+
+class AskUserOption(TypedDict):
+    label: str
+    description: NotRequired[str]
+
+
+class AskUserQuestion(TypedDict):
+    id: str
+    header: NotRequired[str]
+    question: str
+    allow_other: NotRequired[Annotated[bool, Field(description='Legacy field. Typed answers are always available.')]]
+    # Check option counts at runtime so errors can name the question in every provider mode.
+    options: NotRequired[
+        Annotated[
+            list[str | AskUserOption],
+            Field(
+                description='Omit options or use [] for a text question. For a choice question, give 2-4 presets, '
+                'with the recommendation first. Use labels like "Local" or objects like {"label":"Shared"} '
+                'with an optional description.',
+                examples=[[], ['Local', {'label': 'Shared'}, {'label': 'Both', 'description': 'Set up both'}]],
+            ),
+        ]
+    ]
 
 
 def get_ask_user_tool_calls(tool_calls: list[dict]) -> tuple[list[dict], str | None]:
@@ -31,7 +59,6 @@ def normalize_ask_user_request(arguments: dict) -> dict:
 
     normalized_questions = []
     seen_ids = set()
-    allow_other = bool(arguments.get('allow_other', True))
     for index, question in enumerate(questions):
         if not isinstance(question, dict):
             raise ValueError('Each question must be an object.')
@@ -43,19 +70,26 @@ def normalize_ask_user_request(arguments: dict) -> dict:
             raise ValueError(f'Duplicate question id: {question_id}')
         seen_ids.add(question_id)
 
-        options = question.get('options')
-        if not isinstance(options, list) or not 2 <= len(options) <= 3:
-            raise ValueError('Each question requires 2-3 options.')
+        options = question.get('options', [])
+        if not isinstance(options, list) or (options and not 2 <= len(options) <= 4):
+            raise ValueError(
+                f'Invalid options for question "{question_id}". Omit options (or use []) for a text question, '
+                'or provide 2-4 preset options for a choice question.'
+            )
 
         normalized_options = []
         for option in options:
+            if isinstance(option, str):
+                option = {'label': option}
             if not isinstance(option, dict):
-                raise ValueError('Each option must be an object.')
-            label = str(option.get('label') or '').strip()[:80]
-            description = str(option.get('description') or '').strip()[:240]
-            if not label or not description:
-                raise ValueError('Each option requires a label and description.')
-            normalized_options.append({'label': label, 'description': description})
+                raise ValueError(f'Options for question "{question_id}" must be strings or objects with a label.')
+            label = option.get('label')
+            description = option.get('description', '')
+            if not isinstance(label, str) or not label.strip() or not isinstance(description, str):
+                raise ValueError(
+                    f'Options for question "{question_id}" require a non-empty label and optional text description.'
+                )
+            normalized_options.append({'label': label.strip()[:80], 'description': description.strip()[:240]})
 
         question_text = str(question.get('question') or '').strip()[:500]
         if not question_text:
@@ -67,7 +101,7 @@ def normalize_ask_user_request(arguments: dict) -> dict:
                 'header': str(question.get('header') or '').strip()[:48] or f'Question {index + 1}',
                 'question': question_text,
                 'options': normalized_options,
-                'allow_other': bool(question.get('allow_other', allow_other)),
+                'allow_other': True,
             }
         )
 
@@ -77,9 +111,39 @@ def normalize_ask_user_request(arguments: dict) -> dict:
 
     return {
         'questions': normalized_questions,
-        'allow_other': allow_other,
+        'allow_other': True,
         'timeout_ms': timeout_ms,
     }
+
+
+def validate_ask_user_answers(questions: list[dict], answers: object) -> str | None:
+    """Check submitted answers without changing the original payload."""
+    if not isinstance(answers, dict) or answers.keys() != {question['id'] for question in questions}:
+        return 'ask_user requires one non-blank answer for each question ID.'
+
+    error = 'ask_user requires answers with non-blank text or selected options.'
+    for question in questions:
+        answer = answers[question['id']]
+        if isinstance(answer, dict):
+            answer_type = answer.get('type')
+            if answer_type == 'other':
+                answer = answer.get('text')
+            elif answer_type == 'option':
+                index = answer.get('option_index')
+                if type(index) is not int or not 0 <= index < len(question['options']):
+                    return error
+                preset = question['options'][index]
+                if (
+                    answer.get('label') != preset['label']
+                    or answer.get('description', preset['description']) != preset['description']
+                ):
+                    return error
+                continue
+            else:
+                return error
+        if not isinstance(answer, str) or not answer.strip():
+            return error
+    return None
 
 
 def stage_ask_user_tool_calls(

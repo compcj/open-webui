@@ -16,7 +16,9 @@ from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.models.users import Users
 from open_webui.socket.main import get_event_emitter
+from open_webui.utils.ask_user import normalize_ask_user_request, validate_ask_user_answers
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.tool_calling import parse_arguments
 
 
 _FROZEN_CONTEXT_TTL = 1800
@@ -239,12 +241,12 @@ async def resolve_tool_call_output(
         )
         if not function_call:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Tool call not found.')
-        function_call.setdefault('call_id', form_data.call_id)
         tool_name = function_call.get('name')
 
         if function_call.get('native') is not None:
             from open_webui.utils.auth import decode_token
 
+            function_call.setdefault('call_id', form_data.call_id)
             token = (message.get('meta') or {}).get('agent')
             binding = decode_token(token) if isinstance(token, str) else None
             if (
@@ -329,10 +331,16 @@ async def resolve_tool_call_output(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail='Tool call does not accept answers.'
                 )
-            if form_data.answers is None and not form_data.timed_out:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail='Answers are required for ask_user.'
-                )
+            if not form_data.timed_out:
+                try:
+                    prompt = normalize_ask_user_request(parse_arguments(function_call.get('arguments')))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail='The saved ask_user questions cannot be read. Ask a new question to continue.',
+                    ) from None
+                if error := validate_ask_user_answers(prompt['questions'], form_data.answers):
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
             function_call['status'] = 'completed'
             answer_payload = (
                 {'status': 'cancelled', 'answers': {}, 'timed_out': True}
@@ -349,6 +357,7 @@ async def resolve_tool_call_output(
                 }
             )
 
+        function_call.setdefault('call_id', form_data.call_id)
         message['done'] = False
         pending = pending_tool_calls(output)
         resume = None

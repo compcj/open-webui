@@ -812,9 +812,9 @@ function parseToolArguments(args: unknown): Record<string, unknown> {
 		: {};
 }
 
-export function getPendingAskUserFromMessage<T extends { role?: string; output?: unknown }>(
-	message: T
-) {
+export function getPendingAskUserFromMessage<
+	T extends { id?: string; role?: string; output?: unknown }
+>(message: T) {
 	if (message?.role !== 'assistant' || !Array.isArray(message.output)) {
 		return null;
 	}
@@ -827,9 +827,23 @@ export function getPendingAskUserFromMessage<T extends { role?: string; output?:
 			(item?.call_id || item?.id)
 	);
 
-	if (call) {
-		return { message, call, args: parseToolArguments(call.arguments) };
-	}
+	if (!call) return null;
 
-	return null;
+	const args = parseToolArguments(call.arguments);
+	const questions = Array.isArray(args.questions) ? args.questions : [];
+	// Saved builtins predating free-form questions can have false at either level.
+	const builtin = call.is_ask_user === true || (call.is_ask_user == null && call.native == null);
+	return {
+		message,
+		call,
+		prompt: {
+			id: JSON.stringify([message.id, call.call_id || call.id]),
+			show: true,
+			questions: builtin
+				? questions.map((q) => (q?.allow_other === false ? { ...q, allow_other: true } : q))
+				: questions,
+			allowOther: builtin || args.allow_other !== false,
+			timeoutMs: null
+		}
+	};
 }

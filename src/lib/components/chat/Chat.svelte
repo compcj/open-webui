@@ -124,6 +124,7 @@
 		getPendingAskUserFromMessage,
 		setOutputText
 	} from './Messages/structuredOutput';
+	import type { AskUserResult } from './askUser';
 
 	import {
 		addChatVoiceMessage,
@@ -1318,30 +1319,22 @@
 	};
 
 	$: pendingAskUser = $temporaryChatEnabled ? null : findPendingAskUser(history);
-	$: savedAskUserPrompt = pendingAskUser
-		? {
-				show: true,
-				questions: Array.isArray(pendingAskUser.args?.questions)
-					? pendingAskUser.args.questions
-					: [],
-				allowOther: pendingAskUser.args?.allow_other !== false,
-				timeoutMs: null,
-				onConfirm: (value) => {
-					void answerPendingAskUser(
-						pendingAskUser.message.id,
-						pendingAskUser.call.call_id || pendingAskUser.call.id,
-						value?.answers ?? {},
-						false
-					);
-				},
-				onCancel: () => {
-					void rejectPendingAskUser(
-						pendingAskUser.message.id,
-						pendingAskUser.call.call_id || pendingAskUser.call.id
-					);
+	$: savedAskUserPrompt = ((pending) =>
+		pending
+			? {
+					...pending.prompt,
+					onConfirm: (value: AskUserResult) => {
+						void answerPendingAskUser(
+							pending.message.id,
+							pending.call.call_id || pending.call.id,
+							value.answers
+						);
+					},
+					onCancel: () => {
+						void rejectPendingAskUser(pending.message.id, pending.call.call_id || pending.call.id);
+					}
 				}
-			}
-		: null;
+			: null)(pendingAskUser);
 
 	$: socketAskUserPrompt = ((interaction: BrowserInteraction | undefined) => ({
 		id: interaction?.id,

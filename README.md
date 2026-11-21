@@ -113,6 +113,12 @@ Configure an optional **intelligence score (an integer from 0 to 99)** in the mo
 badge appears before the name in the model picker and `@` model suggestions. Leave it empty to hide
 the badge; zero is a valid score. Scores are saved with the model configuration and are for display only.
 
+**询问用户 / Ask User** — 模型每次可用 `ask_user` 提出 1–3 道题。选择题提供 2–4 个预设选项，也可自填答案。填空题支持直接粘贴多行日志、命令输出或错误信息。文本框内按回车换行，点击“下一步”或“提交答案”确认。
+
+The model can mix 1–3 questions in one `ask_user` call. Choices offer 2–4 presets and a write-in
+answer. Text questions accept multiline logs, command output, or numbers such as `00123`. Press
+Enter for a new line and use **Next** or **Submit answers** to confirm.
+
 ### 功能与设计决策差异 / Behavior and design differences
 
 表中明确注明沿用上游的部分属于升级兼容约束；分支差异体现在其余配置、权限、数据和执行规则。
