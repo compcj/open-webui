@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy.exc import OperationalError
 
+from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
@@ -51,9 +52,23 @@ async def agent_access(monkeypatch):
         'enabled': True,
         'config': {
             'access_grants': [{'principal_type': 'user', 'principal_id': actor.id, 'permission': 'read'}],
-            'contexts': {'chat': {'context_id': 'chat_id'}},
         },
     }
+    template = {'id': 'sandbox', 'data': {'scope': 'chat'}}
+    selector = terminals.template_terminal_id(connection['id'], template['id'])
+    grants = {actor.id}
+    monkeypatch.setattr(
+        AccessGrants,
+        'has_access',
+        AsyncMock(
+            side_effect=lambda user_id, kind, resource, level: (
+                user_id in grants and kind == 'terminal' and resource == selector and level == 'read'
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        terminals, 'server_request', AsyncMock(side_effect=lambda *_args, **_kwargs: copy.deepcopy(template))
+    )
     state = SimpleNamespace(
         config_error=None,
         sent=[],
@@ -85,7 +100,7 @@ async def agent_access(monkeypatch):
 
     headers_module.build_tool_server_headers = build_headers
     monkeypatch.setitem(sys.modules, headers_module.__name__, headers_module)
-    metadata = {'terminal_id': 'terminal', 'chat_id': 'chat', 'message_id': 'reply', 'task_id': 'task'}
+    metadata = {'terminal_id': selector, 'chat_id': 'chat', 'message_id': 'reply', 'task_id': 'task'}
     message = {
         'user_id': actor.id,
         'done': False,
@@ -120,7 +135,11 @@ async def agent_access(monkeypatch):
             state.pending.set()
 
     monkeypatch.setattr(Chats, 'edit_message_output', edit_message)
-    monkeypatch.setattr(Chats, 'get_accessible_chat_by_id', AsyncMock(return_value=SimpleNamespace(user_id=actor.id)))
+    monkeypatch.setattr(
+        Chats,
+        'get_accessible_chat_by_id',
+        AsyncMock(return_value=SimpleNamespace(user_id=actor.id, meta={}, chat={'terminal_id': selector})),
+    )
     monkeypatch.setattr(
         Chats, 'get_agent_approval_output', AsyncMock(side_effect=lambda *_: copy.deepcopy(message['output']))
     )
@@ -136,6 +155,7 @@ async def agent_access(monkeypatch):
     request = Request({'type': 'http', 'method': 'POST', 'path': '/', 'headers': [], 'app': app})
     transport = await TerminalTransport.resolve(request, actor, metadata)
     transport.session_id = 'remote-session'
+    message['meta']['agent_execution']['terminal_instance'] = transport.terminal_instance
 
     async def send(raw):
         frame = json.loads(raw)
@@ -149,9 +169,10 @@ async def agent_access(monkeypatch):
     output.state = {
         'provider': 'codex',
         'model': 'model',
-        'terminal_id': 'terminal',
+        'terminal_id': selector,
         'cwd': '/workspace',
         'terminal_identity': message['meta']['agent_execution']['terminal_identity'],
+        'terminal_instance': transport.terminal_instance,
         'terminal_context': 'chat:chat',
     }
 
@@ -186,13 +207,13 @@ async def agent_access(monkeypatch):
         elif kind == 'disabled':
             connection['enabled'] = False
         elif kind == 'context':
-            connection['config']['contexts']['chat'] = False
+            grants.clear()
         elif kind == 'global':
             monkeypatch.setattr(terminals, 'ENABLE_TOOL_SERVERS', False)
         elif kind == 'url':
             connection['url'] = 'http://another-terminal'
         elif kind == 'context_identity':
-            connection['config']['contexts']['chat'] = {'context_id': 'default'}
+            template['data']['scope'] = 'user'
 
     state.actor, state.connection, state.metadata = actor, connection, metadata
     state.message, state.transport, state.output = message, transport, output

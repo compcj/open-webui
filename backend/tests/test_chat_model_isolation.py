@@ -39,10 +39,21 @@ def fanout(monkeypatch, settings, payload_handler, provider):
     wrapper = ast.parse(
         'async def dispatch(request, form_data, user, metadata, model, message_ids, tasks=None): pass'
     ).body[0]
-    wrapper.body = endpoint.body[start:]
+    # Exercise the same actor-scoped lookup that precedes saved-turn creation.
+    setup = next(node for node in endpoint.body if isinstance(node, ast.Try))
+    lookup = next(
+        index
+        for index, node in enumerate(setup.body)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == 'reply_models'
+    )
+    wrapper.body = [*setup.body[lookup : lookup + 2], *endpoint.body[start:]]
     running = []
 
-    async def create_task(redis, process, *, id, task_id, on_complete=None):
+    async def create_task(redis, process, *, id, task_id, on_complete=None, on_worker_exit=None, before_start=None):
+        if before_start:
+            await before_start()
         task = asyncio.create_task(process)
         running.append(task)
         return task_id, task
@@ -73,6 +84,13 @@ def fanout(monkeypatch, settings, payload_handler, provider):
         'model_id': 'model-a',
         'model_info': None,
         'fallback_model': None,
+        'model_item': {},
+        'BYPASS_MODEL_ACCESS_CONTROL': False,
+        'BYPASS_ADMIN_ACCESS_CONTROL': False,
+        'check_model_access': AsyncMock(),
+        'get_tether_model': AsyncMock(
+            side_effect=lambda _request, _user, model_id: getattr(_request.state, 'tether_models', {}).get(model_id)
+        ),
         'agent_model': None,
         'is_new_chat': False,
         'ContextStoreError': ContextStoreError,
@@ -80,7 +98,9 @@ def fanout(monkeypatch, settings, payload_handler, provider):
         'request_params': {},
         'Models': SimpleNamespace(get_model_by_id=AsyncMock(return_value=None)),
         'Chats': SimpleNamespace(
-            upsert_message_to_chat_by_id_and_message_id=writes, edit_message_output=edit_message_output
+            upsert_message_to_chat_by_id_and_message_id=writes,
+            edit_message_output=edit_message_output,
+            bind_steering_task=AsyncMock(return_value=False),
         ),
         'TASKS': SimpleNamespace(TITLE_GENERATION='title', TAGS_GENERATION='tags'),
         'is_saved_chat_id': lambda chat_id: chat_id == 'chat',
@@ -100,6 +120,7 @@ def fanout(monkeypatch, settings, payload_handler, provider):
     exec(compile(ast.fix_missing_locations(module), str(path), 'exec'), namespace)
 
     async def run(request, payload, metadata, entries):
+        namespace['model_item'] = {'direct': bool(metadata.get('direct'))}
         result = await namespace['dispatch'](
             request,
             payload,
@@ -216,6 +237,31 @@ async def test_comparison_tools_prepare_and_replay_on_each_reply_branch(database
         assert rows[0]['text'] == text
         assert seen_requests[reply_id].state.context_compaction['metadata']['message_id'] == reply_id
     assert not hasattr(request.state, 'context_compaction')
+
+
+@pytest.mark.asyncio
+async def test_comparison_resolves_each_device_model_before_dispatch(database, monkeypatch):
+    from open_webui.utils.context_compaction_v2 import CompactionSettings
+
+    request, payload, metadata, entries = inputs(('model-a', 'tether:second'))
+    device_model = request.app.state.MODELS.pop('tether:second')
+    device_model['name'] = 'Second device'
+    request.state.tether_models = {device_model['id']: device_model}
+    seen = {}
+
+    async def prepare(req, body, user, meta, model):
+        seen[meta['message_id']] = model
+        return body, meta, [], False
+
+    run = fanout(monkeypatch, CompactionSettings(mode='off'), prepare, AsyncMock(return_value={}))
+    await run(request, payload, metadata, entries)
+    assert seen == {'reply-0': {'id': 'model-a'}, 'reply-1': device_model}
+
+    request.state.tether_models.clear()
+    seen.clear()
+    with pytest.raises(HTTPException, match='Model not found'):
+        await run(request, payload, metadata, entries)
+    assert not seen
 
 
 @pytest.mark.asyncio

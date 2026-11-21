@@ -566,6 +566,21 @@ active/uncertain/unpublished work or erase raw data, admissions, checkpoints, se
 accounting. History sync must not replace the retirement ledger; quota/CAS failures roll back the
 entire retirement-and-registration transition.
 
+## v0.13.4 server boundaries
+
+- Resolve personal Tether models per authenticated user and live session. Preserve the original provider model
+  ID at dispatch and stable device/connection-qualified IDs at selection and replay.
+- Read image models through connection grants. Preserve named pair IDs and saved per-pair descriptions during
+  atomic migration. Recheck both generation and edit permissions when resolving a shortcut.
+- Resolve managed terminals with their actual orchestrator instance and scope. Require a live user or group
+  grant, including explicitly delegated write access for instance management. Bind previews and Agent sessions
+  to the resolved instance. Legacy selectors require administrator rebinding.
+- Only the chat owner's own published saved turn may release queued steering after the executing worker exits.
+  Keep queue proofs out of API projections. Native Agent fork/resume additionally verifies the durable signed
+  checkpoint and original actor. Fetch only attachments on the current outgoing user turn.
+- Keep the original D04a projection, provider signatures, final-send budgets and replay protections across
+  the four native transports. The Alembic head is `a133d11e0001`.
+
 ## v0.13.3 data and API contracts
 
 - Alembic head `a133d11e0001` is an empty merge of fork head `a122d15e0001` and official head

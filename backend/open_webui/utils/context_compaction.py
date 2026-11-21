@@ -12,7 +12,7 @@ from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.context_compaction_config import load_compaction_settings
 from open_webui.utils.context_compaction_v2 import resolve_context_window
 from open_webui.utils.json_codec import JSONCodec
-from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list
+from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list, is_empty_reply
 from open_webui.utils.payload import apply_params_to_form_data
 from open_webui.utils.task import (
     prompt_template,
@@ -252,6 +252,15 @@ async def _compact_legacy_chat_branch(request, user, chat: Any, model_id: str, m
     if not messages_map:
         messages_map = history.get('messages') or {}
 
+    seen = set()
+    while current_id and is_empty_reply(messages_map.get(current_id) or {}):
+        if current_id in seen:
+            return {'ok': True, 'compacted': False, 'reason': 'empty'}
+        seen.add(current_id)
+        current_id = messages_map[current_id].get('parentId')
+    if not current_id:
+        return {'ok': True, 'compacted': False, 'reason': 'empty'}
+
     messages, previous_summary = _apply_latest_summary_checkpoint(get_message_list(messages_map, current_id))
     compacted_messages = messages[:-1]
     recent_messages = messages[-1:]
@@ -409,14 +418,7 @@ async def _get_legacy_chat_context_usage(
 
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
 
-    for idx in range(len(messages) - 1, -1, -1):
-        usage = messages[idx].get('usage') or (messages[idx].get('info') or {}).get('usage')
-        if isinstance(usage, dict) and (tokens := _usage_token_count(usage)):
-            tokens += _estimate_messages_tokens(messages[idx + 1 :])
-            return usage_result(tokens)
-
-    tokens = _estimate_tokens(previous_summary or '') + _estimate_messages_tokens(messages)
-    return usage_result(tokens)
+    return usage_result(_estimate_request_tokens(messages, '', previous_summary))
 
 
 def _build_context_usage(tokens: int, threshold: int) -> dict:
@@ -469,7 +471,11 @@ def _apply_latest_summary_checkpoint(messages: list[dict]) -> tuple[list[dict], 
                 ),
                 None,
             )
-            if start is not None:
+            if start is None:
+                summary = messages[cut_idx].get('contextSummary') or messages[cut_idx].get('context_summary')
+                if cut_idx < idx and isinstance(summary, str) and summary.strip():
+                    break
+            else:
                 while start and output[start - 1].get('type') != 'function_call_output':
                     start -= 1
                 return [
@@ -486,17 +492,21 @@ def _apply_latest_summary_checkpoint(messages: list[dict]) -> tuple[list[dict], 
     return messages, None
 
 
-def _exceeds_token_threshold(messages: list[dict], system_prompt: str, summary: str | None, threshold: int) -> bool:
-    if threshold <= 0:
-        return False
-
+def _estimate_request_tokens(messages: list[dict], system_prompt: str, summary: str | None) -> int:
     for idx in range(len(messages) - 1, -1, -1):
-        usage = messages[idx].get('usage') or (messages[idx].get('info') or {}).get('usage')
+        message = messages[idx]
+        usage = message.get('usage') or (message.get('info') or {}).get('usage')
         if isinstance(usage, dict) and (tokens := _usage_token_count(usage)):
-            return tokens + _estimate_messages_tokens(messages[idx + 1 :]) > threshold
+            for item in reversed(message.get('output') or []):
+                if not isinstance(item, dict) or item.get('type') != 'function_call_output':
+                    break
+                tokens += _estimate_tokens(item)
+            return tokens + _estimate_messages_tokens(messages[idx + 1 :])
+    return _estimate_tokens(system_prompt) + _estimate_tokens(summary or '') + _estimate_messages_tokens(messages)
 
-    estimated = _estimate_tokens(system_prompt) + _estimate_tokens(summary or '') + _estimate_messages_tokens(messages)
-    return estimated > threshold
+
+def _exceeds_token_threshold(messages: list[dict], system_prompt: str, summary: str | None, threshold: int) -> bool:
+    return threshold > 0 and _estimate_request_tokens(messages, system_prompt, summary) > threshold
 
 
 def _find_compaction_boundary(messages: list[dict], retention_percentage: int = 40) -> int:

@@ -1,5 +1,7 @@
 <script lang="ts">
-	import type { TerminalCredential } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
+	export let target: TerminalTarget | null = null;
+
 	import { getContext, onMount, onDestroy } from 'svelte';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
@@ -17,12 +19,6 @@
 
 	export let notebook: Record<string, unknown>;
 	export let filePath: string = '';
-	export let baseUrl: string = '';
-	export let apiKey: TerminalCredential = '';
-	export let chatId: string | null = null;
-	// FilePreview keys this component by terminal, chat and file.
-	const connection = { baseUrl, apiKey, chatId: chatId ?? undefined, filePath };
-	let disposed = false;
 	export let readOnly = false;
 
 	interface NotebookCell {
@@ -133,27 +129,17 @@
 	let runningCell: number | null = null;
 	let runAllActive = false;
 
-	const canExecute = !readOnly && baseUrl && apiKey && filePath;
+	let disposed = false;
+	const connection = target;
+	const canExecute = !readOnly && target?.baseUrl && target?.key && filePath;
 
 	const startSession = async (): Promise<boolean> => {
-		if (disposed || readOnly || !baseUrl || !apiKey || !filePath) return false;
+		if (disposed || readOnly || !connection?.baseUrl || !connection.key || !filePath) return false;
 		kernelStarting = true;
 		kernelError = null;
-
-		const result = await createNotebookSession(
-			connection.baseUrl,
-			connection.apiKey,
-			connection.filePath,
-			connection.chatId
-		);
+		const result = await createNotebookSession(connection, filePath);
 		if (disposed) {
-			if (!('error' in result))
-				void stopNotebookSession(
-					connection.baseUrl,
-					connection.apiKey,
-					result.id,
-					connection.chatId
-				);
+			if (!('error' in result)) void stopNotebookSession(connection, result.id);
 			return false;
 		}
 
@@ -170,13 +156,8 @@
 	};
 
 	const stopSession = async () => {
-		if (sessionId && baseUrl && apiKey) {
-			await stopNotebookSession(
-				connection.baseUrl,
-				connection.apiKey,
-				sessionId,
-				connection.chatId
-			);
+		if (sessionId && connection) {
+			await stopNotebookSession(connection, sessionId);
 		}
 		sessionId = null;
 		kernelReady = false;
@@ -198,14 +179,7 @@
 			editingCell = editingCell;
 		}
 
-		const result = await executeNotebookCell(
-			connection.baseUrl,
-			connection.apiKey,
-			sessionId!,
-			index,
-			source,
-			connection.chatId
-		);
+		const result = await executeNotebookCell(connection!, sessionId!, index, source);
 		if (disposed) return;
 
 		if ('error' in result) {
@@ -254,7 +228,7 @@
 
 <div class="notebook-view">
 	<!-- Toolbar -->
-	{#if !readOnly && baseUrl && apiKey && filePath}
+	{#if !readOnly && target?.baseUrl && target?.key && filePath}
 		<div class="nb-toolbar flex items-center gap-1 px-2 py-0.5">
 			<button
 				class="nb-btn text-[0.6rem]"
@@ -350,7 +324,7 @@
 					<div class="nb-cell-gutter">
 						{#if runningCell === i}
 							<div class="nb-cell-label"><Spinner className="size-3" /></div>
-						{:else if !readOnly && baseUrl && apiKey && filePath}
+						{:else if !readOnly && target?.baseUrl && target?.key && filePath}
 							<button
 								class="nb-run-btn"
 								on:click={() => runCell(i)}

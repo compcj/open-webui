@@ -19,12 +19,12 @@ const createRecorder = (stream: any = null) => {
         let audioContext = { close };
         let audioStream = initialStream;
         let mediaRecorder, audioChunks = [], hasStartedSpeaking = false;
-        let $showCallOverlay = true, destroyed = false;
+        let $voiceCall = true, destroyed = false;
         const stopRecordingCallback = () => {};
         ${declarations}
         return {
             start: startRecording, stop: stopAudioStream,
-            destroy: () => { destroyed = true; $showCallOverlay = false; },
+            destroy: () => { destroyed = true; $voiceCall = false; },
             stream: () => audioStream
         };
     `;

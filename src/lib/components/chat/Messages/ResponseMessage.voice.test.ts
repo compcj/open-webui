@@ -16,13 +16,16 @@ const dependencies: Record<string, any> = {
 	'svelte/internal/server': server,
 	'fast-deep-equal': { default: equal },
 	'./structuredOutput': structuredOutput,
+	'$lib/components/chat/context': {
+		getChatContext: () => dependencies['$lib/stores']
+	},
 	'$lib/stores': {
 		settings: writable({}),
 		models: writable([]),
 		config: writable({}),
 		user: writable({ id: 'owner' }),
 		audioQueue: writable(null),
-		temporaryChatEnabled: writable(false),
+		temporaryChat: writable(false),
 		TTSWorker: writable(null)
 	},
 	'$lib/utils': {

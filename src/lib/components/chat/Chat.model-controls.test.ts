@@ -62,7 +62,7 @@ const createChat = (shared = false) => {
   const settings = writable($settings); settings.subscribe(value => $settings = value);
   const localStorage = { token: 'token-owner' }; const $i18n = { t: value => value };
   const toast = { error: () => {} }; const isTemporaryChatId = () => false; const console = { error: () => {} };
-  let $chatId = 'chat', isShared = shared, $temporaryChatEnabled = false, chat = { id: 'chat', chat: {} }, chatFiles = [];
+  let $chatId = 'chat', isShared = shared, $temporaryChat = false, chat = { id: 'chat', chat: {} }, chatFiles = [];
   let params = {}, reasoningEffortByModel = { m: 'low' }, $models = [model];
   let controlSelections = controlsForRequest(params, $settings.params, $models, reasoningEffortByModel, $settings.reasoningEffortByModel);
   ${declarations}

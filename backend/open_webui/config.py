@@ -1581,6 +1581,14 @@ except JSONCodec.JSONDecodeError:
 
 IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = images_edit_comfyui_workflow_nodes
 
+# Videos
+
+ENABLE_VIDEO_GENERATION = os.getenv('ENABLE_VIDEO_GENERATION', '').lower() == 'true'
+
+# How long to wait for a video job to finish, and how often to check on it.
+VIDEO_GENERATION_TIMEOUT = int(os.getenv('VIDEO_GENERATION_TIMEOUT', '900'))
+VIDEO_GENERATION_POLL_INTERVAL = float(os.getenv('VIDEO_GENERATION_POLL_INTERVAL', '5'))
+
 # Audio
 
 # Transcription
@@ -1965,6 +1973,11 @@ USER_PERMISSIONS_FEATURES_IMAGE_GENERATION = (
     os.getenv('USER_PERMISSIONS_FEATURES_IMAGE_GENERATION', 'True').lower() == 'true'
 )
 
+# Off by default: video costs far more per request than images.
+USER_PERMISSIONS_FEATURES_VIDEO_GENERATION = (
+    os.getenv('USER_PERMISSIONS_FEATURES_VIDEO_GENERATION', 'False').lower() == 'true'
+)
+
 USER_PERMISSIONS_FEATURES_CODE_INTERPRETER = (
     os.getenv('USER_PERMISSIONS_FEATURES_CODE_INTERPRETER', 'True').lower() == 'true'
 )
@@ -1982,6 +1995,8 @@ USER_PERMISSIONS_FEATURES_ENCRYPTED_CHANNELS = (
 USER_PERMISSIONS_FEATURES_API_KEYS = os.getenv('USER_PERMISSIONS_FEATURES_API_KEYS', 'False').lower() == 'true'
 
 USER_PERMISSIONS_FEATURES_MEMORIES = os.getenv('USER_PERMISSIONS_FEATURES_MEMORIES', 'True').lower() == 'true'
+
+USER_PERMISSIONS_FEATURES_SUBAGENTS = os.getenv('USER_PERMISSIONS_FEATURES_SUBAGENTS', 'True').lower() == 'true'
 
 USER_PERMISSIONS_FEATURES_AUTOMATIONS = os.getenv('USER_PERMISSIONS_FEATURES_AUTOMATIONS', 'False').lower() == 'true'
 
@@ -2069,8 +2084,10 @@ DEFAULT_USER_PERMISSIONS = {
         # Chat features
         'web_search': USER_PERMISSIONS_FEATURES_WEB_SEARCH,
         'image_generation': USER_PERMISSIONS_FEATURES_IMAGE_GENERATION,
+        'video_generation': USER_PERMISSIONS_FEATURES_VIDEO_GENERATION,
         'code_interpreter': USER_PERMISSIONS_FEATURES_CODE_INTERPRETER,
         'memories': USER_PERMISSIONS_FEATURES_MEMORIES,
+        'subagents': USER_PERMISSIONS_FEATURES_SUBAGENTS,
         'automations': USER_PERMISSIONS_FEATURES_AUTOMATIONS,
         'calendar': USER_PERMISSIONS_FEATURES_CALENDAR,
         'webhooks': USER_PERMISSIONS_FEATURES_USER_WEBHOOKS,
@@ -2328,6 +2345,7 @@ CONTEXT_COMPACTION_V2_TOOL_BUDGET_ENABLED = (
 CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT', '10'))
 CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT = int(os.getenv('CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT', '30'))
 CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT = os.getenv('CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT', '')
+VISUALIZATION_PROMPT_TEMPLATE = os.getenv('VISUALIZATION_PROMPT_TEMPLATE', '')
 
 ENABLE_TOOL_SEARCH = os.getenv('ENABLE_TOOL_SEARCH', 'False').lower() == 'true'
 TOOL_SEARCH_ENGINE = os.getenv('TOOL_SEARCH_ENGINE', 'bm25')
@@ -3226,9 +3244,11 @@ DEFAULT_CONFIG = {
     'image_generation.model': IMAGE_GENERATION_MODEL,
     'image_generation.tool_description_suffix': IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX,
     'image_generation.engines': IMAGE_GENERATION_ENGINES,
+    'images.profiles': None,
     'image_generation.size': IMAGE_SIZE,
     'image_generation.steps': IMAGE_STEPS,
     'image_generation.prompt.enable': ENABLE_IMAGE_PROMPT_GENERATION,
+    'image_generation.default_model': '',
     'image_generation.automatic1111.base_url': AUTOMATIC1111_BASE_URL,
     'image_generation.automatic1111.api_auth': AUTOMATIC1111_API_AUTH,
     'image_generation.automatic1111.api_params': AUTOMATIC1111_PARAMS,
@@ -3247,6 +3267,9 @@ DEFAULT_CONFIG = {
     'images.edit.engine': IMAGE_EDIT_ENGINE,
     'images.edit.model': IMAGE_EDIT_MODEL,
     'images.edit.tool_description_suffix': IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX,
+    'images.edit.default_model': '',
+    'video_generation.enable': ENABLE_VIDEO_GENERATION,
+    'video_generation.default_model': '',
     'images.edit.size': IMAGE_EDIT_SIZE,
     'images.edit.openai.api_base_url': IMAGES_EDIT_OPENAI_API_BASE_URL,
     'images.edit.openai.api_version': IMAGES_EDIT_OPENAI_API_VERSION,
@@ -3377,10 +3400,12 @@ DEFAULT_CONFIG = {
     'chat.context_compaction.v2.tool_result_percent': CONTEXT_COMPACTION_V2_TOOL_RESULT_PERCENT,
     'chat.context_compaction.v2.tool_batch_percent': CONTEXT_COMPACTION_V2_TOOL_BATCH_PERCENT,
     'chat.context_compaction.v2.tool_summary_prompt': CONTEXT_COMPACTION_V2_TOOL_SUMMARY_PROMPT,
+    'chat.visualizations.prompt_template': VISUALIZATION_PROMPT_TEMPLATE,
     'chat.tool_permissions.enable': ENABLE_TOOL_PERMISSIONS,
     'chat.tool_call_labels.enable': ENABLE_TOOL_CALL_LABELS,
     'chat.tool_permissions.auto.enable': ENABLE_TOOL_PERMISSIONS_AUTO,
     'chat.tool_permissions.auto.engine': TOOL_PERMISSIONS_AUTO_ENGINE,
+    'chat.tool_permissions.auto.native_agent_reviewer': 'webui',
     'chat.tool_permissions.auto.prompt': TOOL_PERMISSIONS_AUTO_PROMPT,
     'chat.tool_permissions.auto.decisions.api_base_url': TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL,
     'chat.tool_permissions.auto.decisions.api_key': TOOL_PERMISSIONS_AUTO_DECISIONS_API_KEY,

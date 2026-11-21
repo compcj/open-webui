@@ -30,15 +30,11 @@
 	import ArchivedChats from './Settings/ArchivedChats.svelte';
 	import Personalization from './Settings/Personalization.svelte';
 	import Search from '../icons/Search.svelte';
-	import Connections from './Settings/Connections.svelte';
-	import Integrations from './Settings/Integrations.svelte';
 	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
-	import Link from '../icons/Link.svelte';
 	import UserCircle from '../icons/UserCircle.svelte';
 	import SoundHigh from '../icons/SoundHigh.svelte';
 	import InfoCircle from '../icons/InfoCircle.svelte';
-	import WrenchAlt from '../icons/WrenchAlt.svelte';
 	import Face from '../icons/Face.svelte';
 	import AppNotification from '../icons/AppNotification.svelte';
 	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
@@ -49,6 +45,10 @@
 	import AdminTabIcon from '$lib/components/admin/Settings/AdminTabIcon.svelte';
 	import AdminGeneral from '$lib/components/admin/Settings/General.svelte';
 	import AdminAuthentication from '$lib/components/admin/Settings/Authentication.svelte';
+	import Connections from './Settings/Connections.svelte';
+	import Integrations from './Settings/Integrations.svelte';
+	import Link from '../icons/Link.svelte';
+	import WrenchAlt from '../icons/WrenchAlt.svelte';
 	import AdminConnections from '$lib/components/admin/Settings/Connections.svelte';
 	import AdminModels from '$lib/components/admin/Settings/Models.svelte';
 	import AdminSubagents from '$lib/components/admin/Settings/Subagents.svelte';
@@ -62,6 +62,7 @@
 	import AdminInterface from '$lib/components/admin/Settings/Interface.svelte';
 	import AdminAudio from '$lib/components/admin/Settings/Audio.svelte';
 	import AdminImages from '$lib/components/admin/Settings/Images.svelte';
+	import AdminVideos from '$lib/components/admin/Settings/Videos.svelte';
 	import AdminPipelines from '$lib/components/admin/Settings/Pipelines.svelte';
 	import AdminDatabase from '$lib/components/admin/Settings/Database.svelte';
 
@@ -156,6 +157,7 @@
 		'admin:documents': $i18n.t('Tools'),
 		'admin:audio': $i18n.t('Tools'),
 		'admin:images': $i18n.t('Tools'),
+		'admin:videos': $i18n.t('Tools'),
 		'admin:web': $i18n.t('Tools'),
 		'admin:code-execution': $i18n.t('Tools'),
 		'admin:pipelines': $i18n.t('Tools'),
@@ -321,6 +323,12 @@
 			titleKey: 'settings.admin.images.title',
 			title: $i18n.t('settings.admin.images.title'),
 			searchPrefixes: ['settings.admin.images.']
+		},
+		{
+			id: 'admin:videos',
+			titleKey: 'settings.admin.videos.title',
+			title: $i18n.t('settings.admin.videos.title'),
+			searchPrefixes: ['settings.admin.videos.']
 		},
 		{
 			id: 'admin:web',
@@ -991,6 +999,12 @@
 				/>
 			{:else if selectedTab === 'admin:images'}
 				<AdminImages
+					on:save={() => {
+						toast.success($i18n.t('Settings saved successfully!'));
+					}}
+				/>
+			{:else if selectedTab === 'admin:videos'}
+				<AdminVideos
 					on:save={() => {
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}

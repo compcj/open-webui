@@ -37,12 +37,14 @@ from open_webui.models.access_grants import AccessGrants
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.models.models import Models
+from open_webui.utils.tether import RelayClient, get_tether_connections
 from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access, has_connection_access, has_permission
 from open_webui.utils.anthropic import ANTHROPIC_VERSION, get_anthropic_models, is_anthropic_url
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_access import get_direct_chat_user
 from open_webui.utils.headers import (
+    bearer_auth_header,
     get_headers_and_cookies,
     include_user_info_headers,
     validate_connection_headers_config,
@@ -271,8 +273,82 @@ async def get_openai_connection(idx: int) -> tuple[str, str, dict]:
     return url, key, api_config
 
 
+def tether_model_id(device, service, model_id):
+    return 'tether-model:' + ':'.join(quote(part, safe='') for part in (device, service, model_id))
+
+
+def _tether_cache_key(_func, user, sources):
+    return 'openai_tether_models_' + repr(
+        (user.id, [(p['connection_id'], p['connection'], p['name'], i['service'], i['name']) for p, i in sources])
+    )
+
+
+async def clear_tether_models_cache():
+    await _get_tether_models.cache.clear()
+
+
+async def get_tether_models(user, *, refresh=False) -> dict[str, dict]:
+    """Always authorize currently advertised sources before consulting the private model cache."""
+    sources = await get_tether_connections(user.id, 'openai')
+    if not sources:
+        return {}
+    if refresh:
+        await clear_tether_models_cache()
+    return await _get_tether_models(user, sources)
+
+
+@cached(ttl=MODELS_CACHE_TTL, key_builder=_tether_cache_key)
+async def _get_tether_models(user, sources) -> dict[str, dict]:
+    async def fetch(presence, item) -> list[dict]:
+        base_url = f'tether://{presence["connection_id"]}'
+        async with RelayClient(user.id, item['service'], timeout=10) as client:
+            async with client.get(f'{base_url}/models') as response:
+                if response.status >= 400:
+                    raise RuntimeError(f'HTTP {response.status}')
+                ids = [model['id'] for model in (await response.json()).get('data', []) if model.get('id')]
+        return [
+            {
+                'id': tether_model_id(presence['connection_id'], item['service'], model_id),
+                'provider_model_id': model_id,
+                'name': f'{model_id} · {presence["name"]} / {item["name"]}',
+                'object': 'model',
+                'created': int(time.time()),
+                'owned_by': 'openai',
+                'connection_type': 'local',
+                'tags': [{'name': f'{presence["name"]} · {item["name"]}'}],
+                'owner_id': user.id,
+                'base_url': base_url,
+                'service': item['service'],
+            }
+            for model_id in ids
+        ]
+
+    results = await asyncio.gather(*(fetch(*source) for source in sources), return_exceptions=True)
+    models = {}
+    for (presence, item), result in zip(sources, results):
+        if isinstance(result, BaseException):
+            log.info('Could not list models from %s on %s: %s', item['name'], presence['name'], result)
+            continue
+        for model in result:
+            models.setdefault(model['id'], model)
+    return models
+
+
+async def get_tether_model(request: Request, user, model_id) -> dict | None:
+    """The user's own model with this id, unless a shared model already has it."""
+    if (
+        not user
+        or not isinstance(model_id, str)
+        or not model_id.startswith('tether-model:')
+        or request.app.state.MODELS.get(model_id) is not None
+    ):
+        return None
+    return (await get_tether_models(user)).get(model_id)
+
+
 async def clear_models_cache(request: Request):
     await get_all_models.cache.clear()
+    await clear_tether_models_cache()
     redis = getattr(request.app.state, 'redis', None)
     if redis is not None:
         await redis.delete(BASE_MODELS_CACHE_KEY)
@@ -1518,6 +1594,8 @@ async def generate_chat_completion(
     if not hasattr(request.state, 'model_id'):
         request.state.model_id = model_id
     model_info = await Models.get_model_by_id(model_id)
+    # The user's own connection, reached through their Tether. Only they can resolve it.
+    tether_model = None if model_info else await get_tether_model(request, user, model_id)
 
     # Check model info and override the payload
     if model_info:
@@ -1538,7 +1616,7 @@ async def generate_chat_completion(
                 payload = await apply_system_prompt_to_body(system, payload, metadata, user)
 
         await check_model_access(user, model_info, bypass_filter)
-    else:
+    elif tether_model is None:
         await check_model_access(user, None, bypass_filter)
 
     from open_webui.utils.openai_compatibility import expand_extra_body
@@ -1558,22 +1636,30 @@ async def generate_chat_completion(
             for message in payload.get('messages', [])
         ]
 
-    # Check if model is already in app state cache to avoid expensive get_all_models() call
-    models = request.app.state.OPENAI_MODELS
-    if not models or model_id not in models:
-        await get_all_models(request, user=user)
-        models = request.app.state.OPENAI_MODELS
-    model = models.get(model_id)
-
-    if model:
-        idx = model['urlIdx']
+    # `relay` is closed with the response; the shared pool session never is.
+    session = relay = None
+    if tether_model is not None:
+        # Tether adds the key; the URL and key never reach this server.
+        model, url, key, api_config = tether_model, tether_model['base_url'], '', {}
+        session = relay = RelayClient(user.id, tether_model['service'])
+        payload['model'] = tether_model['provider_model_id']
     else:
-        raise HTTPException(
-            status_code=404,
-            detail=ERROR_MESSAGES.MODEL_NOT_FOUND(),
-        )
+        # Check if model is already in app state cache to avoid expensive get_all_models() call
+        models = request.app.state.OPENAI_MODELS
+        if not models or model_id not in models:
+            await get_all_models(request, user=user)
+            models = request.app.state.OPENAI_MODELS
+        model = models.get(model_id)
 
-    url, key, api_config = await get_openai_connection(idx)
+        if model:
+            idx = model['urlIdx']
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=ERROR_MESSAGES.MODEL_NOT_FOUND(),
+            )
+
+        url, key, api_config = await get_openai_connection(idx)
 
     prefix_id = api_config.get('prefix_id', None)
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
@@ -1746,7 +1832,7 @@ async def generate_chat_completion(
     response = None
 
     try:
-        session = await get_session()
+        session = session or await get_session()
 
         async def send_request():
             return await session.request(
@@ -1813,8 +1899,8 @@ async def generate_chat_completion(
                     status_code=r.status,
                     headers=_clean_proxy_headers(r.headers),
                 )
-            source = stream_wrapper(r)
-            if is_streaming_request and not is_responses and not model.get('pipeline'):
+            source = stream_wrapper(r, relay)
+            if relay is None and is_streaming_request and not is_responses and not model.get('pipeline'):
                 from open_webui.utils.chat_stream_retry import stream_chat_with_retry
                 from open_webui.utils.context_scope import temporary_request_store
 
@@ -1886,7 +1972,7 @@ async def generate_chat_completion(
         )
     finally:
         if not streaming:
-            await cleanup_response(r)
+            await cleanup_response(r, relay)
 
 
 async def embeddings(request: Request, form_data: dict, user):

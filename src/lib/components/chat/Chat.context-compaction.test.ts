@@ -23,7 +23,7 @@ const createChat = () => {
 	const body = `
 		const { toast, mergeCompactionStatus, isVisibleToolResultStatus } = dependencies;
 		const isTemporaryContextRpc = () => false, isTemporaryChatId = id => id?.startsWith("temporary:");
-  const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
+  const tabbed = false, autoScrollToBottom = () => {}; const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
   const console = { log: () => {} };
 		const tick = async () => {};
 		const bridge = null;

@@ -17,7 +17,7 @@ const create = (createNotebookSession: any = vi.fn(async () => ({ id: 'kernel-a'
 		`
 		const { createNotebookSession, executeNotebookCell, stopNotebookSession } = dependencies;
 		let baseUrl = '/terminal', apiKey = 'token', chatId = 'chat-a', filePath = '/work/a.ipynb';
-		const connection = { baseUrl, apiKey, chatId, filePath };
+		const connection = {baseUrl, key: apiKey, context:{chatId,modelId:null}};
 		let disposed = false, readOnly = false, kernelStarting = false, kernelReady = false;
 		let kernelError = null, sessionId = null, runningCell = null, runAllActive = false;
 		let cells = [{ cell_type: 'code', source: 'print(1)', outputs: [] }];
@@ -44,26 +44,20 @@ const create = (createNotebookSession: any = vi.fn(async () => ({ id: 'kernel-a'
 	};
 };
 
+const expectedTarget = {
+	baseUrl: '/terminal',
+	key: 'token',
+	context: { chatId: 'chat-a', modelId: null }
+};
+
 describe('notebook lifecycle and chat binding', () => {
 	it('uses the captured chat through creation, execution and cleanup', async () => {
 		const { view, createNotebookSession, executeNotebookCell, stopNotebookSession } = create();
 		await view.runCell(0);
 		await view.stopSession();
-		expect(createNotebookSession).toHaveBeenCalledWith(
-			'/terminal',
-			'token',
-			'/work/a.ipynb',
-			'chat-a'
-		);
-		expect(executeNotebookCell).toHaveBeenCalledWith(
-			'/terminal',
-			'token',
-			'kernel-a',
-			0,
-			'print(1)',
-			'chat-a'
-		);
-		expect(stopNotebookSession).toHaveBeenCalledWith('/terminal', 'token', 'kernel-a', 'chat-a');
+		expect(createNotebookSession).toHaveBeenCalledWith(expectedTarget, '/work/a.ipynb');
+		expect(executeNotebookCell).toHaveBeenCalledWith(expectedTarget, 'kernel-a', 0, 'print(1)');
+		expect(stopNotebookSession).toHaveBeenCalledWith(expectedTarget, 'kernel-a');
 	});
 	it('stops a kernel created after the old file/chat view was destroyed', async () => {
 		let resolve!: (value: any) => void;
@@ -79,7 +73,7 @@ describe('notebook lifecycle and chat binding', () => {
 		view.dispose();
 		resolve({ id: 'late-kernel' });
 		await pending;
-		expect(stopNotebookSession).toHaveBeenCalledWith('/terminal', 'token', 'late-kernel', 'chat-a');
+		expect(stopNotebookSession).toHaveBeenCalledWith(expectedTarget, 'late-kernel');
 		expect(executeNotebookCell).not.toHaveBeenCalled();
 	});
 	it('does not execute after write access is removed', async () => {

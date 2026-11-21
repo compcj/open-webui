@@ -33,6 +33,7 @@ def runtime(monkeypatch):
         return await config.get('terminal_server.connections', [])
 
     access = AsyncMock(return_value=False)
+    permission = AsyncMock(return_value=True)
     for name, values in {
         'open_webui.env': {
             'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': True,
@@ -41,7 +42,7 @@ def runtime(monkeypatch):
         'open_webui.models.config': {'Config': config},
         'open_webui.models.groups': {'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[]))},
         'open_webui.models.users': {'UserModel': SimpleNamespace},
-        'open_webui.utils.access_control': {'has_connection_access': access},
+        'open_webui.utils.access_control': {'has_connection_access': access, 'has_permission': permission},
         'open_webui.utils.tools': {'build_tool_server_headers': AsyncMock(return_value=({}, {}))},
         'open_webui.utils.tether': {
             'get_terminal_connections': get_terminal_connections,
@@ -72,6 +73,17 @@ def runtime(monkeypatch):
         'get_terminal_server_url': lambda connection: connection['url'],
         'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
     }
+
+    async def find_connection(user, selector, metadata, request=None):
+        from open_webui.utils.access_control import has_connection_access
+        from open_webui.utils.tether import get_terminal_connections
+
+        for item in await get_terminal_connections(user):
+            if item.get('id') == selector and item.get('enabled', True) and await has_connection_access(user, item):
+                return item
+        return None
+
+    ns.update(find_terminal_connection=find_connection, terminal_headers=lambda _: {})
     compile_nodes('utils/skill_files.py', {'skill_content_page'}, ns)
     ns['bounded_skill_manifest'] = lambda entries, key: {key: entries}
     compile_nodes(
@@ -81,6 +93,7 @@ def runtime(monkeypatch):
             'resolve_terminal_connection',
             'get_terminal_request_info',
             '_get_terminal_request_info',
+            'can_use_personal_terminal',
             'get_terminal_skills',
             'get_terminal_skill',
             'load_terminal_skill',
@@ -89,7 +102,42 @@ def runtime(monkeypatch):
         },
         ns,
     )
-    return SimpleNamespace(ns=ns, config=config, access=access)
+    return SimpleNamespace(ns=ns, config=config, access=access, permission=permission)
+
+
+@pytest.mark.asyncio
+async def test_template_header_identity_is_server_resolved_and_legacy_context_stays_internal(runtime):
+    ns = runtime.ns
+    compile_nodes('utils/terminals.py', {'terminal_headers', 'resolved_terminal_context'}, ns)
+    connection = {
+        'template_id': 'sandbox',
+        'terminal_context': {'user_id': 'actor', 'chat_id': 'c', 'model_id': 'm'},
+        'context_id': 'model:m',
+    }
+    ns['find_terminal_connection'] = AsyncMock(return_value=connection)
+    tools = sys.modules['open_webui.utils.tools']
+    tools.build_tool_server_headers.return_value = (
+        {
+            'Authorization': 'Bearer synthetic',
+            'x-user-id': 'other',
+            'x-terminal-context-id': 'old',
+            'x-terminal-model-id': 'other',
+        },
+        {},
+    )
+    found, headers, _ = await ns['resolve_terminal_connection'](
+        object(), SimpleNamespace(id='actor', role='user'), {'terminal_id': 'template:server:sandbox', 'chat_id': 'c'}
+    )
+    assert {key.lower(): value for key, value in headers.items()} == {
+        'authorization': 'Bearer synthetic',
+        'accept': 'application/json',
+        'x-user-id': 'actor',
+        'x-terminal-template-id': 'sandbox',
+        'x-terminal-chat-id': 'c',
+        'x-terminal-model-id': 'm',
+        'x-session-id': 'c',
+    }
+    assert ns['resolved_terminal_context'](found, headers) == 'model:m'
 
 
 @pytest.mark.asyncio
@@ -97,7 +145,7 @@ async def test_personal_reads_are_executed_in_own_browser(runtime):
     call = AsyncMock(return_value={'data': {'content': 'instructions'}})
     result = await runtime.ns['get_terminal_json'](
         object(),
-        SimpleNamespace(id='owner'),
+        SimpleNamespace(id='owner', role='user'),
         {'terminal_id': 'https://personal.test', 'session_id': 'own-socket'},
         '/files/cwd',
         {'__event_call__': call},
@@ -109,6 +157,23 @@ async def test_personal_reads_are_executed_in_own_browser(runtime):
             'data': {'terminal_id': 'https://personal.test', 'path': '/files/cwd', 'session_id': 'own-socket'},
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_revoked_personal_terminal_permission_blocks_browser_effects(runtime):
+    runtime.permission.return_value = False
+    call = AsyncMock()
+    assert (
+        await runtime.ns['get_terminal_json'](
+            object(),
+            SimpleNamespace(id='actor', role='user'),
+            {'terminal_id': 'https://personal.test', 'session_id': 'own-socket'},
+            '/files/cwd',
+            {'__event_call__': call},
+        )
+        is None
+    )
+    call.assert_not_awaited()
 
 
 @pytest.mark.asyncio

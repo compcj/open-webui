@@ -6,7 +6,7 @@
 	import { getOllamaVersion } from '$lib/apis/ollama';
 	import { WEBUI_BUILD_CHANNEL, WEBUI_VERSION } from '$lib/constants';
 	import { WEBUI_NAME, config, settings, showChangelog } from '$lib/stores';
-	import { compareVersion } from '$lib/utils';
+	import ReleaseStatus from '$lib/components/common/ReleaseStatus.svelte';
 	import { onMount, getContext } from 'svelte';
 
 	import BuildVersion from '$lib/components/common/BuildVersion.svelte';
@@ -36,7 +36,7 @@
 
 		console.log(version);
 
-		updateAvailable = compareVersion(version.latest, version.current);
+		updateAvailable = true;
 		console.log(updateAvailable);
 	};
 
@@ -74,23 +74,7 @@
 						<BuildVersion />
 
 						{#if WEBUI_BUILD_CHANNEL === 'main' && $config?.features?.enable_version_update_check}
-							{#if version.latest === null}
-								<span>{$i18n.t('Could not check for updates')}</span>
-							{:else}
-								<a
-									class={($settings?.highContrastMode ?? false)
-										? 'inline-flex min-h-6 items-center'
-										: ''}
-									href="https://github.com/open-webui/open-webui/releases/tag/v{version.latest}"
-									target="_blank"
-								>
-									{updateAvailable === null
-										? $i18n.t('Checking for updates...')
-										: updateAvailable
-											? `(v${version.latest} ${$i18n.t('available!')})`
-											: $i18n.t('(latest)')}
-								</a>
-							{/if}
+							<ReleaseStatus {version} loading={updateAvailable === null} />
 						{/if}
 					</div>
 

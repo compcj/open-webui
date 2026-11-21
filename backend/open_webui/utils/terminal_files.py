@@ -1,6 +1,7 @@
 """Inert terminal file delivery policy, independent of application/database imports."""
 
 import hashlib
+import hmac
 import io
 import posixpath
 import warnings
@@ -40,6 +41,11 @@ def valid_file_path(path) -> bool:
     )
 
 
+def terminal_file_endpoint_id(base_url: str, secret: str) -> str:
+    endpoint = b'terminal-file-endpoint\0' + base_url.rstrip('/').encode()
+    return hmac.digest(secret.encode(), endpoint, 'sha256').hex()
+
+
 def _serializer(secret: str) -> URLSafeSerializer:
     if not secret:
         raise ValueError('File signing is unavailable')
@@ -53,12 +59,13 @@ def verify_file_reference(reference: str, secret: str) -> dict:
         data = _serializer(secret).loads(reference)
         if (
             not isinstance(data, dict)
-            or data.get('v') != 1
+            or data.get('v') not in (1, 2)
+            or (data['v'] == 2 and (not isinstance(data.get('endpoint_id'), str) or len(data['endpoint_id']) != 64))
             or not valid_file_path(data.get('path'))
             or not all(isinstance(data.get(key), str) and data[key] for key in ('owner_id', 'server_id'))
             or not all(
                 data.get(key) is None or isinstance(data[key], str)
-                for key in ('chat_id', 'automation_id', 'context_id')
+                for key in ('chat_id', 'automation_id', 'context_id', 'model_id', 'instance_user_id')
             )
         ):
             raise ValueError('Invalid file reference')
@@ -83,6 +90,7 @@ def add_file_delivery_links(
     owner_id: str,
     metadata: dict,
     secret: str,
+    base_url: str,
     context_id: str | None = None,
 ):
     """Enrich a successful display_file result using trusted caller metadata only."""
@@ -93,12 +101,15 @@ def add_file_delivery_links(
     if result.get('exists') is not True or result.get('error') or not valid_file_path(path) or not secret:
         return result
     payload = {
-        'v': 1,
+        'v': 2,
+        'endpoint_id': terminal_file_endpoint_id(base_url, secret),
         'owner_id': owner_id,
         'server_id': server_id,
         'path': path,
         'chat_id': metadata.get('chat_id'),
         'automation_id': metadata.get('automation_id'),
+        'model_id': metadata.get('model_id'),
+        'instance_user_id': metadata.get('instance_user_id'),
         'context_id': context_id,
     }
     temporary = metadata.get('temporary_context')

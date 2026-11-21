@@ -66,6 +66,7 @@ async def test_controls_and_advanced_params_are_not_authorized_by_panel_permissi
         'form_data': {'params': {'temperature': 0.7, 'model_controls': {'model': {'reasoning': 'high'}}}},
         'model_info_params': {},
         'missing_base_model': False,
+        'agent_model': None,
         'model_id': 'model',
         'merge_model_params': lambda a, b: {**a, **b},
         'HTTPException': HTTPException,

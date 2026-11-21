@@ -49,6 +49,8 @@ export async function requestPreviewTicket(
 		body: JSON.stringify({
 			...target,
 			chat_id: chatId,
+			...(connection.context?.modelId ? { model_id: connection.context.modelId } : {}),
+			...(connection.context?.userId ? { instance_user_id: connection.context.userId } : {}),
 			...(typeof credential !== 'string' ? { temporary_context: credential.temporaryContext } : {}),
 			...(previousUrl ? { previous_url: previousUrl } : {})
 		})

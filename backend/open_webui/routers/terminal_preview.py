@@ -45,6 +45,8 @@ class PreviewTicketForm(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535, strict=True)
     path: str = Field(default='/', max_length=16384)
     chat_id: str | None = Field(default=None, max_length=256)
+    model_id: str | None = Field(default=None, max_length=1024)
+    instance_user_id: str | None = Field(default=None, max_length=256)
     temporary_context: dict[str, str] | None = None
     previous_url: str | None = Field(default=None, max_length=32768)
 
@@ -84,14 +86,24 @@ async def terminal_access(request, user, record):
         }
     )
     scoped.state.token = SimpleNamespace(credentials=record['auth_token'])
-    metadata = {'chat_id': record.get('chat_id'), 'temporary_context': copy.deepcopy(temporary)}
+    metadata = {key: record.get(key) for key in ('chat_id', 'model_id', 'instance_user_id')}
+    metadata['temporary_context'] = copy.deepcopy(temporary)
     return await _http_terminal_context(record['server_id'], scoped, user, metadata, require_context=True)
 
 
-async def remote_json(base, user, headers, cookies, method, path, body=None, *, allow_missing=False):
+def relay_options(record):
+    from open_webui.routers.terminals import relay_service
+
+    server_id = record.get('server_id') or ''
+    return {'service': relay_service(server_id)} if server_id.startswith('tether:') else {}
+
+
+async def remote_json(
+    base, user, headers, cookies, method, path, body=None, *, allow_missing=False, service='open_terminal'
+):
     try:
         async with get_terminal_client(
-            base, user.id, timeout=aiohttp.ClientTimeout(total=30), trust_env=True
+            base, user.id, service=service, timeout=aiohttp.ClientTimeout(total=30), trust_env=True
         ) as client:
             async with client.request(
                 method,
@@ -125,8 +137,8 @@ async def remote_json(base, user, headers, cookies, method, path, body=None, *, 
     return result
 
 
-async def require_visible_port(base, user, headers, cookies, port):
-    ports = (await remote_json(base, user, headers, cookies, 'GET', '/ports')).get('ports')
+async def require_visible_port(base, user, headers, cookies, port, **options):
+    ports = (await remote_json(base, user, headers, cookies, 'GET', '/ports', **options)).get('ports')
     if not isinstance(ports, list):
         raise HTTPException(502, 'Terminal returned an invalid port list')
     if not any(isinstance(item, dict) and type(item.get('port')) is int and item['port'] == port for item in ports):
@@ -142,6 +154,8 @@ async def port_browser_session(store, record, terminal_base, user, headers, cook
             'login_session',
             'server_id',
             'chat_id',
+            'model_id',
+            'instance_user_id',
             'temporary_context',
             'terminal_context',
             'port',
@@ -162,6 +176,7 @@ async def port_browser_session(store, record, terminal_base, user, headers, cook
                     'GET',
                     '/browser/sessions/' + quote(session_id, safe=''),
                     allow_missing=True,
+                    **relay_options(record),
                 )
                 if session is not None:
                     if session.get('id') != session_id:
@@ -186,6 +201,7 @@ async def port_browser_session(store, record, terminal_base, user, headers, cook
                 'POST',
                 '/browser/sessions',
                 {'url': f'http://localhost:{record["port"]}' + path},
+                **relay_options(record),
             )
         except HTTPException as error:
             if error.status_code in (400, 401, 403, 404, 409, 422, 429):
@@ -245,6 +261,8 @@ async def create_preview_ticket(
         'session_id': form_data.session_id,
         'port': form_data.port,
         'chat_id': form_data.chat_id,
+        'model_id': form_data.model_id,
+        'instance_user_id': form_data.instance_user_id,
         'temporary_context': context,
         'base_url': base,
         'parent_origin': parent_origin,
@@ -267,6 +285,8 @@ async def create_preview_ticket(
             'kind',
             'port',
             'chat_id',
+            'model_id',
+            'instance_user_id',
             'temporary_context',
             'base_url',
             'parent_origin',
@@ -284,10 +304,16 @@ async def create_preview_ticket(
     ):
         raise HTTPException(403, 'Terminal connection changed; open a new preview')
     if form_data.kind == 'port':
-        await require_visible_port(terminal_base, user, headers, cookies, form_data.port)
+        await require_visible_port(terminal_base, user, headers, cookies, form_data.port, **relay_options(record))
     if record['session_id']:
         session = await remote_json(
-            terminal_base, user, headers, cookies, 'GET', '/browser/sessions/' + quote(record['session_id'], safe='')
+            terminal_base,
+            user,
+            headers,
+            cookies,
+            'GET',
+            '/browser/sessions/' + quote(record['session_id'], safe=''),
+            **relay_options(record),
         )
     else:
         try:
@@ -326,7 +352,9 @@ async def create_preview_ticket(
     if (current_base, current_context) != (terminal_base, terminal_context) or await configured_base() != base:
         raise HTTPException(409, 'Preview configuration changed; retry')
     if form_data.kind == 'port':
-        await require_visible_port(current_base, current_user, current_headers, current_cookies, form_data.port)
+        await require_visible_port(
+            current_base, current_user, current_headers, current_cookies, form_data.port, **relay_options(record)
+        )
     capability, saved = await store.issue(record, previous_token=previous_token)
     url = base + '/p/' + capability
     if form_data.kind == 'port':
@@ -353,7 +381,7 @@ async def authorize_preview(request):
     access = await preview_connection(request, record)
     if record['kind'] == 'port':
         user, terminal_base, headers, cookies = access
-        await require_visible_port(terminal_base, user, headers, cookies, record['port'])
+        await require_visible_port(terminal_base, user, headers, cookies, record['port'], **relay_options(record))
         # The terminal ownership query can block on the network. Do not start
         # target traffic with the login, ACL or ticket state from before it.
         record = await store.get(token)
@@ -518,7 +546,11 @@ async def preview_http(scope, receive, send):
         preview_prefix = '/p/' + scope['preview_token']
         url = base + upstream_prefix + '/' + path
         client = get_terminal_client(
-            base, user.id, timeout=aiohttp.ClientTimeout(total=None, connect=15), trust_env=True
+            base,
+            user.id,
+            timeout=aiohttp.ClientTimeout(total=None, connect=15),
+            trust_env=True,
+            **relay_options(record),
         )
         watcher = asyncio.create_task(watch_preview(request))
         upstream = await await_preview_operation(
@@ -656,7 +688,7 @@ async def preview_websocket(scope, receive, send):
         )
         async with AsyncExitStack() as stack:
             client = await stack.enter_async_context(
-                get_terminal_client(base, user.id, trust_env=True, cookies=cookies)
+                get_terminal_client(base, user.id, trust_env=True, cookies=cookies, **relay_options(record))
             )
             upstream = await await_preview_operation(
                 watcher,

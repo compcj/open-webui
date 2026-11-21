@@ -611,8 +611,15 @@ async def _terminal_request_context(request, user, terminal_id, metadata):
     from open_webui.models.config import Config
     from open_webui.utils.tools import build_terminal_request_context
 
-    connections = await Config.get('terminal_server.connections', []) or []
-    connection = next((c for c in connections if c.get('id') == terminal_id), None)
+    if terminal_id.startswith('tether:'):
+        raise RuntimeError('Administrator terminal required for skill synchronization')
+    if terminal_id.startswith('template:'):
+        from open_webui.utils.terminals import find_terminal_connection
+
+        connection = await find_terminal_connection(_normalize_user(user), terminal_id, metadata, request=request)
+    else:
+        connections = await Config.get('terminal_server.connections', []) or []
+        connection = next((c for c in connections if c.get('id') == terminal_id), None)
     if connection is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' not found")
     return await build_terminal_request_context(request, connection, _normalize_user(user), metadata or {})
@@ -677,6 +684,9 @@ async def sync_skill_files(request, user, terminal_id, metadata, skill_id, files
             server_data['url'],
             headers.get('X-User-Id') or _get(_normalize_user(user), 'id'),
             headers.get('X-Terminal-Context-Id'),
+            headers.get('X-Terminal-Template-Id'),
+            headers.get('X-Terminal-Chat-Id'),
+            headers.get('X-Terminal-Model-Id'),
             headers.get('X-Session-Id'),
             skill_id,
         )

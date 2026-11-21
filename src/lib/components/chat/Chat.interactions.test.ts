@@ -25,7 +25,7 @@ const createChat = (temporary = false, author = 'actor') => {
   let showEventConfirmation = false, eventCallback = () => {};
   const isTemporaryChatId = () => temporary;
   const isTemporaryContextRpc = () => false;
-  const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
+  const tabbed = false; const temporaryController = { identity: null, capture: () => () => true, disconnect: () => {} };
   const console = { log: () => {} };
   ${declarations}
   return { event: chatEventHandler, pending: () => browserInteractions, resolve: resolveBrowserInteraction,

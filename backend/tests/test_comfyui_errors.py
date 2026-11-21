@@ -243,6 +243,8 @@ def test_builtin_tool_retains_comfyui_error_through_router(image_router, transpo
     transport.connection_error = aiohttp.ClientConnectionError(PRIVATE_VALUE)
     namespace = {
         'JSONCodec': json,
+        'UserModel': SimpleNamespace,
+        'get_requested_image_model': image_router.connections.get_requested_image_model,
         'image_generations': router.image_generations,
         'image_edits': router.image_edits,
         'CreateImageForm': router.CreateImageForm,
@@ -251,7 +253,7 @@ def test_builtin_tool_retains_comfyui_error_through_router(image_router, transpo
     }
     tool = 'edit_image' if editing else 'generate_image'
     load_functions(namespace, 'tools/builtin.py', {tool})
-    args = {'prompt': 'A blue sky', '__request__': SimpleNamespace()}
+    args = {'prompt': 'A blue sky', '__request__': SimpleNamespace(), '__user__': {'id': 'member', 'role': 'user'}}
     if editing:
         args['image_urls'] = ['data:image/png;base64,c3ludGhldGlj']
     result = json.loads(asyncio.run(namespace[tool](**args)))

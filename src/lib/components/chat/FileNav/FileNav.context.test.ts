@@ -35,7 +35,11 @@ describe('file browser bulk deletion context', () => {
 			.mockResolvedValue(true);
 		const loadDir = vi.fn();
 		const view = new Function('state', body)({
-			selectedTerminal: { url: '/terminal', key: 'token' },
+			selectedTerminal: {
+				baseUrl: '/terminal',
+				key: 'token',
+				context: { chatId: 'chat-a', modelId: null }
+			},
 			chatId: 'chat-a',
 			currentPath: '/work/',
 			selectedEntries: new Set(['/work/a.txt', '/work/b.txt']),
@@ -47,8 +51,14 @@ describe('file browser bulk deletion context', () => {
 		finishFirst(true);
 		await pending;
 		expect(deleteEntry.mock.calls).toEqual([
-			['/terminal', 'token', '/work/a.txt', 'chat-a'],
-			['/terminal', 'token', '/work/b.txt', 'chat-a']
+			[
+				{ baseUrl: '/terminal', key: 'token', context: { chatId: 'chat-a', modelId: null } },
+				'/work/a.txt'
+			],
+			[
+				{ baseUrl: '/terminal', key: 'token', context: { chatId: 'chat-a', modelId: null } },
+				'/work/b.txt'
+			]
 		]);
 		expect(loadDir).not.toHaveBeenCalled();
 	});
@@ -64,7 +74,7 @@ const directoryBody = transpileModule(
 	let terminalContextRevision = 0, loadGeneration = 0, effectiveTerminalId = '/terminal';
 	const disposed = false, onViewChange = null;
 	let savedPathLoaded = false;
-	let openedFile = null, saveConnection = null, dirty = false, terminalContext = null;
+	let openedFile = null, selectedFileLocation = null, dirty = false, terminalContext = null;
 	const protectBuffer = async () => true;
 	let loading = false, error = null, selectedFile = null, selectedFileWritable = true, previewPort = null;
 	let entries = [], currentWritable = true, treeCache = new Map();
@@ -90,7 +100,11 @@ describe('file browser directory request ownership', () => {
 		);
 		const setCwd = vi.fn();
 		const view = new Function('state', directoryBody)({
-			selectedTerminal: { url: '/terminal', key: 'token' },
+			selectedTerminal: {
+				baseUrl: '/terminal',
+				key: 'token',
+				context: { chatId: 'chat-a', modelId: null }
+			},
 			chatId: 'chat-a',
 			listFiles,
 			setCwd
@@ -108,7 +122,11 @@ describe('file browser directory request ownership', () => {
 		const listFiles = vi.fn((..._args: any[]) => new Promise((resolve) => resolvers.push(resolve)));
 		const setCwd = vi.fn();
 		const view = new Function('state', directoryBody)({
-			selectedTerminal: { url: '/terminal', key: 'token' },
+			selectedTerminal: {
+				baseUrl: '/terminal',
+				key: 'token',
+				context: { chatId: 'chat-a', modelId: null }
+			},
 			chatId: 'chat-a',
 			listFiles,
 			setCwd
@@ -117,7 +135,7 @@ describe('file browser directory request ownership', () => {
 		await Promise.resolve();
 		const second = view.loadDir('/second/');
 		await Promise.resolve();
-		expect(listFiles.mock.calls[0][4]?.aborted).toBe(true);
+		expect(listFiles.mock.calls[0][2]?.aborted).toBe(true);
 		resolvers[1]({ entries: [{ name: 'second' }] });
 		await second;
 		resolvers[0]({ entries: [{ name: 'first' }] });
@@ -138,7 +156,14 @@ const contextDeclarationsSource = fileDeclarations
 	.filter(
 		(node: any) =>
 			node.id?.name.startsWith('prevTerminal') ||
-			['prevChatId', 'prevFolderDirectory', 'mounted', 'disposed'].includes(node.id?.name)
+			[
+				'prevModelId',
+				'prevInstanceUser',
+				'prevChatId',
+				'prevFolderDirectory',
+				'mounted',
+				'disposed'
+			].includes(node.id?.name)
 	)
 	.map((node: any) => `let ${source.slice(node.start, node.end)};`)
 	.join('\n');
@@ -150,12 +175,12 @@ const contextBlock: any = fileDeclarations.find(
 const fileBody = transpileModule(
 	`
 	let { selectedTerminal, chatId, readFile } = state;
-	let terminal = selectedTerminal;
+	let terminal = selectedTerminal; const target = undefined, modelId = null;
 	let effectiveTerminalId = '/terminal', $terminalServers = [], $settings = {}, $config = {};
 	const getTerminal = () => terminal;
 	const folderDirectory = null, onOpenFile = null, initialFile = null, onViewChange = null;
 	let terminalContextRevision = 0, loadGeneration = 0, commentGeneration = 0;
-	let dirtyChoice = null, dirty = false, saving = false, saveConnection = null, diskChanged = false, terminalContext = null;
+	let dirtyChoice = null, dirty = false, saving = false, selectedFileLocation = null, diskChanged = false, terminalContext = null;
 	let openedFile = null, pendingFile = null, viewerRoot = null;
 	const protectBuffer = async () => true, supportsComments = () => false;
 	const filesystemFile = (file, terminal_id, session_id) => ({ ...file, terminal_id, session_id });
@@ -209,14 +234,18 @@ describe('file browser source ownership', () => {
 				})
 		);
 		const view = new Function('state', fileBody)({
-			selectedTerminal: { url: '/terminal', key: 'token' },
+			selectedTerminal: {
+				baseUrl: '/terminal',
+				key: 'token',
+				context: { chatId: 'chat-a', modelId: null }
+			},
 			chatId: 'chat-a',
 			readFile
 		});
 		const pending = view.openEntry({ name: 'index.html', type: 'file' });
 		await Promise.resolve();
 		view.switchChat('chat-b');
-		expect(readFile.mock.calls[0][4]?.aborted).toBe(true);
+		expect(readFile.mock.calls[0][2]?.aborted).toBe(true);
 		resolve('<html>old chat</html>');
 		await pending;
 		expect(view.get().fileContent).toBe('current chat');
@@ -251,20 +280,29 @@ describe('expanded directory request ownership', () => {
 				})
 		);
 		const view = new Function('state', expandedBody)({
-			selectedTerminal: { url: '/terminal', key: 'token' },
+			selectedTerminal: {
+				baseUrl: '/terminal',
+				key: 'token',
+				context: { chatId: 'chat-a', modelId: null }
+			},
 			chatId: 'chat-a',
 			listFiles
 		});
 		const pending = view.fetchExpandedDir('/work/sub/');
 		view.switchChat();
-		expect(listFiles.mock.calls[0][4]?.aborted).toBe(true);
+		expect(listFiles.mock.calls[0][2]?.aborted).toBe(true);
 		resolve({ entries: [{ name: 'old-tree' }] });
 		await pending;
 		expect(view.get().size).toBe(0);
 	});
 });
 
-const originalConnection = { url: '/terminal', key: 'synthetic-original-key', system: false };
+const originalConnection = {
+	baseUrl: '/terminal',
+	key: 'synthetic-original-key',
+	system: false,
+	context: { chatId: 'chat-a', modelId: null }
+};
 describe('file browser terminal context invalidation', () => {
 	it.each([
 		[
@@ -272,7 +310,25 @@ describe('file browser terminal context invalidation', () => {
 			{ terminal: { ...originalConnection, key: 'synthetic-new-key' } }
 		],
 		['connection kind at the same URL', { terminal: { ...originalConnection, system: true } }],
-		['URL', { terminal: { ...originalConnection, url: '/replacement-terminal' } }],
+		['URL', { terminal: { ...originalConnection, baseUrl: '/replacement-terminal' } }],
+		[
+			'selected model',
+			{
+				terminal: {
+					...originalConnection,
+					context: { ...originalConnection.context, modelId: 'other' }
+				}
+			}
+		],
+		[
+			'instance owner',
+			{
+				terminal: {
+					...originalConnection,
+					context: { ...originalConnection.context, userId: 'other' }
+				}
+			}
+		],
 		['selected terminal ID', { selectedId: 'replacement-id' }],
 		['chat ID', { chatId: 'chat-b' }]
 	])('cancels pending reads and clears comparisons when changing %s', async (_label, next) => {
@@ -296,13 +352,11 @@ describe('file browser terminal context invalidation', () => {
 		const revision = view.get().terminalContextRevision;
 		view.switchContext(next);
 		expect(readFile.mock.calls[0]).toEqual([
-			'/terminal',
-			'synthetic-original-key',
+			originalConnection,
 			'/work/index.html',
-			'chat-a',
 			expect.any(AbortSignal)
 		]);
-		expect(readFile.mock.calls[0][4].aborted).toBe(true);
+		expect(readFile.mock.calls[0][2].aborted).toBe(true);
 		expect(directorySignal.aborted).toBe(true);
 		expect(view.get()).toMatchObject({
 			comparison: null,
@@ -336,7 +390,7 @@ describe('file browser terminal context invalidation', () => {
 		const comparison = view.get().comparison;
 		const revision = view.get().terminalContextRevision;
 		view.switchContext({ terminal: { ...originalConnection } });
-		expect(readFile.mock.calls[0][4].aborted).toBe(false);
+		expect(readFile.mock.calls[0][2].aborted).toBe(false);
 		expect(directorySignal.aborted).toBe(false);
 		expect(view.get().comparison).toBe(comparison);
 		expect(view.get().terminalContextRevision).toBe(revision);

@@ -1,8 +1,9 @@
 <script lang="ts">
-	import type { TerminalCredential } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
+	export let target: TerminalTarget | null = null;
 	import ExcelPreview from '$lib/components/common/ExcelPreview.svelte';
-	import { getContext, tick } from 'svelte';
-	import { downloadFileBlob } from '$lib/apis/terminal';
+	import { getContext, tick, onDestroy } from 'svelte';
+	import { downloadFileBlob, terminalRequest } from '$lib/apis/terminal';
 	import MarkdownFileEditor from './MarkdownFileEditor.svelte';
 	import MarkdownDocument from './MarkdownDocument.svelte';
 	import { settings, config } from '$lib/stores';
@@ -37,8 +38,6 @@
 	export let gitBaseContent: string | null = null;
 
 	// Terminal connection for notebook execution
-	export let baseUrl: string = '';
-	export let apiKey: TerminalCredential = '';
 	export let chatId: string | null = null;
 	export let resourceVersion = 0;
 	export let onLocalLink: (path: string) => void = () => {};
@@ -77,13 +76,11 @@
 	}
 
 	// Office preview props
-	export let fileOfficeHtml: string | null = null;
+	export let excelWorkbook: import('xlsx').WorkBook | null = null;
 	export let fileOfficeSlides: string[] | null = null;
 	export let currentSlide = 0;
 	export let targetPage: number | null = null;
-	export let excelSheetNames: string[] = [];
 	export let selectedExcelSheet = '';
-	export let onSheetChange: ((sheet: string) => void) | null = null;
 
 	export let overlay = false;
 	export let readOnly = false;
@@ -99,7 +96,7 @@
 
 	export let saving = false;
 	const saveIdentity = () =>
-		JSON.stringify([selectedFile, baseUrl, apiKey, chatId, resourceVersion]);
+		JSON.stringify([selectedFile, target?.selector, target?.context, target?.key, resourceVersion]);
 
 	export const discard = () => {
 		codeValue = fileContent ?? '';
@@ -141,7 +138,7 @@
 	$: csvDelimiter = getExt(selectedFile) === 'tsv' ? '\t' : ',';
 	$: isPptx = getExt(selectedFile) === 'pptx';
 
-	$: isSystemTerminal = baseUrl.includes('/api/v1/terminals/');
+	$: isSystemTerminal = !!target?.system;
 	// Simple CSV parser that handles quoted fields
 	const parseCsv = (text: string, delimiter: string): string[][] => {
 		const rows: string[][] = [];
@@ -305,15 +302,9 @@
 				<ModelPreview
 					data={fileModelData}
 					path={selectedFile ?? ''}
-					loadResource={baseUrl
+					loadResource={target?.baseUrl
 						? async (path, signal) => {
-								const result = await downloadFileBlob(
-									baseUrl,
-									apiKey,
-									path,
-									chatId ?? undefined,
-									signal
-								);
+								const result = await downloadFileBlob(target, path, signal);
 								if (!result) throw new Error('Could not load model resource.');
 								return result.blob;
 							}
@@ -331,13 +322,8 @@
 		<SqliteView data={fileSqliteData} />
 	{:else if fileDocxData !== null}
 		<DocxPreview data={fileDocxData} {targetPage} className="w-full h-full" />
-	{:else if fileOfficeHtml !== null}
-		<ExcelPreview
-			html={fileOfficeHtml}
-			sheetNames={excelSheetNames}
-			selectedSheet={selectedExcelSheet}
-			{onSheetChange}
-		/>
+	{:else if excelWorkbook !== null}
+		<ExcelPreview workbook={excelWorkbook} bind:selectedSheet={selectedExcelSheet} />
 	{:else if fileOfficeSlides !== null && fileOfficeSlides.length > 0}
 		<PptxPreview
 			bind:this={pptxPreviewRef}
@@ -390,8 +376,7 @@
 					bind:this={markdownEditorRef}
 					bind:value={codeValue}
 					path={selectedFile ?? ''}
-					{baseUrl}
-					{apiKey}
+					{target}
 					{chatId}
 					{readOnly}
 					onSave={readOnly ? null : saveCodeFile}
@@ -403,8 +388,7 @@
 					content={codeValue}
 					id={`file-${selectedFile}`}
 					path={selectedFile ?? ''}
-					{baseUrl}
-					{apiKey}
+					{target}
 					{chatId}
 					{resourceVersion}
 					{onLocalLink}
@@ -439,16 +423,12 @@
 			</div>
 		{:else if isNotebook && !showRaw && parsedNotebook}
 			<div class="overflow-auto h-full">
-				{#key JSON.stringify([baseUrl, apiKey, chatId, selectedFile])}
-					<NotebookView
+				{#key JSON.stringify( [target?.selector, target?.context, target?.key, selectedFile] )}<NotebookView
 						notebook={parsedNotebook}
 						filePath={selectedFile ?? ''}
-						{baseUrl}
-						{apiKey}
-						{chatId}
+						{target}
 						{readOnly}
-					/>
-				{/key}
+					/>{/key}
 			</div>
 		{:else if isJson && !showRaw && parsedJson !== undefined}
 			<div class="overflow-auto h-full">

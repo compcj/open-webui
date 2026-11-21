@@ -203,6 +203,7 @@ async def resolve_tool_call_output(
                 'model',
                 'cwd',
                 'terminal_identity',
+                'terminal_instance',
                 'terminal_context',
                 'automation_id',
                 'state',
@@ -213,6 +214,7 @@ async def resolve_tool_call_output(
             user,
             {key: authorized_binding[key] for key in ('terminal_id', 'chat_id', 'automation_id')},
             authorized_binding['terminal_identity'],
+            terminal_instance=authorized_binding['terminal_instance'],
             **(
                 {'terminal_context': authorized_binding['terminal_context']}
                 if 'terminal_context' in authorized_execution
@@ -243,7 +245,8 @@ async def resolve_tool_call_output(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Tool call not found.')
         tool_name = function_call.get('name')
 
-        if function_call.get('native') is not None:
+        # Terminal agent requests carry the provider's event; older saved messages call it 'native'.
+        if function_call.get('provider_data') is not None or function_call.get('native') is not None:
             from open_webui.utils.auth import decode_token
 
             function_call.setdefault('call_id', form_data.call_id)
@@ -251,7 +254,7 @@ async def resolve_tool_call_output(
             binding = decode_token(token) if isinstance(token, str) else None
             if (
                 not binding
-                or binding.get('purpose') != 'terminal-agent'
+                or binding.get('typ') != 'agent_session'
                 or binding.get('user') != user.id
                 or binding.get('chat') != chat_id
             ):
@@ -284,7 +287,7 @@ async def resolve_tool_call_output(
                     raise HTTPException(403, 'Invalid agent terminal context')
             function_call['agent_resolution'] = form_data.model_dump()
             function_call['status'] = 'queued'
-            # The running native client consumes this persisted response. Do not start a model/tool loop.
+            # The running agent client consumes this persisted response. Do not start a model/tool loop.
             return {'chat': chat, 'output': output, 'resume': None}
 
         if (message.get('meta') or {}).get('frozen_tool_context') is True:
@@ -451,7 +454,6 @@ async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat
         'tool_ids': message_meta.get('tool_ids') or None,
         'skill_ids': message_meta.get('skill_ids') or None,
         'terminal_id': message_meta.get('terminal_id') or None,
-        'tool_servers': message_meta.get('tool_servers') or None,
         'features': message_meta.get('features') or {},
         'image_generation_engine_id': message_meta.get('image_generation_engine_id'),
         'variables': message_meta.get('variables') or {},

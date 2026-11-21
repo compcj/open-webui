@@ -15,10 +15,11 @@ function setup() {
 	const onSave = vi.fn(() => new Promise<void>((resolve) => (complete = resolve)));
 	const body = `
  let selectedFile = '/work/readme.md', baseUrl = '/api/v1/terminals/system', apiKey = 'old-token', chatId = 'old-chat', resourceVersion = 1;
+ let target = {selector: baseUrl, key: apiKey, context: {chatId, modelId: null}};
  let saving = false, codeValue = 'same draft';
  const readOnly = false, fileCodeEditorRef = null, isMarkdown = false, showRaw = false, searchTarget = null;
  ${declarations}
- return { saveCodeFile, replace: () => { apiKey = 'new-token'; chatId = 'new-chat'; resourceVersion++; saving = true; }, state: () => saving };
+ return { saveCodeFile, replace: () => { apiKey = 'new-token'; chatId = 'new-chat'; target = {...target, key: apiKey, context: {chatId, modelId:null}}; resourceVersion++; saving = true; }, state: () => saving };
  `;
 	return {
 		...new Function(

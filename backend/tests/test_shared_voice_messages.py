@@ -145,7 +145,7 @@ async def runtime(tmp_path, monkeypatch):
     load_source(
         namespace,
         'models/chats.py',
-        classes={'Chat', 'ChatModel', 'ChatResponse', 'ChatForm'},
+        classes={'Chat', 'ChatModel', 'ChatResponse', 'ChatAccessResponse', 'ChatForm'},
         functions={'is_internal_chat'},
     )
     load_source(
@@ -225,6 +225,7 @@ async def runtime(tmp_path, monkeypatch):
         classes={'MessageForm', 'VoiceMessageForm', 'VoiceMetadataForm'},
         functions={
             'chat_response_for_user',
+            'shared_chat_response',
             'voice_message_response_for_user',
             'insert_chat_voice_message',
             'update_chat_voice_message',

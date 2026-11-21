@@ -1,5 +1,4 @@
 import copy
-from contextlib import nullcontext
 import os
 import time
 import uuid
@@ -30,6 +29,7 @@ from sqlalchemy import (
     distinct,
     func,
     literal,
+    or_,
     select,
     type_coerce,
     update,
@@ -60,6 +60,8 @@ def agent_output_private_fields(keep_retention_state: bool = False) -> tuple[str
 
 def strip_agent_output_journal(meta: dict | None, *, keep_retention_state: bool = False) -> dict | None:
     # Protocol frames and retention state belong to the execution store.
+    if isinstance(meta, dict) and ('steering_run' in meta or 'steering_origin' in meta):
+        meta = {key: value for key, value in meta.items() if key not in ('steering_run', 'steering_origin')}
     execution = meta.get('agent_execution') if isinstance(meta, dict) else None
     if not isinstance(execution, dict):
         return meta
@@ -284,13 +286,18 @@ class ChatMessageTable:
         fields = agent_output_private_fields(keep_retention_state)
         if db.get_bind().dialect.name == 'sqlite':
             paths = [f'$.agent_execution.{field}' for field in fields]
-            return type_coerce(func.json_remove(meta, *paths), JSON)
+            return type_coerce(func.json_remove(meta, '$.steering_run', '$.steering_origin', *paths), JSON)
 
         agent = meta['agent_execution']
-        projected = cast(meta, JSONB)
+        public = cast(meta, JSONB).delete_path(['steering_run']).delete_path(['steering_origin'])
+        projected = public
         for field in fields:
             projected = projected.delete_path(['agent_execution', field])
-        return case((func.json_typeof(agent) == 'object', cast(projected, JSON)), else_=meta)
+        return case(
+            (func.json_typeof(meta) != 'object', meta),
+            (func.json_typeof(agent) == 'object', cast(projected, JSON)),
+            else_=cast(public, JSON),
+        )
 
     @classmethod
     def _select_public_message_rows(cls, db):
@@ -321,8 +328,14 @@ class ChatMessageTable:
         if 'meta' in data or 'voice_provenance' in data:
             meta = copy.deepcopy(data.get('meta') if 'meta' in data else message.meta)
             if isinstance(meta, dict):
+                meta.pop('steering_origin', None)
+                meta.pop('steering_run', None)
                 meta.pop('agent_execution', None)
             prior = message.meta or {}
+            if 'steering_origin' in prior:
+                meta = {**(meta or {}), 'steering_origin': prior['steering_origin']}
+            if 'steering_run' in prior:
+                meta = {**(meta or {}), 'steering_run': prior['steering_run']}
             if 'agent' in prior and 'agent' not in (meta or {}):
                 meta = {**(meta or {}), 'agent': prior['agent']}
             if 'agent_execution' in prior:
@@ -361,6 +374,8 @@ class ChatMessageTable:
 
         meta = copy.deepcopy(data.get('meta'))
         if isinstance(meta, dict):
+            meta.pop('steering_origin', None)
+            meta.pop('steering_run', None)
             meta.pop('agent_execution', None)
         provenance = public_voice_provenance(data, user_id)
         if provenance:
@@ -509,6 +524,35 @@ class ChatMessageTable:
                 .limit(1)
             )
             return result.scalar_one_or_none() is not None
+
+    async def has_unsettled_steering(self, chat_id, *, db):
+        result = await db.scalar(
+            select(ChatMessage.id)
+            .where(
+                ChatMessage.chat_id == chat_id,
+                ChatMessage.role == 'assistant',
+                or_(
+                    ChatMessage.meta['steering_run']['confirmed'].as_boolean().is_(False),
+                    cast(ChatMessage.meta['steering_run']['entries'], Text).notin_(['null', '{}']),
+                    ChatMessage.meta['steering_origin'].as_string().is_not(None)
+                    & ChatMessage.meta['steering_run']['confirmed'].as_boolean().is_(None),
+                ),
+            )
+            .limit(1)
+        )
+        return result is not None
+
+    async def has_queued_message(self, chat_id: str, message_id: str, db: Optional[AsyncSession] = None) -> bool:
+        """Only entries admitted against this exact normalized reply can interrupt tool continuation."""
+        async with nullcontext(db) if db is not None else get_async_db_context() as session:
+            entries = await session.scalar(
+                select(ChatMessage.meta['steering_run']['entries']).where(
+                    ChatMessage.chat_id == chat_id,
+                    ChatMessage.id == f'{chat_id}-{message_id}',
+                    ChatMessage.role == 'assistant',
+                )
+            )
+            return isinstance(entries, dict) and bool(entries)
 
     async def get_messages_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> list[ChatMessageModel]:
         async with get_async_db_context(db) as db:
@@ -765,6 +809,7 @@ class ChatMessageTable:
 
             stmt = select(
                 ChatMessage.model_id,
+                func.max(ChatMessage.meta['model_name'].as_string()).label('model_name'),
                 func.count(ChatMessage.id).label('count'),
                 func.count(distinct(ChatMessage.user_id)).label('unique_users'),
                 func.count(distinct(ChatMessage.chat_id)).label('unique_chats'),
@@ -785,6 +830,7 @@ class ChatMessageTable:
             result = await db.execute(stmt)
             return {
                 row.model_id: {
+                    'name': row.model_name if isinstance(row.model_name, str) and row.model_name.strip() else None,
                     'count': row.count,
                     'unique_users': row.unique_users,
                     'unique_chats': row.unique_chats,

@@ -251,6 +251,19 @@ Register `knowledge_write` among visible composer controls; hiding it never clea
 See [temporary V2](../docs/temporary-context-v2.md) and
 [current decisions](../docs/upstream/v0.13.3-decisions.md).
 
+## v0.13.4 workspace controls
+
+- Chat tabs own their selected models, draft, running task IDs and temporary context. Persist saved view
+  layout only. Project raw history before opening a side conversation. Keep executable Agent, steering,
+  compaction and result-selection state out of that projection.
+- Direct and Tether model choices coexist. Preserve offline Agent IDs until an authorized live catalog offers
+  one verified mapping. Terminal attachment upload defaults to WebUI for both connection types. Pin terminal
+  targets and file operations to the actor, model, instance and chat captured at selection.
+- Explicit image models and named shortcuts are mutually exclusive. Check the current user's access before
+  listing them. Display fork and official update status independently and link each to its own release.
+- Scope DOM listeners, browser approvals, stop requests and compaction progress to the originating reply or
+  tab. Preserve the independent preview origin and terminal directory/background-file behavior.
+
 ## v0.13.3 workspace and preview controls
 
 Keep the upstream tabs/split view, Controls and plus-menu interactions. Show Input Selections defaults

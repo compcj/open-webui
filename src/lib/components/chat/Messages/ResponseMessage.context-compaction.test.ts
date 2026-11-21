@@ -24,13 +24,16 @@ const dependencies: Record<string, any> = {
 	'./messageAttachments': messageAttachments,
 	'$lib/utils/context-compaction': contextCompaction,
 	'$lib/utils/localizedContent': { resolveLocalizedModelName: (model: any) => model.id },
+	'$lib/components/chat/context': {
+		getChatContext: () => dependencies['$lib/stores']
+	},
 	'$lib/stores': {
 		models,
 		settings: writable({}),
 		config: writable({}),
 		user: writable(null),
 		audioQueue: writable(null),
-		temporaryChatEnabled: writable(false),
+		temporaryChat: writable(false),
 		TTSWorker: writable(null)
 	},
 	'$lib/utils': {

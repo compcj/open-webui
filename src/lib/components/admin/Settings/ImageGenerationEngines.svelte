@@ -1,59 +1,31 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 
-	import type { ImageEditEngineConfig, ImageGenerationEngine } from '$lib/apis/images';
-	import ImageEngineProviderFields from './ImageEngineProviderFields.svelte';
-	import { createImageEngineConfig, prepareImageEngineProfiles } from './image-engine-editor';
+	import type { ImageProfile } from '$lib/apis/images';
 	import AdminSettingField from './AdminSettingField.svelte';
+	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
 
-	export let engines: ImageGenerationEngine[] = [];
+	type Option = { value: string; label: string };
+	export let engines: ImageProfile[] = [];
+	export let generationModelOptions: Option[] = [];
+	export let editModelOptions: Option[] = [];
 
 	const i18n: any = getContext('i18n');
-	const inputClass =
-		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
-
-	let paramsDrafts: Record<string, { generation: string; edit: string }> = {};
-	let editStash: Record<string, ImageEditEngineConfig> = {};
-
-	$: {
-		for (const engine of engines) {
-			if (!(engine.id in paramsDrafts)) {
-				paramsDrafts[engine.id] = {
-					generation: JSON.stringify(engine.params ?? {}, null, 2),
-					edit: JSON.stringify(engine.edit?.params ?? {}, null, 2)
-				};
-			}
-		}
-	}
+	const inputClass = 'w-full rounded-lg bg-gray-50 px-2 py-1 text-xs dark:bg-white/5';
 
 	const addEngine = () => {
-		const id = crypto.randomUUID();
-		paramsDrafts[id] = { generation: '{}', edit: '{}' };
 		engines = [
 			...engines,
-			{ id, name: '', ...createImageEngineConfig(), edit: createImageEngineConfig() }
+			{
+				id: crypto.randomUUID(),
+				name: '',
+				generation_model: generationModelOptions[0]?.value ?? '',
+				edit_model: null,
+				tool_description_suffix: '',
+				edit_tool_description_suffix: ''
+			}
 		];
 	};
-
-	const removeEngine = (id: string) => {
-		engines = engines.filter((engine) => engine.id !== id);
-		delete paramsDrafts[id];
-		delete editStash[id];
-	};
-
-	const toggleEdit = (engine: ImageGenerationEngine) => {
-		if (engine.edit) {
-			editStash[engine.id] = engine.edit;
-			engine.edit = null;
-		} else {
-			engine.edit = editStash[engine.id] ?? createImageEngineConfig();
-		}
-		engines = engines;
-	};
-
-	export function getValidatedEngines(): ImageGenerationEngine[] {
-		return prepareImageEngineProfiles(engines, paramsDrafts);
-	}
 </script>
 
 <div class="flex flex-col gap-3">
@@ -90,7 +62,7 @@
 					class="shrink-0 text-xs text-gray-400 transition-colors hover:text-red-600 dark:text-gray-600 dark:hover:text-red-400"
 					type="button"
 					aria-label={$i18n.t('Remove Configuration')}
-					on:click={() => removeEngine(engine.id)}
+					on:click={() => (engines = engines.filter((item) => item.id !== engine.id))}
 				>
 					{$i18n.t('Remove')}
 				</button>
@@ -106,52 +78,56 @@
 					/>
 				</AdminSettingField>
 
-				<fieldset
-					class="flex flex-col gap-2.5 border-t border-gray-100 pt-3 dark:border-white/[0.06]"
+				<AdminSettingField
+					label={$i18n.t('Generation settings')}
+					forId={`engine-${engine.id}-generation`}
 				>
-					<legend class="px-1 text-xs font-medium text-gray-700 dark:text-gray-300">
-						{$i18n.t('Generation settings')}
-					</legend>
-					<ImageEngineProviderFields
-						config={engine}
-						idPrefix={`engine-${engine.id}-generation`}
-						bind:paramsDraft={paramsDrafts[engine.id].generation}
-					/>
-				</fieldset>
-
-				<fieldset
-					class="flex flex-col gap-2.5 border-t border-gray-100 pt-3 dark:border-white/[0.06]"
+					<SettingsSelect
+						id={`engine-${engine.id}-generation`}
+						bind:value={engine.generation_model}
+					>
+						{#if engine.generation_model && !generationModelOptions.some((item) => item.value === engine.generation_model)}
+							<option value={engine.generation_model}>{engine.generation_model}</option>
+						{/if}
+						{#each generationModelOptions as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</SettingsSelect>
+				</AdminSettingField>
+				<AdminSettingField
+					label={$i18n.t('Tool Description Suffix')}
+					forId={`engine-${engine.id}-generation-description`}
 				>
-					<legend class="px-1 text-xs font-medium text-gray-700 dark:text-gray-300">
-						{$i18n.t('Editing settings')}
-					</legend>
-					{#if engine.edit}
-						<button
-							class="w-fit text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-							type="button"
-							on:click={() => toggleEdit(engine)}
-						>
-							{$i18n.t('Use system default editor')}
-						</button>
-						<ImageEngineProviderFields
-							config={engine.edit}
-							idPrefix={`engine-${engine.id}-editing`}
-							editing
-							bind:paramsDraft={paramsDrafts[engine.id].edit}
-						/>
-					{:else}
-						<p class="text-xs text-gray-400 dark:text-gray-600">
-							{$i18n.t('This configuration uses the system default image editor.')}
-						</p>
-						<button
-							class="w-fit text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-							type="button"
-							on:click={() => toggleEdit(engine)}
-						>
-							{$i18n.t('Configure separate editor')}
-						</button>
-					{/if}
-				</fieldset>
+					<textarea
+						id={`engine-${engine.id}-generation-description`}
+						class={inputClass}
+						bind:value={engine.tool_description_suffix}
+					></textarea>
+				</AdminSettingField>
+				<AdminSettingField label={$i18n.t('Editing settings')} forId={`engine-${engine.id}-edit`}>
+					<select id={`engine-${engine.id}-edit`} class={inputClass} bind:value={engine.edit_model}>
+						<option value={null}>{$i18n.t('Use system default editor')}</option>
+						<option value="disabled">{$i18n.t('Off')}</option>
+						{#if engine.edit_model && engine.edit_model !== 'disabled' && !editModelOptions.some((item) => item.value === engine.edit_model)}
+							<option value={engine.edit_model}>{engine.edit_model}</option>
+						{/if}
+						{#each editModelOptions as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				</AdminSettingField>
+				{#if engine.edit_model && engine.edit_model !== 'disabled'}
+					<AdminSettingField
+						label={$i18n.t('Tool Description Suffix')}
+						forId={`engine-${engine.id}-edit-description`}
+					>
+						<textarea
+							id={`engine-${engine.id}-edit-description`}
+							class={inputClass}
+							bind:value={engine.edit_tool_description_suffix}
+						></textarea>
+					</AdminSettingField>
+				{/if}
 			</div>
 		</div>
 	{/each}

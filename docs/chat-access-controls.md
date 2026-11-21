@@ -1,5 +1,10 @@
 # Chat access controls
 
+The saved chat owner can send a steering message to their own active ordinary reply. The server binds
+the queued message to that reply, branch and worker, saves all resolved results and waits for confirmed
+worker completion before continuing. Shared writers retain their own approvals and stops. Access to a
+shared chat does not grant use of the selected terminal. See the [v0.13.4 decisions](upstream/v0.13.4-decisions.md).
+
 ## Global entry controls
 
 Administrators can configure two independent switches under **Admin Panel → Settings → Authentication**.

@@ -1,8 +1,4 @@
-import {
-	terminalConnectionHeaders,
-	terminalCredentialToken,
-	type TerminalConnection
-} from './index';
+import { terminalHeaders, terminalCredentialToken, type TerminalTarget } from './index';
 
 export function assignTerminalChat(socket: WebSocket, chatId: string): Promise<void> {
 	return new Promise((resolve, reject) => {
@@ -40,15 +36,14 @@ export function assignTerminalChat(socket: WebSocket, chatId: string): Promise<v
 }
 
 export function openTerminalSocket(
-	connection: TerminalConnection,
-	chatId: string | null,
+	target: TerminalTarget,
 	path: string,
 	onOpen?: (socket: WebSocket) => void,
-	resume?: { resume: true; cursor: number; flow_control?: true }
+	resume?: { resume: true; cursor: number; flow_control?: true; process_info?: true }
 ) {
-	const headers = terminalConnectionHeaders(connection);
-	const url = new URL(`${connection.baseUrl.replace(/\/$/, '')}${path}`, location.href);
+	const url = new URL(`${target.baseUrl.replace(/\/$/, '')}${path}`, location.href);
 	url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+	const headers = terminalHeaders(target);
 	if (headers['X-Temporary-Context-Id']) {
 		url.searchParams.set('temporary_context_id', headers['X-Temporary-Context-Id']);
 		url.searchParams.set('temporary_context_epoch', headers['X-Temporary-Context-Epoch']);
@@ -60,8 +55,10 @@ export function openTerminalSocket(
 			JSON.stringify({
 				...resume,
 				type: 'auth',
-				token: terminalCredentialToken(connection.key).trim(),
-				chat_id: chatId ?? ''
+				...(target.context.userId ? { instance_user_id: target.context.userId } : {}),
+				...(target.context.modelId ? { model_id: target.context.modelId } : {}),
+				token: terminalCredentialToken(target.key).trim(),
+				chat_id: target.context.chatId ?? ''
 			})
 		);
 		onOpen?.(socket);
@@ -71,8 +68,7 @@ export function openTerminalSocket(
 
 // Streams use the same response bodies as their HTTP endpoints.
 export function readTerminalStream<T>(
-	connection: TerminalConnection,
-	chatId: string | null,
+	target: TerminalTarget,
 	path: () => string,
 	onData: (data: T) => void | Promise<void>,
 	onError: (message: string) => void,
@@ -89,7 +85,7 @@ export function readTerminalStream<T>(
 		await pending;
 		if (stopped) return;
 		try {
-			socket = openTerminalSocket(connection, chatId, path());
+			socket = openTerminalSocket(target, path());
 		} catch (reason) {
 			onError(reason instanceof Error ? reason.message : String(reason));
 			return;

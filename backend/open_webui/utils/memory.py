@@ -285,7 +285,7 @@ def validate_memory_operations(form_data) -> list[dict]:
 
 
 async def recall_memories(
-    request, messages: list[dict], user, model: dict | None = None, features: dict | None = None
+    request, messages: list[dict], user, model: dict | None = None, features: dict | None = None, *, sent: str = ''
 ) -> str:
     if not await memory_enabled(features or {}, model or {}, user):
         return ''
@@ -370,7 +370,12 @@ async def recall_memories(
         ('Relevant Context', 'context'),
     ):
         if sections[key]:
-            ordered = sorted(sections[key], key=lambda memory: (memory.casefold(), memory))
+            ordered = sorted(
+                (memory for memory in sections[key] if f'- {memory}\n' not in sent),
+                key=lambda memory: (memory.casefold(), memory),
+            )
+            if not ordered:
+                continue
             parts.append(f'[{title}]\n' + '\n'.join(f'- {memory}' for memory in ordered))
     if not parts:
         return ''
@@ -500,7 +505,7 @@ async def _review_memory(
         role = message.get('role', '')
         content = message.get('content', '')
         if not isinstance(content, str):
-            content = get_content_from_message(message)
+            content = get_content_from_message(message) or ''
         content = content.strip()
         if role not in {'user', 'assistant'} or not content:
             continue

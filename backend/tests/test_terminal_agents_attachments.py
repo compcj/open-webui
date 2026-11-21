@@ -80,7 +80,7 @@ def runtime(monkeypatch):
 
 def text(message):
     content = message['content']
-    return content if isinstance(content, str) else '\n'.join(part.get('text', '') for part in content)
+    return content if isinstance(content, str) else '\n'.join(part.get('text', '') for part in content or [])
 
 
 @pytest.mark.asyncio

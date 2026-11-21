@@ -193,7 +193,7 @@ async def isolated_scenario(import_scenario=None):
         embedding_requests.append((queries, prefix, user.id))
         return [embed_text(query) for query in queries]
 
-    def save_docs(request, docs, collection_name, config, metadata, add, user):
+    async def save_docs(request, docs, collection_name, config, metadata, add, user):
         if collection_name == vectors.fail_collection:
             raise RuntimeError('Synthetic indexing failure')
         entries = [
@@ -332,6 +332,12 @@ async def isolated_scenario(import_scenario=None):
     sys.modules[retrieval_utils.__name__] = retrieval_utils
     external_retrieval = ModuleType('open_webui.retrieval.external')
     external_retrieval.retrieve_external_knowledge = AsyncMock(side_effect=AssertionError('No external KB expected'))
+    external_retrieval.list_virtual_knowledge = AsyncMock(return_value=[])
+    external_retrieval.is_virtual_knowledge_id = lambda resource_id: (
+        isinstance(resource_id, str) and resource_id.startswith('ext:')
+    )
+    external_retrieval.get_virtual_knowledge = AsyncMock(side_effect=AssertionError('No virtual KB expected'))
+    external_retrieval.has_virtual_knowledge_access = AsyncMock(side_effect=AssertionError('No virtual KB expected'))
     sys.modules[external_retrieval.__name__] = external_retrieval
     load_source(
         ns,
@@ -414,6 +420,15 @@ async def isolated_scenario(import_scenario=None):
     assert [kb['id'] for kb in searched] == [paging_bases[12].id]
 
     scoped_filter = {'user_id': pager.id, 'group_ids': [], 'knowledge_ids': paging_ids}
+    virtual = base.model_copy(update={'id': 'ext:connection:included'})
+    unrelated = base.model_copy(update={'id': 'ext:connection:unrelated'})
+    external_retrieval.list_virtual_knowledge.return_value = [virtual, unrelated]
+    virtual_page = await Knowledges.search_knowledge_bases(
+        pager.id, filter={**scoped_filter, 'knowledge_ids': [virtual.id, paging_bases[11].id]}
+    )
+    assert virtual_page.total == 2 and [kb.id for kb in virtual_page.items] == [paging_bases[11].id, virtual.id]
+    external_retrieval.list_virtual_knowledge.return_value = []
+
     scoped_model_page = await Knowledges.search_knowledge_bases(pager.id, filter=scoped_filter, skip=1, limit=1)
     assert scoped_model_page.total == 3 and [kb.id for kb in scoped_model_page.items] == [paging_bases[12].id]
     private_only = await Knowledges.search_knowledge_bases(

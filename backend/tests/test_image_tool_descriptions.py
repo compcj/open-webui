@@ -17,16 +17,19 @@ from pydantic import BaseModel, Field, create_model
 
 import test_chat_tool_features as tool_features
 from test_chat_tool_features import BACKEND, extract
-from test_image_generation_engines import load_engines_module, profile
+from test_image_generation_engines import image_router, load_engines_module, profile
 
 
 @pytest.fixture
-def tool_context():
+def tool_context(image_router):
     context = tool_features.ChatToolFeaturesTests()
     context.setUp()
+    context.config_values = image_router.state.values
     engines = load_engines_module()
     context.namespace.update(
         SimpleNamespace=SimpleNamespace,
+        get_image_tool_settings=image_router.connections.get_image_tool_settings,
+        get_requested_image_model=image_router.connections.get_requested_image_model,
         resolve_image_generation_config=engines.resolve_image_generation_config,
         resolve_image_edit_config=engines.resolve_image_edit_config,
         JSONCodec=json,
@@ -154,7 +157,7 @@ def test_concurrent_requests_and_config_updates_do_not_mutate_cached_schemas(too
     assert second['generate_image']['spec']['description'] == before['generate_image']['description'] + '\n\nDraw B'
     assert again['generate_image']['spec'] == first['generate_image']['spec']
     first['generate_image']['spec']['description'] = 'mutated'
-    tool_context.config_values['image_generation.engines'][0]['tool_description_suffix'] = 'Updated'
+    tool_context.config_values['images.profiles'][0]['tool_description_suffix'] = 'Updated'
     refreshed = asyncio.run(request('a'))
     assert refreshed['generate_image']['spec']['description'] == before['generate_image']['description'] + '\n\nUpdated'
     for name in before:

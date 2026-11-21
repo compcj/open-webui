@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { TerminalCredential } from '$lib/apis/terminal';
+	import { resolveTerminalTarget } from '$lib/apis/terminal';
 	// Keep keys in nested template expressions visible to i18next-parser.
 	// $i18n.t("Terminal unavailable");
 	// $i18n.t("No preview available");
@@ -34,17 +34,19 @@
 
 	export let item: any;
 	export let chatId = '';
+	export let modelId: string | null = null;
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 	const temporaryContext: any = getContext('temporary-context');
 
 	let expanded = true;
 	let loading = false;
+	let disposed = false;
 	let loadedKey = '';
 	let error = '';
 	let showRaw = false;
 	let objectUrls: string[] = [];
-	let terminal: { url: string; key: TerminalCredential } | null = null;
+	let terminal: ReturnType<typeof resolveTerminalTarget> = null;
 
 	let fileImageUrl: string | null = null;
 	let fileVideoUrl: string | null = null;
@@ -54,12 +56,10 @@
 	let fileModelData: ArrayBuffer | null = null;
 	let fileDocxData: ArrayBuffer | null = null;
 	let fileContent: string | null = null;
-	let fileOfficeHtml: string | null = null;
 	let fileOfficeSlides: string[] | null = null;
 	let currentSlide = 0;
-	let excelSheetNames: string[] = [];
 	let selectedExcelSheet = '';
-	let excelWorkbook: any = null;
+	let excelWorkbook: import('xlsx').WorkBook | null = null;
 
 	const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 	const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'ogv', 'avi', 'mkv']);
@@ -86,22 +86,16 @@
 			$settings,
 			$config,
 			$user,
+			modelId,
 			chatId);
 		terminal = resolveTerminal();
 	}
 	$: unavailable = (signedDelivery && (!terminal || !deliveryOwner)) || (!terminal && !fileId);
 	$: previewKey =
-		fileId ||
+		(fileId && ($user?.id ?? '') + '|' + fileId) ||
 		(terminal && !unavailable
-			? `${terminal.url}|${JSON.stringify(terminal.key)}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
+			? `${terminal.baseUrl}|${JSON.stringify(terminal.key)}|${JSON.stringify(terminal.context)}|${path}|${item?.download_url ?? ''}|${item?.image_url ?? ''}|${item?.session_id ?? chatId}`
 			: '');
-	$: isPerChatTerminal =
-		($terminalServers ?? []).find((server: any) => server.id === selector)?.contexts?.chat
-			?.context_id === 'chat_id';
-	$: previewBaseUrl =
-		terminal && isPerChatTerminal && chatId
-			? `${terminal.url}/chats/${encodeURIComponent(chatId)}`
-			: (terminal?.url ?? '');
 	$: previewClass = isImage(path)
 		? 'h-[22rem]'
 		: isPdf(path) ||
@@ -112,6 +106,10 @@
 			  getExt(path) === 'svg'
 			? 'h-96'
 			: 'h-72';
+	$: if (unavailable) {
+		loadedKey = '';
+		clearPreview();
+	}
 	$: if (expanded && !unavailable && path && previewKey !== loadedKey && !loading) {
 		void loadPreview(previewKey);
 	}
@@ -126,32 +124,15 @@
 
 	const t = (key: string, vars?: Record<string, unknown>) => $i18n?.t?.(key, vars) ?? key;
 
-	function resolveTerminal(): { url: string; key: TerminalCredential } | null {
-		if (!selector) return null;
-
-		const systemTerminal = ($terminalServers ?? []).find((server: any) => server.id === selector);
-		if (systemTerminal?.url) {
-			if (!signedDelivery && $selectedTerminalId !== selector) return null;
-			return {
-				url: systemTerminal.url,
-				key: temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token
-			};
-		}
-		if (
-			signedDelivery ||
-			$selectedTerminalId !== selector ||
-			!$config?.features?.enable_direct_integrations
-		)
-			return null;
-
-		const directTerminal = (($settings as any)?.terminalServers ?? []).find(
-			(server: any) => server.url === selector && server.enabled
+	function resolveTerminal() {
+		if (!selector || (!signedDelivery && selector !== $selectedTerminalId)) return null;
+		return resolveTerminalTarget(
+			selector,
+			$terminalServers ?? [],
+			temporaryContext?.terminalCredential(localStorage.token, chatId) ?? localStorage.token,
+			{ chatId: item?.session_id || chatId, modelId },
+			$settings?.terminalServers ?? []
 		);
-		if (directTerminal?.url) {
-			return { url: directTerminal.url, key: directTerminal.key ?? '' };
-		}
-
-		return null;
 	}
 
 	function clearPreview() {
@@ -165,44 +146,36 @@
 		fileModelData = null;
 		fileDocxData = null;
 		fileContent = null;
-		fileOfficeHtml = null;
 		fileOfficeSlides = null;
 		currentSlide = 0;
-		excelSheetNames = [];
 		selectedExcelSheet = '';
 		excelWorkbook = null;
 	}
 
-	async function blobForPreview() {
+	const previewIsCurrent = (key: string) => !disposed && !unavailable && key === previewKey;
+
+	async function blobForPreview(key: string) {
+		if (!previewIsCurrent(key)) return null;
 		if (fileId) {
 			const data = await getFileContentById(fileId).catch(() => null);
-			return data
+			return data && previewIsCurrent(key)
 				? { blob: new Blob([data], { type: item?.content_type ?? '' }), filename: name }
 				: null;
 		}
 		if (!terminal) return null;
 		if (signedDelivery) {
-			return downloadDeliveryFile(
-				item.download_url,
-				terminal.url,
-				terminal.key,
-				item?.session_id || chatId || undefined
-			);
+			return downloadDeliveryFile(item.download_url, terminal);
 		}
-		return downloadFileBlob(terminal.url, terminal.key, path, chatId || undefined);
-	}
-
-	async function loadExcelSheet(sheet: string) {
-		if (!excelWorkbook) return;
-		selectedExcelSheet = sheet;
-		const { excelToTable } = await import('$lib/utils/excelToTable');
-		const result = await excelToTable(excelWorkbook.Sheets[selectedExcelSheet]);
-		const DOMPurify = (await import('dompurify')).default;
-		fileOfficeHtml = DOMPurify.sanitize(result.html, { ADD_ATTR: ['target'] });
+		return downloadFileBlob(terminal, path);
 	}
 
 	async function loadPreview(key: string) {
 		const activeTerminal = terminal;
+		async function current<T>(promise: Promise<T>) {
+			const value = await promise;
+			if (!previewIsCurrent(key)) throw new DOMException('Preview context changed', 'AbortError');
+			return value;
+		}
 		if (!activeTerminal && !fileId) return;
 		loadedKey = key;
 		loading = true;
@@ -213,21 +186,19 @@
 			if (getExt(path) === 'svg' && activeTerminal) {
 				if (signedDelivery) {
 					fileImageUrl = item?.image_url
-						? validateDeliveryUrl(item.image_url, activeTerminal.url, 'image')
+						? validateDeliveryUrl(item.image_url, activeTerminal.baseUrl, 'image')
 						: null;
-					const result = await blobForPreview();
+					const result = await current(blobForPreview(key));
 					if (!result) throw new Error(t('Preview failed'));
-					if (key !== previewKey) return;
-					fileContent = await result.blob.text();
+					if (!previewIsCurrent(key)) return;
+					fileContent = await current(result.blob.text());
 				} else {
 					const isSystem = ($terminalServers ?? []).some((server) => server.id === selector);
 					const [content, delivery] = await Promise.all([
-						readFile(activeTerminal.url, activeTerminal.key, path, chatId || undefined),
-						isSystem
-							? getFileDelivery(activeTerminal.url, activeTerminal.key, path, chatId || undefined)
-							: Promise.resolve(null)
+						readFile(activeTerminal, path),
+						isSystem ? getFileDelivery(activeTerminal, path) : Promise.resolve(null)
 					]);
-					if (key !== previewKey) return;
+					if (!previewIsCurrent(key)) return;
 					fileContent = content;
 					fileImageUrl = delivery?.image_url ?? null;
 				}
@@ -235,15 +206,15 @@
 			}
 			const signedImageUrl =
 				signedDelivery && activeTerminal && item?.image_url
-					? validateDeliveryUrl(item.image_url, activeTerminal.url, 'image')
+					? validateDeliveryUrl(item.image_url, activeTerminal.baseUrl, 'image')
 					: null;
 			if (signedImageUrl && isImage(path)) {
 				fileImageUrl = signedImageUrl;
 			} else if (isImage(path) || isVideo(path) || isAudio(path)) {
-				const result = await blobForPreview();
+				const result = await current(blobForPreview(key));
 				if (!result) throw new Error(t('Preview failed'));
 				const url = URL.createObjectURL(result.blob);
-				if (key !== previewKey) {
+				if (!previewIsCurrent(key)) {
 					URL.revokeObjectURL(url);
 					return;
 				}
@@ -252,87 +223,72 @@
 				else if (isVideo(path)) fileVideoUrl = url;
 				else fileAudioUrl = url;
 			} else if (['glb', 'gltf', 'stl', 'obj', 'ply'].includes(getExt(path))) {
-				const result = await blobForPreview();
+				const result = await current(blobForPreview(key));
 				if (!result) throw new Error(t('Preview failed'));
-				fileModelData = await result.blob.arrayBuffer();
+				fileModelData = await current(result.blob.arrayBuffer());
 			} else if (isPdf(path) || isSqlite(path) || isOffice(path)) {
 				const ext = getExt(path);
 
 				if (isPdf(path)) {
-					const result = await blobForPreview();
+					const result = await current(blobForPreview(key));
 					if (!result) throw new Error(t('Preview failed'));
-					const arrayBuffer = await result.blob.arrayBuffer();
+					const arrayBuffer = await current(result.blob.arrayBuffer());
 					if (!hasPdfSignature(arrayBuffer)) throw new Error(t('Preview failed'));
-					if (key !== previewKey) return;
+					if (!previewIsCurrent(key)) return;
 					filePdfData = arrayBuffer;
 				} else if (isSqlite(path)) {
-					const result = await blobForPreview();
+					const result = await current(blobForPreview(key));
 					if (!result) throw new Error(t('Preview failed'));
-					const arrayBuffer = await result.blob.arrayBuffer();
+					const arrayBuffer = await current(result.blob.arrayBuffer());
 					fileSqliteData = arrayBuffer;
 				} else if (ext === 'docx') {
 					const preview =
 						activeTerminal && !signedDelivery
-							? await downloadFilePreview(
-									activeTerminal.url,
-									activeTerminal.key,
-									path,
-									chatId || undefined
-								)
+							? await downloadFilePreview(activeTerminal, path)
 							: null;
 					if (preview) {
-						filePdfData = await preview.blob.arrayBuffer();
+						filePdfData = await current(preview.blob.arrayBuffer());
 					} else {
-						const result = await blobForPreview();
+						const result = await current(blobForPreview(key));
 						if (!result) throw new Error(t('Preview failed'));
-						fileDocxData = await result.blob.arrayBuffer();
+						fileDocxData = await current(result.blob.arrayBuffer());
 					}
 				} else if (ext === 'xlsx' || ext === 'xls') {
-					const result = await blobForPreview();
+					const result = await current(blobForPreview(key));
 					if (!result) throw new Error(t('Preview failed'));
-					const arrayBuffer = await result.blob.arrayBuffer();
+					const arrayBuffer = await current(result.blob.arrayBuffer());
 					const { readExcelWorkbook } = await import('$lib/utils/excelToTable');
-					excelWorkbook = await readExcelWorkbook(arrayBuffer);
-					excelSheetNames = excelWorkbook.SheetNames;
-					if (excelSheetNames.length > 0) {
-						await loadExcelSheet(excelSheetNames[0]);
+					const workbook = await current(readExcelWorkbook(arrayBuffer));
+					if (workbook.SheetNames.length > 0) {
+						selectedExcelSheet = workbook.SheetNames[0];
+						excelWorkbook = workbook;
 					}
 				} else if (ext === 'pptx') {
 					const preview =
 						activeTerminal && !signedDelivery
-							? await downloadFilePreview(
-									activeTerminal.url,
-									activeTerminal.key,
-									path,
-									chatId || undefined
-								)
+							? await downloadFilePreview(activeTerminal, path)
 							: null;
 					if (preview) {
-						filePdfData = await preview.blob.arrayBuffer();
+						filePdfData = await current(preview.blob.arrayBuffer());
 					} else {
-						const result = await blobForPreview();
+						const result = await current(blobForPreview(key));
 						if (!result) throw new Error(t('Preview failed'));
-						const arrayBuffer = await result.blob.arrayBuffer();
+						const arrayBuffer = await current(result.blob.arrayBuffer());
 						const { pptxToImages } = await import('$lib/utils/pptxToHtml');
-						const resultImages = await pptxToImages(arrayBuffer);
+						const resultImages = await current(pptxToImages(arrayBuffer));
 						fileOfficeSlides = resultImages.images;
 					}
 				}
 			} else {
 				if (signedDelivery || fileId) {
-					const result = await blobForPreview();
-					fileContent = result ? await result.blob.text() : null;
+					const result = await current(blobForPreview(key));
+					fileContent = result ? await current(result.blob.text()) : null;
 				} else if (activeTerminal) {
-					fileContent = await readFile(
-						activeTerminal.url,
-						activeTerminal.key,
-						path,
-						chatId || undefined
-					);
+					fileContent = await current(readFile(activeTerminal, path));
 				}
 			}
 		} catch (e) {
-			if (key === previewKey) error = e instanceof Error ? e.message : t('Preview failed');
+			if (previewIsCurrent(key)) error = e instanceof Error ? e.message : t('Preview failed');
 		} finally {
 			loading = false;
 		}
@@ -346,7 +302,9 @@
 
 	async function downloadFile() {
 		if (unavailable || !path) return;
-		const result = await blobForPreview();
+		const key = previewKey;
+		const result = await blobForPreview(key);
+		if (!previewIsCurrent(key)) return;
 		if (!result) {
 			toast.error(t('Download failed'));
 			return;
@@ -360,7 +318,10 @@
 		URL.revokeObjectURL(url);
 	}
 
-	onDestroy(clearPreview);
+	onDestroy(() => {
+		disposed = true;
+		clearPreview();
+	});
 </script>
 
 <div
@@ -441,20 +402,17 @@
 					{fileModelData}
 					{fileDocxData}
 					{fileContent}
-					baseUrl={fileId ? '' : previewBaseUrl}
+					target={fileId ? null : terminal}
 					{chatId}
-					apiKey={terminal?.key ?? ''}
-					{fileOfficeHtml}
+					{excelWorkbook}
 					{fileOfficeSlides}
 					{currentSlide}
 					{targetPage}
-					{excelSheetNames}
-					{selectedExcelSheet}
-					onSheetChange={loadExcelSheet}
+					bind:selectedExcelSheet
 					readOnly={true}
 					bind:showRaw
 				/>
-				{#if !loading && fileImageUrl === null && fileVideoUrl === null && fileAudioUrl === null && filePdfData === null && fileSqliteData === null && fileModelData === null && fileDocxData === null && fileContent === null && fileOfficeHtml === null && fileOfficeSlides === null}
+				{#if !loading && fileImageUrl === null && fileVideoUrl === null && fileAudioUrl === null && filePdfData === null && fileSqliteData === null && fileModelData === null && fileDocxData === null && fileContent === null && excelWorkbook === null && fileOfficeSlides === null}
 					<div
 						class="flex h-full items-center justify-center px-3 text-xs text-gray-500 dark:text-gray-400"
 					>

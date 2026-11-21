@@ -165,6 +165,7 @@ def api(monkeypatch):
         'delete_message_from_chat_by_id_and_message_id',
     )
     chats = SimpleNamespace(**{name: AsyncMock(return_value=chat) for name in methods})
+    chats.has_chat_access = AsyncMock(return_value=True)
     chats.get_messages_map_by_chat_id = AsyncMock(return_value=chat.chat['history']['messages'])
     chats.get_chats_by_user_id = AsyncMock(
         side_effect=[SimpleNamespace(items=[chat, chat]), SimpleNamespace(items=[chat])]

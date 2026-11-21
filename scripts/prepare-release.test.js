@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { parse as parseYaml } from 'yaml';
 
 import { extractReleaseNotes, formatReleaseNotes, prepareRelease } from './prepare-release.js';
 
@@ -141,6 +142,67 @@ test('escapes repository names in the full changelog Markdown link', () => {
 		notes.includes(`https://github.example.com/example/repo%28name%29/blob/${head}/CHANGELOG.md`)
 	);
 	assert.ok(notes.length <= 120000);
+});
+
+test('both GHCR jobs prepare the same fork release tags and OCI version for every variant', (t) => {
+	const { jobs } = parseYaml(
+		readFileSync(new URL('../.github/workflows/docker.yaml', import.meta.url), 'utf8')
+	);
+	const directory = mkdtempSync(join(tmpdir(), 'oui-ghcr-tags-'));
+	assert.equal(dirname(directory), resolve(tmpdir()));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+
+	for (const [name, job] of Object.entries(jobs)) {
+		const setup = job.steps.find((step) => step.name === 'Prepare environment');
+		const meta = job.steps.find((step) => step.id === 'meta').with;
+		const variants = job.strategy.matrix.variant.map((item) => item.suffix);
+		assert.deepEqual(variants, ['', '-cuda', '-cuda126', '-ollama', '-slim']);
+		const prepare = (type, ref) => {
+			const result = spawnSync(
+				bash,
+				['-ec', setup.run.replace('${{ matrix.platform.arch }}', 'linux/amd64')],
+				{
+					cwd: directory,
+					encoding: 'utf8',
+					env: {
+						...process.env,
+						GITHUB_REPOSITORY: 'Example/Open-WebUI',
+						REGISTRY: 'ghcr.io',
+						GITHUB_REF_TYPE: type,
+						GITHUB_REF_NAME: ref,
+						GITHUB_ENV: name + '-' + type + '-' + ref.replaceAll('+', '_')
+					}
+				}
+			);
+			assert.equal(result.status, 0, result.stderr);
+			const text = readFileSync(
+				join(directory, name + '-' + type + '-' + ref.replaceAll('+', '_')),
+				'utf8'
+			);
+			return Object.fromEntries(
+				text
+					.trim()
+					.split(/\r?\n/)
+					.map((line) => line.split('='))
+			);
+		};
+		const env = prepare('tag', 'v0.13.4+f11');
+		assert.equal(env.FORK_IMAGE_TAG, '0.13.4-f11');
+		assert.equal(env.FORK_SERIES_TAG, '0.13.4');
+		assert.equal(env.FORK_VERSION, '0.13.4+f11');
+		assert.match(meta.tags, /type=raw,value=\{0\},priority=1000', env\.FORK_IMAGE_TAG/);
+		assert.match(meta.tags, /type=raw,value=\{0\},priority=900', env\.FORK_SERIES_TAG/);
+		for (const line of meta.tags
+			.split('\n')
+			.filter((tag) => /^type=(semver|ref,event=tag)/.test(tag))) {
+			assert.match(line, /enable=\$\{\{ env\.FORK_VERSION == '' \}\}/);
+		}
+		assert.match(meta.flavor, /suffix=\{0\},onlatest=true', matrix\.variant\.suffix/);
+		assert.match(meta.labels, /org\.opencontainers\.image\.version=\{0\}', env\.FORK_VERSION/);
+		assert.equal(prepare('tag', 'v0.13.4').FORK_IMAGE_TAG, undefined);
+		assert.equal(prepare('branch', 'main').FORK_SERIES_TAG, undefined);
+	}
 });
 
 test('CLI writes a false workflow output when the checked-out version has not changed', (t) => {

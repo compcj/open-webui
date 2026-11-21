@@ -39,11 +39,11 @@ This is an Open WebUI fork: a SvelteKit frontend and a Python FastAPI backend. R
 ## Upstream integration decisions
 
 Before merging another upstream release, read [the merge index](docs/upstream/README.md) and the
-[active v0.13.3 decisions](docs/upstream/v0.13.3-decisions.md). Verify official commit IDs and actual
+[active v0.13.4 decisions](docs/upstream/v0.13.4-decisions.md). Verify official commit IDs and actual
 ancestry rather than relying on local version tags or historical merge plans. Re-check each retained
 behavior against its tests; record new or superseding decisions in a new version record.
 
-For a full fork audit, use the [v0.13.3 difference inventory](docs/upstream/v0.13.3-fork-audit.md)
+For a full fork audit, use the [v0.13.4 difference inventory](docs/upstream/v0.13.4-fork-audit.md)
 as the last dated snapshot, then recompute both the complete upstream-to-HEAD tree diff and all
 reachable fork-only commits, including merged side branches and the dirty working-tree diff.
 Record exact SHAs and shallow-history limits; verify missing history through read-only remote commit
@@ -324,6 +324,20 @@ Temporary control records may retire only after executor-confirmed completion an
 publication. Preserve a server-only, byte-charged task-ID retirement ledger against reuse, and keep
 all raw history and selected versions. Control count caps must not become a fixed conversation
 turn limit; unsettled work and active-task retry protection remain intact.
+
+## v0.13.4 integration contracts
+
+- Use `0.13.4+f1` in application, npm, Python and OCI version metadata and `v0.13.4+f1` for GitHub.
+  GHCR uses `0.13.4-f1` and the series tag `0.13.4`, each with its existing variants.
+- Personal Direct Connections, Direct Integrations, Direct API Chat and Tether have independent controls.
+  Resolve each actor's device models and terminal grants at use time. A chat's access grants confer no terminal grants.
+- Native Agent forks require a verified checkpoint, actor, original saved chat, terminal instance and working
+  directory. Copies, exports and side chats project raw visible content. Provider-native Auto has its own
+  switch, defaulting to WebUI review. Rebind unproven model IDs explicitly.
+- Bind steering to the chat owner's own running reply and branch. Resume its queue only after durable raw
+  publication and worker-confirmed exit. Retain unsettled approvals and existing temporary-context fences.
+- See [current release decisions](docs/upstream/v0.13.4-decisions.md) and
+  [verification](docs/upstream/v0.13.4-validation.md) for migration, image ACLs and upgrade checks.
 
 ## v0.13.3 integration contracts
 

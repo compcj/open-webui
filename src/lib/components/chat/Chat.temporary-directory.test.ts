@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
 import { ScriptTarget, transpileModule } from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { config } from '$lib/stores';
-import { resolveTerminalConnection, setCwd } from '$lib/apis/terminal';
+import { config, settings, user } from '$lib/stores';
+import { resolveTerminalTarget, setCwd } from '$lib/apis/terminal';
 
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
 const statements: any[] = parse(source).instance!.content.body;
@@ -28,10 +28,11 @@ const createChat = (sendCwd = setCwd) =>
 		'deps',
 		transpileModule(
 			`
-			const {resolveTerminalConnection, setCwd, localStorage} = deps;
+			const {resolveTerminalTarget, setCwd, localStorage} = deps;
 			const contexts = new Map(), setContext = (key, value) => contexts.set(key, value);
 			const $config = {features:{enable_tool_servers:true,enable_direct_integrations:true}};
 			const $settings = {terminalServers:[{url:'https://terminal.example.test',key:'direct-token'}]};
+			const selectedModels = ['model'];
 			const $terminalServers = [{id:'server'}], $i18n = {t: value => value};
 			let $user = {id:'actor'}, temporaryTerminalCredential = null, initializedTerminalChatId = null;
 			const temporaryController = {
@@ -53,11 +54,19 @@ const createChat = (sendCwd = setCwd) =>
 			};`,
 			{ compilerOptions: { target: ScriptTarget.ES2022 } }
 		).outputText
-	)({ resolveTerminalConnection, setCwd: sendCwd, localStorage: storage });
+	)({ resolveTerminalTarget, setCwd: sendCwd, localStorage: storage });
 
 beforeEach(() => {
 	storage = { token: 'actor-token', getItem: () => storage.token };
 	vi.stubGlobal('localStorage', storage);
+	user.set({
+		id: 'actor',
+		role: 'user',
+		permissions: { features: { direct_tool_servers: true } }
+	} as any);
+	settings.set({
+		terminalServers: [{ url: 'https://terminal.example.test', key: 'direct-token' }]
+	} as any);
 	config.set({ features: { enable_tool_servers: true, enable_direct_integrations: true } } as any);
 	vi.stubGlobal(
 		'fetch',
@@ -65,6 +74,7 @@ beforeEach(() => {
 	);
 });
 afterEach(() => {
+	user.set(undefined);
 	vi.unstubAllGlobals();
 });
 
@@ -104,6 +114,21 @@ describe('new chat terminal working directory', () => {
 			expect(fetch).not.toHaveBeenCalled();
 		}
 	);
+
+	it('requires personal tool permission even when the direct terminal is configured', async () => {
+		user.set({
+			id: 'actor',
+			role: 'user',
+			permissions: { features: { direct_tool_servers: false } }
+		} as any);
+		await expect(
+			createChat().initialize('saved-chat', {
+				terminalId: 'https://terminal.example.test',
+				currentDirectory: '/workspace'
+			})
+		).rejects.toThrow('Terminal Not Found');
+		expect(fetch).not.toHaveBeenCalled();
+	});
 
 	it.each([
 		['saved-chat', 'server', 'actor-token'],

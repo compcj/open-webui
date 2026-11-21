@@ -10,6 +10,10 @@
 
 	let toolLabels;
 	$: toolLabels = {
+		visualizations: {
+			label: $i18n.t('settings.admin.models.builtinTools.visualizations.label'),
+			description: $i18n.t('settings.admin.models.builtinTools.visualizations.description')
+		},
 		time: {
 			label: $i18n.t('settings.admin.models.builtinTools.time.label'),
 			description: $i18n.t('settings.admin.models.builtinTools.time.description')
@@ -64,6 +68,11 @@
 			description: $i18n.t('settings.admin.models.builtinTools.imageGeneration.description'),
 			enabled: $config?.features?.enable_image_generation
 		},
+		video_generation: {
+			label: $i18n.t('settings.admin.models.builtinTools.videoGeneration.label'),
+			description: $i18n.t('settings.admin.models.builtinTools.videoGeneration.description'),
+			enabled: $config?.features?.enable_video_generation
+		},
 		code_interpreter: {
 			label: $i18n.t('settings.admin.models.builtinTools.codeInterpreter.label'),
 			description: $i18n.t('settings.admin.models.builtinTools.codeInterpreter.description'),
@@ -113,11 +122,13 @@
 	export let builtinTools: Record<string, boolean> = {};
 	export let capabilities: Record<string, boolean> = {};
 	export let disabled = false;
-	$: enabledTools = allTools.filter((key) => builtinTools[key] !== false);
+	$: enabledTools = allTools.filter((key) => builtinTools[key] ?? key !== 'visualizations');
 
 	const setBuiltinTool = (tool: keyof typeof toolLabels, checked: boolean) => {
 		builtinTools = { ...builtinTools };
-		if (checked) {
+		if (tool === 'visualizations') {
+			builtinTools[tool] = checked;
+		} else if (checked) {
 			delete builtinTools[tool];
 		} else {
 			builtinTools[tool] = false;
@@ -159,7 +170,7 @@
 				<ModelSettingToggle
 					label={toolLabels[key].label}
 					description={toolLabels[key].description}
-					checked={builtinTools[key] !== false}
+					checked={builtinTools[key] ?? key !== 'visualizations'}
 					{disabled}
 					on:change={(e) => setBuiltinTool(key, e.detail)}
 				/>

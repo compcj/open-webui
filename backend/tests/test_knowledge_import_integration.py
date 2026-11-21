@@ -206,6 +206,18 @@ async def import_scenario(ns, request, owner, base, data, vectors):
     word_document.save(word_output)
     word_bytes = word_output.getvalue()
     requests_seen = []
+    from open_webui.models.access_grants import AccessGrants
+    from open_webui.models.automations import Automations
+
+    sys.modules['open_webui.config'].BYPASS_ADMIN_ACCESS_CONTROL = False
+    Automations.get_by_id = AsyncMock(return_value=SimpleNamespace(user_id=owner.id))
+    terminal_id = 'template:saved-terminal:sandbox'
+    grant = {'principal_type': 'user', 'principal_id': owner.id, 'permission': 'read'}
+
+    async def set_terminal_grant(permitted):
+        await AccessGrants.set_access_grants('terminal', terminal_id, [grant] if permitted else [])
+
+    await set_terminal_grant(True)
     terminal_key = 'synthetic-terminal-key'
     connection = {
         'id': 'saved-terminal',
@@ -213,16 +225,20 @@ async def import_scenario(ns, request, owner, base, data, vectors):
         'enabled': True,
         'key': terminal_key,
         'server_type': 'orchestrator',
-        'config': {'contexts': {'automation': {'context_id': 'automation_id'}}},
+        'config': {'access_grants': [grant]},
     }
 
     async def serve(incoming):
         requests_seen.append((incoming.path, dict(incoming.headers), dict(incoming.query)))
+        if incoming.path == '/api/v1/terminals/templates/sandbox':
+            assert incoming.headers['Authorization'] == f'Bearer {terminal_key}'
+            return web.json_response({'id': 'sandbox', 'data': {'scope': 'user'}})
         if incoming.path == '/files/view':
             assert incoming.query['path'] == '/workspace/word document.docx'
             assert incoming.headers['Authorization'] == f'Bearer {terminal_key}'
             assert incoming.headers['X-User-Id'] == owner.id
-            assert incoming.headers['X-Terminal-Context-Id'] == 'automation:synthetic-automation'
+            assert incoming.headers['X-Terminal-Template-Id'] == 'sandbox'
+            assert 'X-Terminal-Context-Id' not in incoming.headers
             return web.Response(
                 body=word_bytes, content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
             )
@@ -255,20 +271,23 @@ async def import_scenario(ns, request, owner, base, data, vectors):
     connection['url'] = origin
     await Config.upsert({'terminal_server.connections': [connection]})
 
-    async def get_terminal_connections(user):
-        return await Config.get('terminal_server.connections', [])
-
+    # The live resolver uses real connection and per-template grants. Only the
+    # unselected Tether transport is stubbed in this isolated subprocess.
+    tether = ModuleType('open_webui.utils.tether')
+    tether.get_terminal_connections = AsyncMock(side_effect=AssertionError('Unexpected personal terminal'))
+    sys.modules[tether.__name__] = tether
     terminal_ns = {
         'Config': Config,
-        'get_terminal_connections': get_terminal_connections,
         'ENABLE_TOOL_SERVERS': True,
         'HTTPException': HTTPException,
-        'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
         'Chats': SimpleNamespace(get_accessible_chat_by_id=AsyncMock(return_value=object())),
-        'has_connection_access': AsyncMock(return_value=True),
         'bearer_auth_header': bearer_auth_header,
         'is_saved_chat_id': lambda value: bool(value),
         'quote': urllib.parse.quote,
+        'unquote': urllib.parse.unquote,
+        'aiohttp': aiohttp,
+        'asyncio': asyncio,
+        'AIOHTTP_CLIENT_SESSION_SSL': True,
         'TERMINAL_CONTEXT_TYPES': {'chat', 'automation'},
         'TERMINAL_CONTEXT_DEFAULT': 'default',
         'TERMINAL_CONTEXT_ID_SOURCES': {'chat': 'chat_id', 'automation': 'automation_id'},
@@ -283,8 +302,21 @@ async def import_scenario(ns, request, owner, base, data, vectors):
             'terminal_context_config',
             'terminal_context_available',
             'terminal_context_id',
+            'get_connection',
+            'has_connection_write_access',
+            'require_terminal_access',
+            'template_terminal_id',
+            'split_template_id',
+            'server_request',
+            'find_terminal_connection',
+            'terminal_headers',
+            'get_terminal_context',
+            'MissingTerminalContext',
         },
     )
+    terminal_utils = ModuleType('open_webui.utils.terminals')
+    terminal_utils.__dict__.update(terminal_ns)
+    sys.modules[terminal_utils.__name__] = terminal_utils
     load_source(terminal_ns, 'routers/terminals.py', {'_http_terminal_context', '_temporary_terminal_scope'})
     terminal_router = ModuleType('open_webui.routers.terminals')
     terminal_router.__dict__.update(terminal_ns)
@@ -332,7 +364,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
             await import_knowledge_terminal_file(
                 base.id,
                 '/workspace/word document.docx',
-                __metadata__={'terminal_id': 'saved-terminal', 'automation_id': 'synthetic-automation'},
+                __metadata__={'terminal_id': terminal_id, 'automation_id': 'synthetic-automation'},
                 **context,
             )
         )
@@ -356,11 +388,11 @@ async def import_scenario(ns, request, owner, base, data, vectors):
         real_save_docs = ns['save_docs_to_vector_db']
         tracked_ids = []
 
-        def revoke_during_index(*args, **kwargs):
-            saved = real_save_docs(*args, **kwargs)
+        async def revoke_during_index(*args, **kwargs):
+            saved = await real_save_docs(*args, **kwargs)
             if kwargs['collection_name'] == base.id and kwargs['metadata']['name'] == 'late.docx':
                 tracked_ids.append(kwargs['metadata']['file_id'])
-                terminal_ns['has_connection_access'].return_value = False
+                await set_terminal_grant(False)
             return saved
 
         ns['save_docs_to_vector_db'] = revoke_during_index
@@ -369,7 +401,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
                 base.id,
                 '/workspace/word document.docx',
                 filename='late.docx',
-                __metadata__={'terminal_id': 'saved-terminal', 'automation_id': 'synthetic-automation'},
+                __metadata__={'terminal_id': terminal_id, 'automation_id': 'synthetic-automation'},
                 **context,
             )
         )
@@ -378,28 +410,28 @@ async def import_scenario(ns, request, owner, base, data, vectors):
         assert not await Knowledges.has_file(base.id, late['file_id'])
         assert not (await vectors.query(base.id, {'file_id': late['file_id']})).ids[0]
         assert await Files.get_file_by_id(terminal_file.id) is not None
-        terminal_ns['has_connection_access'].return_value = True
+        await set_terminal_grant(True)
         ns['save_docs_to_vector_db'] = real_save_docs
 
         started, release = asyncio.Event(), asyncio.Event()
-        normal_threadpool = ns['run_in_threadpool']
+        normal_save_docs = ns['save_docs_to_vector_db']
         cancelled_ids = []
 
-        async def pause_target_index(function, *args, **kwargs):
-            result = await normal_threadpool(function, *args, **kwargs)
+        async def pause_target_index(*args, **kwargs):
+            result = await normal_save_docs(*args, **kwargs)
             if kwargs.get('collection_name') == base.id and kwargs['metadata']['name'] == 'cancelled.docx':
                 cancelled_ids.append(kwargs['metadata']['file_id'])
                 started.set()
                 await release.wait()
             return result
 
-        ns['run_in_threadpool'] = pause_target_index
+        ns['save_docs_to_vector_db'] = pause_target_index
         cancelled_task = asyncio.create_task(
             import_knowledge_terminal_file(
                 base.id,
                 '/workspace/word document.docx',
                 filename='cancelled.docx',
-                __metadata__={'terminal_id': 'saved-terminal', 'automation_id': 'synthetic-automation'},
+                __metadata__={'terminal_id': terminal_id, 'automation_id': 'synthetic-automation'},
                 **context,
             )
         )
@@ -416,7 +448,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
         assert await Files.get_file_by_id(cancelled_ids[0]) is None
         assert not await Knowledges.has_file(base.id, cancelled_ids[0])
         assert not (await vectors.query(base.id, {'file_id': cancelled_ids[0]})).ids[0]
-        ns['run_in_threadpool'] = normal_threadpool
+        ns['save_docs_to_vector_db'] = normal_save_docs
 
         # An association appearing after the cleanup precheck must win over the
         # atomic owner+orphan DELETE, leaving both SQL and original storage intact.
@@ -448,13 +480,13 @@ async def import_scenario(ns, request, owner, base, data, vectors):
 
         # Exercise the entire recovery path when a same-target association wins
         # the orphan claim: its existing target chunks must remain intact.
-        terminal_ns['has_connection_access'].return_value = True
+        await set_terminal_grant(True)
         ns['save_docs_to_vector_db'] = revoke_during_index
 
-        def revoke_winner(*args, **kwargs):
-            saved = real_save_docs(*args, **kwargs)
+        async def revoke_winner(*args, **kwargs):
+            saved = await real_save_docs(*args, **kwargs)
             if kwargs['collection_name'] == base.id and kwargs['metadata']['name'] == 'winner.docx':
-                terminal_ns['has_connection_access'].return_value = False
+                await set_terminal_grant(False)
             return saved
 
         ns['save_docs_to_vector_db'] = revoke_winner
@@ -465,13 +497,13 @@ async def import_scenario(ns, request, owner, base, data, vectors):
                     base.id,
                     '/workspace/word document.docx',
                     filename='winner.docx',
-                    __metadata__={'terminal_id': 'saved-terminal', 'automation_id': 'synthetic-automation'},
+                    __metadata__={'terminal_id': terminal_id, 'automation_id': 'synthetic-automation'},
                     **context,
                 )
             )
         finally:
             Files.delete_owned_orphan_by_id = original_orphan_delete
-            terminal_ns['has_connection_access'].return_value = True
+            await set_terminal_grant(True)
             ns['save_docs_to_vector_db'] = real_save_docs
         assert winner['status'] == 'partial_completion' and winner['associated'] is True, winner
         assert await Files.get_file_by_id(winner['file_id']) is not None
@@ -502,7 +534,7 @@ async def import_scenario(ns, request, owner, base, data, vectors):
                     base.id,
                     '/workspace/word document.docx',
                     filename='stale.docx',
-                    __metadata__={'terminal_id': 'saved-terminal', 'automation_id': 'synthetic-automation'},
+                    __metadata__={'terminal_id': terminal_id, 'automation_id': 'synthetic-automation'},
                     **context,
                 )
             )

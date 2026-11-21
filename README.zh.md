@@ -1,9 +1,8 @@
 <h2>Open WebUI</h2>
 
-> 本仓库为 compcj/open-webui 分支，基于官方 **v0.13.3**。完整中英双语功能清单、默认值、升级影响及上游已收敛能力见[主 README](README.md#与上游的差异--differences-from-upstream)。
-> Tether 使用独立默认关闭的管理员开关；原生 Agent 保留离线身份且停止需要远端确认；Proxy 预览需要独立主机名并默认关闭。
-> 配置见 [Tether/Agents](docs/tether-agents.md) 与[独立预览部署](docs/terminal-preview.md)，实际检查结果见[本版验收](docs/upstream/v0.13.3-validation.md)。
-> 下方 pip 与官方镜像示例安装上游发行物；使用本分支能力需要[从本仓库构建](docs/DEVELOPMENT.md)。
+> 本分支版本 **0.13.4+f1** 基于官方 **v0.13.4**。更新面板分别列出分支和官方版本。[完整中英双语清单](README.md#与上游的差异--differences-from-upstream) · [17 项合并决策](docs/upstream/v0.13.4-decisions.md) · [本版验收](docs/upstream/v0.13.4-validation.md)
+> 图像生成与编辑保留旧命名配对。个人直连和 Tether 开关独立，终端默认上传到 WebUI。原回复作者可从已验证的检查点重新生成或分支。[Tether/Agents](docs/tether-agents.md) · [独立预览部署](docs/terminal-preview.md)
+> 发布后可使用分支镜像 `ghcr.io/compcj/open-webui:0.13.4-f1`，或通过 `0.13.4` 标签跟随同系列。下方 pip 和官方镜像示例安装上游发行物。也可[从本仓库构建](docs/DEVELOPMENT.md)。
 
 <p>Open WebUI 是 <a href="https://docs.openwebui.com/"><strong>AI 的家</strong></a>：一个可扩展、易于使用的自托管平台，支持完全离线运行。通过 Ollama 连接本地模型，或使用兼容 OpenAI 的 API 连接本地和云端模型。</p>
 

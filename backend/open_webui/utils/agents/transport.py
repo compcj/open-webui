@@ -10,10 +10,10 @@ import aiohttp
 from fastapi import HTTPException
 
 from open_webui.env import AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
-from open_webui.utils.terminals import TERMINAL_CONTEXT_HEADER, get_terminal_server_url, resolve_terminal_connection
+from open_webui.utils.terminals import get_terminal_server_url, resolve_terminal_connection, resolved_terminal_context
 from open_webui.utils.tether import get_terminal_client
 
-from .access import authorize_agent_terminal
+from .access import authorize_agent_terminal, check_terminal_binding, terminal_instance
 
 
 class RemoteCompletionUnconfirmed(RuntimeError):
@@ -27,9 +27,11 @@ class AgentOutputRetentionError(RuntimeError):
 class TerminalTransport:
     def __init__(self, connection, headers, cookies, user_id):
         self.url = get_terminal_server_url(connection)
+        self.service = connection.get('service', 'open_terminal')
         self.headers, self.cookies, self.user_id = headers, cookies, user_id
         self.terminal_identity = hashlib.sha256(self.url.encode()).hexdigest()
-        self.terminal_context = headers.get(TERMINAL_CONTEXT_HEADER)
+        self.terminal_instance = terminal_instance(connection)
+        self.terminal_context = resolved_terminal_context(connection, headers)
         self.authorization = None
         self.session_id = None
         self.socket = None
@@ -55,7 +57,7 @@ class TerminalTransport:
         resolved = await resolve_terminal_connection(request, user, metadata)
         if not resolved:
             raise ValueError('Select an accessible server or Tether terminal to use agents')
-        transport = cls(*resolved, user.id)
+        transport = cls(*resolved, resolved[0].get('instance_user_id') or user.id)
         authorization_metadata = dict(metadata)
         if isinstance(metadata.get('user_message'), dict):
             authorization_metadata['user_message'] = dict(metadata['user_message'])
@@ -73,14 +75,19 @@ class TerminalTransport:
             *self.authorization,
             self.terminal_identity,
             terminal_context=self.terminal_context,
+            terminal_instance=self.terminal_instance,
         )
         # Use current credentials only after checking the original URL and context.
         # If access is later revoked, retained credentials still allow bound cleanup.
         self.headers, self.cookies = headers, cookies
 
+    async def authorize_upload(self, resolved):
+        await self.authorize_input()
+        check_terminal_binding(resolved, self.terminal_identity, self.terminal_context, self.terminal_instance)
+
     async def request(self, method, path, body=None):
         async with get_terminal_client(
-            self.url, self.user_id, timeout=aiohttp.ClientTimeout(total=30), trust_env=True
+            self.url, self.user_id, service=self.service, timeout=aiohttp.ClientTimeout(total=30), trust_env=True
         ) as client:
             async with client.request(
                 method,
@@ -93,7 +100,8 @@ class TerminalTransport:
             ) as response:
                 data = await response.json()
                 if not 200 <= response.status < 300:
-                    raise ValueError(data.get('detail', 'Agent environment request failed'))
+                    detail = data.get('detail')
+                    raise ValueError(detail if isinstance(detail, str) else 'Agent environment request failed')
                 return data
 
     async def start(self, provider, options):
@@ -157,6 +165,7 @@ class TerminalTransport:
                     async with get_terminal_client(
                         self.url,
                         self.user_id,
+                        service=self.service,
                         timeout=aiohttp.ClientTimeout(total=None, connect=30),
                         trust_env=True,
                         cookies=self.cookies,

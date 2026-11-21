@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { downloadFileBlob, type FileEntry, type TerminalCredential } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
+	export let target: TerminalTarget | null = null;
+	import { downloadFileBlob, type FileEntry } from '$lib/apis/terminal';
 	import { fileIconName } from './fileIcon';
 	import Icon from './Icon.svelte';
 
 	export let entry: FileEntry;
 	export let path = '';
-	export let terminalUrl = '';
-	export let terminalKey: TerminalCredential = '';
-	export let sessionId: string | undefined = undefined;
+
 	export let itemCount: number | null = null;
 
 	let imageUrl: string | null = null;
@@ -15,11 +15,12 @@
 	$: iconName = fileIconName(entry.name, entry.type);
 
 	const observeImage = (node: HTMLElement) => {
+		const capturedTarget = target;
 		const extension = entry.name.split('.').pop()?.toLowerCase() ?? '';
 		// shortcut: Bound automatic downloads until the terminal provides resized thumbnails.
 		if (
 			entry.type !== 'file' ||
-			!terminalUrl ||
+			!capturedTarget?.baseUrl ||
 			entry.size === undefined ||
 			entry.size > 5 * 1024 * 1024 ||
 			!['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'ico'].includes(extension)
@@ -32,9 +33,9 @@
 		const observer = new IntersectionObserver((observations) => {
 			if (!observations.some((item) => item.isIntersecting)) return;
 			observer.disconnect();
-			void downloadFileBlob(terminalUrl, terminalKey, path, sessionId, controller.signal)
+			void downloadFileBlob(capturedTarget, path, controller.signal)
 				.then((result) => {
-					if (disposed || !result) return;
+					if (disposed || !result || target !== capturedTarget) return;
 					objectUrl = URL.createObjectURL(result.blob);
 					imageUrl = objectUrl;
 				})

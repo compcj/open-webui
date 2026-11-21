@@ -79,12 +79,45 @@ async def test_renewal_preserves_url_but_cannot_change_actor_session_target_or_c
         ('server_id', 'other'),
         ('session_id', 'browser-2'),
         ('chat_id', 'other-chat'),
+        ('model_id', 'model-2'),
+        ('instance_user_id', 'bob'),
+        ('terminal_base', 'https://terminal-2.test'),
+        ('terminal_context', 'instance-2'),
         ('temporary_context', {'id': 'new', 'epoch': 'new'}),
     ]:
         with pytest.raises(HTTPException) as caught:
             await store.issue({**record(), field: value}, previous_token=token)
         assert caught.value.status_code == 403
     assert (await store.get(token))['user_id'] == 'alice'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [
+        ('model_id', 'model-2'),
+        ('instance_user_id', 'bob'),
+        ('terminal_base', 'https://terminal-2.test'),
+        ('terminal_context', 'instance-2'),
+    ],
+)
+async def test_chrome_control_tickets_separate_instances_with_the_same_session_id(field, value):
+    store = TicketStore()
+    initial = {
+        **record(),
+        'kind': 'chrome',
+        'model_id': 'model-1',
+        'instance_user_id': 'alice',
+        'terminal_base': 'https://terminal-1.test',
+        'terminal_context': 'instance-1',
+    }
+    token, _ = await store.issue_named(initial)
+    other_token, _ = await store.issue_named({**initial, field: value})
+
+    assert token != other_token
+    assert (await store.get(token))[field] == initial[field]
+    assert (await store.get(other_token))[field] == value
+    assert (await store.issue_named(initial))[0] == token
 
 
 @pytest.mark.asyncio

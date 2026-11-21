@@ -187,16 +187,26 @@ async def cleanup_task(redis, task_id: str, id=None):
             item_tasks.pop(id, None)
 
 
-async def create_task(redis, coroutine, id=None, task_id=None, *, on_complete=None):
-    """Register before scheduling; completion hooks run only after worker exit."""
+async def create_task(
+    redis, coroutine, id=None, task_id=None, *, before_start=None, on_complete=None, on_worker_exit=None
+):
+    """Register and bind before scheduling. Only a scheduled worker can confirm its exit."""
     task_id = task_id or str(uuid4())
+    registered = False
     try:
         if redis:
             await redis_save_task(redis, task_id, id)
+            registered = True
+        if before_start is not None:
+            await before_start()
     except BaseException:
         coroutine.close()
-        if on_complete is not None:
-            await on_complete()
+        try:
+            if registered:
+                await redis_cleanup_task(redis, task_id, id)
+        finally:
+            if on_complete is not None:
+                await on_complete()
         raise
 
     async def completed(task):
@@ -204,7 +214,11 @@ async def create_task(redis, coroutine, id=None, task_id=None, *, on_complete=No
             if on_complete is not None:
                 await on_complete()
         finally:
-            await cleanup_task(redis, task_id, id)
+            try:
+                await cleanup_task(redis, task_id, id)
+            finally:
+                if on_worker_exit is not None:
+                    await on_worker_exit()
 
     task = asyncio.create_task(coroutine)
     task.add_done_callback(lambda done: asyncio.create_task(completed(done)))

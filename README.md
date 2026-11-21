@@ -41,11 +41,24 @@
 
 ## 与上游的差异 / Differences from upstream
 
-本项目 [compcj/open-webui](https://github.com/compcj/open-webui) 在官方 **[v0.13.3](https://github.com/open-webui/open-webui/tree/b0e6098e940942281d9c83f3529ea117287a3a22)** 上保留以下扩展与产品策略。本次整合覆盖 v0.12.5 至 v0.13.3 的累计变化。实际提交、验收结果及未覆盖项见[设计决策](docs/upstream/v0.13.3-decisions.md)、[验证报告](docs/upstream/v0.13.3-validation.md)与[完整差异审计](docs/upstream/v0.13.3-fork-audit.md)。
+本分支版本 **0.13.4+f1** 合入官方 **v0.13.4**。可安装的分支版本与官方版本各有更新入口，同一上游版本的 `f` 修订按数字比较。应用与 OCI 版本为 `0.13.4+f1`，Git 发布标签为 `v0.13.4+f1`。[官方固定提交](https://github.com/open-webui/open-webui/commit/0666e59d26a4d056e0bacee41742486badd71cf8) · [本版决策](docs/upstream/v0.13.4-decisions.md) · [验收记录](docs/upstream/v0.13.4-validation.md) · [完整差异审计](docs/upstream/v0.13.4-fork-audit.md)
 
-This fork integrates official **v0.13.3**, including cumulative changes since v0.12.4, while retaining the extensions and policies below. The [decision record](docs/upstream/v0.13.3-decisions.md), [validation report](docs/upstream/v0.13.3-validation.md), and [complete audit](docs/upstream/v0.13.3-fork-audit.md) identify exact revisions and verification limits. See the [development guide](docs/DEVELOPMENT.md) and [collaboration guide](docs/agents/README.md) when working on this source.
+**Fork 0.13.4+f1** integrates official Open WebUI v0.13.4. The update screen links the installable fork release and the official release independently. Within an upstream series it compares fork revision numbers numerically. [Development guide](docs/DEVELOPMENT.md) · [Collaboration guide](docs/agents/README.md)
 
-### v0.13.3 升级要点 / Upgrade behavior
+### v0.13.4 升级要点 / Upgrade behavior
+
+| 范围 / Area                                     | 本版使用方式 / What changes                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 图像和视频 / Images and video                   | 按连接授权并为每个能力选择模型。旧命名图像配置保留 ID，生成与编辑可用不同连接或继承默认编辑器，也可关闭编辑。每组保留两项工具说明。 / The upstream catalog exposes authorized image and video models. Named image pairs keep their IDs, separate generation/edit targets and tool descriptions, including inherited or disabled editing.                                                        |
+| 终端管理 / Managed terminals                    | 手动将托管连接重新绑定到 0.4+ orchestrator，启动/停止需要 0.4.1+。显式 write grant 可委派模板及他人实例管理。 / Rebind managed connections manually to Terminals 0.4+. Starting and stopping instances requires 0.4.1+. Explicit write grants can delegate template and cross-user instance management.                                                                                         |
+| 聊天附件 / Attachments                          | 普通和 Tether 终端默认将附件上传到 WebUI。选择对应连接的 filesystem 模式后才复制当前附件。原生 Agent 只接收本条消息明确附加的文件。 / Terminal file copying is opt-in per connection, including Tether. Native Agent transfers use only files explicitly attached to the outgoing message.                                                                                                      |
+| 共享与 Agent / Shared chats and Agents          | 共享回复权与终端使用权分别核验。聊天所有者可向自己正在运行的单模型普通回复追加指示。原聊天、原作者及有效检查点允许 Agent 重新生成或分支。 / Participants need their own terminal grants. The chat owner can steer their own active single-model reply. Only the original reply author can resume a native Agent checkpoint in the same saved chat. Copies and side chats carry visible history. |
+| 连接和模型身份 / Connections and model identity | 个人直连模型、个人工具/终端、Tether 和 Direct API Chat 保持独立开关。重名的 Tether 模型各有来源标识，旧 Agent 默认值、固定项及自动化仅在唯一授权匹配时迁移。 / Personal connections have independent controls. Colliding Tether models receive source-qualified IDs. A legacy Agent reference migrates only when it identifies one available authorized installation.                           |
+| 审批与升级 / Approvals and upgrades             | 原生 Agent Auto 默认交由 WebUI，支持的 Agent 可选择提供方的 Auto 并将升级审批交给回复作者。切换同一 Agent 的基础模型须满足会话绑定及权限。 / Native Agent Auto defaults to WebUI. Supported providers can handle routine actions and escalate to the reply author. A base-model change within one installed Agent requires support, access and a matching session binding.                      |
+
+Open WebUI v0.13.4 also adds generation of videos and interactive visualizations. Templates, model-level media defaults, and access grants are covered by the [upstream release notes](CHANGELOG.md). 本版全部 17 项选择及升级顺序见[设计记录](docs/upstream/v0.13.4-decisions.md)。
+
+### 保留的 v0.13.3 升级要点 / Retained v0.13.3 defaults
 
 标签页、分屏、Controls 与“+”菜单、侧聊、评论、通知收件箱、分析、Notes、多种文件编辑、Git、MCP Apps、批量工具调用及原生 Agents 来自上游，不能算作分支独有功能。分支适配保留参数记忆、共享与临时上下文、工具执行身份、权限和文件隔离。完整发布变化见 [CHANGELOG](CHANGELOG.md)。
 
@@ -59,7 +72,7 @@ Tabs, split views, Controls and the plus menu, side chats, comments, notificatio
 | 布局 / Layout               | 采用上游布局；Show Input Selections 默认关闭。每个 Chat 有独立任务、模型和临时 scope；布局不保存临时正文或票据。 / Upstream layout with input selections off; each Chat owns its state and transient data stays out of saved layouts.                    |
 | 隐藏上下文 / Hidden context | 私人指令、技能运行时和终端自动上下文仅用于当前请求及其冻结续接，计入预算，不进入共享摘要或持久聊天输出。真实工具结果照常保存。 / Automatic private/runtime context is request-local and budgeted; explicit tool results retain their normal persistence. |
 
-V2、知识写入、自动技能发现、Auto 工具审批等既有默认关闭能力不会因升级开启。升级需要排空 worker、备份数据库/上传/配置，再协调切换；回滚恢复整套升级前备份，见[升级记录](docs/upstream/v0.13.3-decisions.md)。
+V2、知识写入、自动技能发现、Auto 工具审批等既有默认关闭能力不会因升级开启。升级需要排空 worker、备份数据库/上传/配置，再协调切换；回滚恢复整套升级前备份，见[升级记录](docs/upstream/v0.13.4-decisions.md)。
 
 The upgrade does not opt users into V2, knowledge writes, automatic skill discovery or Auto tool approval. Drain workers and back up the database, uploads and configuration before coordinated upgrade. Restore the complete pre-upgrade backup when rolling back.
 
@@ -67,7 +80,7 @@ The upgrade does not opt users into V2, knowledge writes, automatic skill discov
 
 管理员在 Integrations 中独立开启 **Tether**（`ENABLE_TETHER=false`，存储键 `tether.enable`）。开启 Tether 不要求开启个人 Direct Integrations；手工保存的个人工具与终端仍受原开关控制。Tether 不自动获得管理员终端的技能发现或知识导入资格。
 
-原生 Agent 仅用于已保存聊天，每次单 Agent，由 Agent 管理自身上下文；不支持重新生成、继续旧回复或原地分支。离线时保留模型身份，等待恢复或手工切换。停止只有远端执行确认结束才完成；确认丢失时保留未确认状态并阻止下一轮。详见 [Tether/Agents 指南](docs/tether-agents.md)。
+原生 Agent 在已保存聊天中每次运行一个，由 Agent 管理自身上下文。回复作者可在原聊天用验证过的检查点重新生成或创建分支。分享、复制和侧聊只传递可见原文。旧签名会话要有前次执行结算证明，证据不足但已结算时从可见历史开始新会话，有未结算执行时等待确认。详见 [Tether/Agents 指南](docs/tether-agents.md)。
 
 强制停止保留已接受的原文并标记输出可能不完整，终端尚未传回的尾部可能丢失。预览保留终端服务端 Cookie，且端口 WebSocket 可沿用上游浏览器权限跟随内部重定向；这些不赋予页面 DOM 存储或主站凭据访问。
 
@@ -75,7 +88,7 @@ Forced Agent stops preserve accepted output and mark a potentially missing remot
 
 **独立来源预览默认关闭**。配置 `TERMINAL_PREVIEW_BASE_URL` 为独立主机名后，通过同一后端的预览专用入口显示 Proxy 网页/端口；仅换端口不构成隔离。生产使用 HTTPS；票据默认 5 分钟，每分钟重新授权续期。严格沙箱不提供网页 Cookie/localStorage，完整浏览器能力使用 Chrome 模式。部署条件、代理示例及当前边界见[独立预览指南](docs/terminal-preview.md)。
 
-Tether has an independent admin switch, off by default. Saved personal tool/terminal connections remain governed by Direct Integrations. Tether does not grant admin terminal discovery or knowledge-import privileges. Native Agents require a saved chat and a single Agent, manage their own context, retain their identity while offline, and require confirmed remote completion before stopping. See the [Agent guide](docs/tether-agents.md).
+Tether defaults off and has its own admin switch. Personal model connections and personal tools/terminals retain separate controls. Native Agents require a saved chat and keep their identity while offline. The original reply author can branch or regenerate from a verified in-chat checkpoint. A settled legacy conversation without sufficient identity evidence starts a new session from visible history. Unsettled executions wait for confirmation. [Agent guide](docs/tether-agents.md)
 
 Isolated Proxy preview requires a separate hostname configured through `TERMINAL_PREVIEW_BASE_URL`, HTTPS outside explicit local development, and a preview-only reverse-proxy route. It defaults off. Tickets last five minutes and active panels renew authorization every minute. Sandboxed pages cannot use DOM cookies/localStorage; use Chrome for full browser capabilities. See [deployment and limits](docs/terminal-preview.md).
 
@@ -87,8 +100,8 @@ If creation cannot be confirmed, the tool prompts the model to check `browser_ta
 
 ### 新增功能与扩展 / Fork additions and extensions
 
-以下是相对官方 v0.13.3 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
-完整源码、测试和提交索引见[差异审计](docs/upstream/v0.13.3-fork-audit.md)。
+以下是相对官方 v0.13.4 仍存在的分支增量；“扩展”表示上游已有基础能力，本分支增加配置、运行方式或兼容层。
+完整源码、测试和提交索引见[差异审计](docs/upstream/v0.13.4-fork-audit.md)。
 The inventory covers current additions and extensions to upstream features, with source/test evidence in the audit.
 
 | 功能 / Feature                                 | 本分支新增或扩展的行为 / Added behavior                                                                                                                                                                  |
@@ -102,7 +115,7 @@ The inventory covers current additions and extensions to upstream features, with
 | 终端技能运行 / Terminal skill runtime          | 加载时检查依赖条件、同步固定版本文件、替换 `{baseDir}`；支持显式依赖安装与运行状态显示。发现列表不会同步未使用的技能，终端故障按既有策略降级。                                                           |
 | 技能发现授权 / Skill discovery policy          | 管理员管理工作区自动发现白名单，终端按服务器保存的连接 opt-in 开启；终端 home 的 AGENTS.md 每轮独立加载，失败不阻止聊天。                                                                                |
 | 按用户与模型记忆 / Remembered choices          | 记忆搜索、图像、知识读取/写入、记忆和笔记开关，以及推理/模型控件选择；重置清除显式值，跨账号隔离，多模型临时选择不污染单模型偏好。                                                                       |
-| 命名图像引擎 / Named image engines             | 多组生成/编辑引擎可命名、配对和选择；每组工具说明可定制，可全局禁止编辑，兼容旧单引擎配置并保留图像工具上下文。                                                                                          |
+| 命名图像引擎 / Named image engines             | 生成、编辑配对引用上游目录中的连接模型。连接自身决定访问和能力，旧配置保留稳定 ID、独立说明与编辑继承/禁用。配置凭据仅在管理员接口中提供。                                                               |
 | 独立聊天入口控制 / Chat access controls        | 管理员分别控制临时聊天与无会话上下文的 Direct API Chat，默认开启、管理员豁免；界面与公开 OpenAI/Ollama 路由同步约束。详见[访问控制](docs/chat-access-controls.md)。                                      |
 | 引用证据与缓存 / Citation evidence and caching | 搜索摘要、页面正文和导航结果明确区分；按回复首次出现编号，新引用随新工具结果追加，保存/审批/续写保留固定引用和既有输入前缀。                                                                             |
 | 受保护的终端文件交付 / Terminal files          | `display_file` 提供绑定用户、连接与原始上下文的签名下载/图片链接及文件卡片；支持隔离 SVG 预览与源码查看。详见[文件交付](docs/TERMINAL_FILES.md)。                                                        |
@@ -273,7 +286,7 @@ See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) f
 `reasoning_content`，关闭后不回传该字段，已有 `reasoning_details` 和 Gemini 签名独立保留。
 服务端 Chat Completions 将自动加载的记忆、技能和终端等上下文作为系统上下文发送，避免首轮合成工具调用
 触发 DeepSeek 思考模式的推理回传校验；模型实际生成的工具调用仍按原始推理回放。
-这是相对官方 v0.13.3 的关键传输差异：在角色转换和最终预算前处理，按服务端身份识别自动上下文，
+这是相对官方 v0.13.4 的关键传输差异：在角色转换和最终预算前处理，按服务端身份识别自动上下文，
 不按模型名猜测，也不改变 Responses、原生协议或已有审批快照。详见[D04a 技术决策与合并检查](docs/upstream/v0.13.3-private-context-followup.md)。
 **extra_body 兼容模式 / Extra body compatibility** 默认关闭；开启后展开自定义参数中的 `extra_body` 对象，
 显式顶层参数优先。缓存/会话标识字符串保持原值；请求过滤器每轮处理未重复加工的输入，模型提示词在本次请求内冻结。
@@ -285,7 +298,7 @@ Model settings offer **Replay reasoning content** (on by default), preserving on
 `reasoning_content`, independently of `reasoning_details` and Gemini signatures. Server Chat Completions
 sends automatically loaded memory, skills and terminal context as system context, avoiding synthetic
 first-turn tool calls that fail DeepSeek thinking validation. Actual model calls retain original reasoning.
-This retained difference from upstream v0.13.3 is protocol-scoped, runs before role conversion and final
+This retained difference from upstream v0.13.4 is protocol-scoped, runs before role conversion and final
 budgeting, and preserves frozen internal snapshots. See the [D04a technical decision](docs/upstream/v0.13.3-private-context-followup.md).
 **Extra body compatibility**
 (off by default) flattens an `extra_body` object with explicit top-level precedence. Cache/session strings
@@ -454,8 +467,8 @@ Apps 默认关闭；Tool Search、强制 MFA 和 Realtime 通话采用上游默�
 
 ### 重要 BUG 修复 / Important fixes
 
-以下列出相对官方 v0.13.3 仍有实现差异的重要修复，包括合并时发现的回归。
-源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.13.3-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
+以下列出相对官方 v0.13.4 仍有实现差异的重要修复，包括合并时发现的回归。
+源码、回归测试和全部分支独有提交见[审计记录](docs/upstream/v0.13.4-fork-audit.md)；测试文件的存在不等于本次已重跑整套应用验收。
 These are retained fixes against the pinned upstream baseline; the audit links their implementation and tests.
 
 | 场景 / Scenario          | 修复后的行为 / Result                                                                                                                                            |
@@ -492,13 +505,13 @@ Upstream already supplies the base terminal identity forwarding, Tavily depth co
 version history, skill overviews, `.skill`, revision comparison and multi-model pairing. Their retained
 fork adaptations are listed separately; historical fork contributions remain traceable in the commit index.
 
-升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.13.3-decisions.md#数据升级与回滚)。
-Read the [upgrade and rollback checks](docs/upstream/v0.13.3-decisions.md#数据升级与回滚) before upgrading.
+升级前阅读[依赖、配置和回滚检查](docs/upstream/v0.13.4-decisions.md#数据升级与回滚)。
+Read the [upgrade and rollback checks](docs/upstream/v0.13.4-decisions.md#数据升级与回滚) before upgrading.
 
 > [!NOTE]
-> 下方的 `pip install open-webui` 和 `ghcr.io/open-webui/open-webui` 示例安装上游发行物。使用本分支功能需从本仓库源码构建；参见[开发指南](docs/DEVELOPMENT.md)。
+> 下方 pip 和官方容器示例安装上游发行物。使用此分支可[从本仓库构建](docs/DEVELOPMENT.md)。发布后，分支标准镜像为 `ghcr.io/compcj/open-webui:0.13.4-f1`，系列别名为 `0.13.4`。修订标签和系列标签均可使用 `-slim`、`-cuda`、`-cuda126`、`-ollama` 变体。
 >
-> The `pip install open-webui` and `ghcr.io/open-webui/open-webui` examples below install upstream releases. Build this repository's source to use the fork's capabilities; see the [development guide](docs/DEVELOPMENT.md).
+> The pip and official container examples below install upstream releases. Build the fork from source, or use `ghcr.io/compcj/open-webui:0.13.4-f1` when published. The `0.13.4` alias follows this upstream series. Both tag forms support the same variant suffixes. [Development guide](docs/DEVELOPMENT.md)
 
 ### Installation
 

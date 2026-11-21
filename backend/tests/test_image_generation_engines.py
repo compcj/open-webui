@@ -85,13 +85,19 @@ def image_router(monkeypatch, tmp_path):
     )
 
     class Config:
+        PERSISTENT_ENABLED = False
+
         @classmethod
-        async def get_many(cls, *keys):
+        async def get(cls, key, default=None, *, db=None):
+            return state.values.get(key, default)
+
+        @classmethod
+        async def get_many(cls, *keys, db=None):
             state.get_many_calls += 1
             return {key: state.values[key] for key in keys if key in state.values}
 
         @classmethod
-        async def upsert(cls, updates):
+        async def upsert(cls, updates, *, db=None):
             state.upserts.append(updates.copy())
             state.values.update(updates)
 
@@ -119,6 +125,7 @@ def image_router(monkeypatch, tmp_path):
         return state.permission
 
     class Response:
+        ok = True
         headers = {'content-type': 'application/json'}
 
         async def __aenter__(self):
@@ -175,11 +182,12 @@ def image_router(monkeypatch, tmp_path):
         AIOHTTP_CLIENT_ALLOW_REDIRECTS=False,
         AIOHTTP_CLIENT_SESSION_SSL=True,
         ENABLE_FORWARD_USER_INFO_HEADERS=False,
+        MODELS_CACHE_TTL=1,
     )
     install_module(
         monkeypatch,
         'open_webui.events',
-        EVENTS=SimpleNamespace(CONFIG_UPDATED='config', IMAGE_GENERATED='image'),
+        EVENTS=SimpleNamespace(CONFIG_UPDATED='config', IMAGE_GENERATED='image', IMAGE_EDITED='edit'),
         publish_event=AsyncMock(),
     )
     install_module(monkeypatch, 'open_webui.internal.db', get_async_session=lambda: None)
@@ -204,20 +212,39 @@ def image_router(monkeypatch, tmp_path):
         get_file_content_by_id=AsyncMock(),
         upload_file_handler=AsyncMock(),
     )
-    install_module(monkeypatch, 'open_webui.utils.access_control', has_permission=has_permission)
+
+    async def has_connection_access(user, connection, group_ids):
+        return user.role == 'admin' or any(
+            grant['permission'] == 'read' and grant['principal_id'] in ('*', user.id, *group_ids)
+            for grant in connection['config']['access_grants']
+        )
+
+    install_module(
+        monkeypatch,
+        'open_webui.models.groups',
+        Groups=SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
+    )
+    install_module(monkeypatch, 'open_webui.models.users', UserModel=SimpleNamespace)
+    install_module(
+        monkeypatch,
+        'open_webui.utils.access_control',
+        has_permission=has_permission,
+        has_connection_access=has_connection_access,
+    )
     install_module(
         monkeypatch,
         'open_webui.utils.auth',
         get_admin_user=user_dependency,
         get_verified_user=user_dependency,
     )
-    install_module(monkeypatch, 'open_webui.utils.headers', include_user_info_headers=lambda headers, user: headers)
+
+    async def headers_and_cookies(request, url, key, config, metadata=None, user=None):
+        return {'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}, {}
+
+    install_module(monkeypatch, 'open_webui.utils.headers', get_headers_and_cookies=headers_and_cookies)
     install_module(monkeypatch, 'open_webui.utils.json_codec', JSONCodec=json)
     install_module(monkeypatch, 'open_webui.utils.session_pool', get_session=get_session)
     install_module(monkeypatch, 'aiofiles', open=lambda *args, **kwargs: None)
-    install_module(monkeypatch, 'sqlalchemy')
-    install_module(monkeypatch, 'sqlalchemy.ext')
-    install_module(monkeypatch, 'sqlalchemy.ext.asyncio', AsyncSession=object)
 
     comfyui_spec = importlib.util.spec_from_file_location(
         'open_webui.utils.images.comfyui', BACKEND / 'utils/images/comfyui.py'
@@ -233,6 +260,14 @@ def image_router(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, engines_spec.name, engines)
     engines_spec.loader.exec_module(engines)
 
+    for name in ('profiles', 'connections'):
+        spec = importlib.util.spec_from_file_location(
+            f'open_webui.utils.images.{name}', BACKEND / f'utils/images/{name}.py'
+        )
+        loaded = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, loaded)
+        spec.loader.exec_module(loaded)
+
     router_spec = importlib.util.spec_from_file_location('image_router_under_test', BACKEND / 'routers/images.py')
     router = importlib.util.module_from_spec(router_spec)
     monkeypatch.setitem(sys.modules, router_spec.name, router)
@@ -240,7 +275,7 @@ def image_router(monkeypatch, tmp_path):
     monkeypatch.setattr(router, 'comfyui_create_image', comfy_create)
     monkeypatch.setattr(router, 'comfyui_edit_image', AsyncMock())
     monkeypatch.setattr(router, 'comfyui_upload_image', AsyncMock())
-    return SimpleNamespace(module=router, state=state, engines=engines, comfyui=comfyui)
+    return SimpleNamespace(module=router, state=state, engines=engines, comfyui=comfyui, connections=loaded)
 
 
 def profile(**overrides):
@@ -746,13 +781,15 @@ def images_config_payload(router, state):
         field: state.values[storage_key]
         for field, storage_key in router.IMAGE_CONFIG_KEYS.items()
         if field != 'USER_PERMISSIONS'
-    }
+        and storage_key in state.values
+        and field not in ('IMAGE_PROFILES', 'IMAGE_CONNECTIONS')
+    } | {'IMAGE_GENERATION_ENGINES': state.values['image_generation.engines']}
 
 
 def test_admin_config_validates_profiles_and_old_clients_do_not_clear_them(image_router):
     router = image_router.module
     state = image_router.state
-    assert router.IMAGE_CONFIG_KEYS['IMAGE_GENERATION_ENGINES'] == 'image_generation.engines'
+    assert router.IMAGE_CONFIG_KEYS['IMAGE_PROFILES'] == 'images.profiles'
 
     payload = images_config_payload(router, state)
     payload.pop('IMAGE_GENERATION_ENGINES')
@@ -912,10 +949,12 @@ def test_grok_profile_routes_request_and_never_forwards_provider_auth(
     monkeypatch.setattr(router, 'upload_image', upload_image)
     form = router.CreateImageForm(prompt='draw a rocket', n=2, engine_id='xai')
 
-    result = asyncio.run(router.image_generations(SimpleNamespace(), form, user=SimpleNamespace(role='user')))
+    result = asyncio.run(
+        router.image_generations(SimpleNamespace(), form, user=SimpleNamespace(id='user-1', role='user'))
+    )
 
     assert result == [{'id': 'file-1'}]
-    assert state.get_many_calls == 1
+    assert state.values['images.profiles'][0]['id'] == 'xai'
     assert state.posts[0]['url'] == 'https://api.x.ai/v1/images/generations'
     assert state.posts[0]['headers']['Authorization'] == 'Bearer xai-secret'
     assert state.posts[0]['json'] == {
@@ -962,13 +1001,15 @@ def test_gemini_and_comfyui_profiles_reach_their_transports(image_router, monkey
 
     state.response_json = {'predictions': [{'bytesBase64Encoded': 'aW1hZ2U='}]}
     gemini_form = router.CreateImageForm(prompt='draw waves', engine_id='google')
-    asyncio.run(router.image_generations(SimpleNamespace(), gemini_form, user=SimpleNamespace(role='user')))
+    asyncio.run(
+        router.image_generations(SimpleNamespace(), gemini_form, user=SimpleNamespace(id='user-1', role='user'))
+    )
     assert state.posts[-1]['url'] == 'https://gemini-profile.example.test/v1beta/models/imagen-test:predict'
     assert state.posts[-1]['headers']['x-goog-api-key'] == 'google-secret'
     assert state.posts[-1]['json']['parameters']['addWatermark'] is False
 
     comfy_form = router.CreateImageForm(prompt='draw trees', engine_id='comfy')
-    asyncio.run(router.image_generations(SimpleNamespace(), comfy_form, user=SimpleNamespace(role='user')))
+    asyncio.run(router.image_generations(SimpleNamespace(), comfy_form, user=SimpleNamespace(id='user-1', role='user')))
     model, comfy_payload, base_url, api_key = state.comfy_calls[-1]
     assert model == 'checkpoint.safetensors'
     assert comfy_payload.seed == 42
@@ -995,7 +1036,9 @@ def test_openai_profile_and_legacy_default_use_their_own_settings(image_router, 
     monkeypatch.setattr(router, 'upload_image', AsyncMock(return_value=(object(), {'id': 'file-1'})))
 
     selected_form = router.CreateImageForm(prompt='selected', engine_id='openai-profile')
-    asyncio.run(router.image_generations(SimpleNamespace(), selected_form, user=SimpleNamespace(role='user')))
+    asyncio.run(
+        router.image_generations(SimpleNamespace(), selected_form, user=SimpleNamespace(id='user-1', role='user'))
+    )
     selected_call = state.posts[-1]
     assert selected_call['url'] == 'https://profile.example.test/v1/images/generations?api-version=2026-01-01'
     assert selected_call['headers']['Authorization'] == 'Bearer profile-secret'
@@ -1003,7 +1046,9 @@ def test_openai_profile_and_legacy_default_use_their_own_settings(image_router, 
     assert selected_call['json']['quality'] == 'hd'
 
     default_form = router.CreateImageForm(prompt='default')
-    asyncio.run(router.image_generations(SimpleNamespace(), default_form, user=SimpleNamespace(role='user')))
+    asyncio.run(
+        router.image_generations(SimpleNamespace(), default_form, user=SimpleNamespace(id='user-1', role='user'))
+    )
     default_call = state.posts[-1]
     assert default_call['url'] == 'https://default.example.test/v1/images/generations'
     assert default_call['headers']['Authorization'] == 'Bearer default-key'
@@ -1050,7 +1095,7 @@ def test_selected_pair_routes_generation_and_openai_edit_to_independent_credenti
         router.image_generations(
             SimpleNamespace(),
             router.CreateImageForm(prompt='generate', engine_id='paired'),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
     generation_call = state.posts[-1]
@@ -1058,7 +1103,7 @@ def test_selected_pair_routes_generation_and_openai_edit_to_independent_credenti
         router.image_edits(
             SimpleNamespace(),
             router.EditImageForm(prompt='edit', image=source, engine_id='paired'),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
     edit_call = state.posts[-1]
@@ -1090,7 +1135,7 @@ def test_old_alias_or_deleted_edit_id_keeps_global_editor(image_router, monkeypa
             router.image_edits(
                 SimpleNamespace(),
                 router.EditImageForm(prompt='edit', image=source, engine_id=engine_id),
-                user=SimpleNamespace(role='user'),
+                user=SimpleNamespace(id='user-1', role='user'),
             )
         )
         call = state.posts[-1]
@@ -1127,7 +1172,7 @@ def test_gemini_edit_profile_deep_merges_params_without_replacing_images(image_r
         router.image_edits(
             SimpleNamespace(),
             router.EditImageForm(prompt='edit lake', image=[source, source], engine_id='gemini-edit'),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
 
@@ -1184,7 +1229,7 @@ def test_comfyui_edit_profile_uses_own_workflow_key_and_options(image_router, mo
         router.image_edits(
             SimpleNamespace(),
             router.EditImageForm(prompt='edit forest', image='data:image/png;base64,aW1hZ2U=', engine_id='comfy-edit'),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
 
@@ -1226,7 +1271,7 @@ def test_grok_edit_json_uses_image_or_images_and_keeps_auth_on_origin(image_rout
         prompt='paint mountains', image=[source, source] if multiple else source, engine_id='grok-edit'
     )
 
-    asyncio.run(router.image_edits(SimpleNamespace(), form, user=SimpleNamespace(role='user')))
+    asyncio.run(router.image_edits(SimpleNamespace(), form, user=SimpleNamespace(id='user-1', role='user')))
 
     call = state.posts[-1]
     assert call['url'] == 'https://api.x.ai/v1/images/edits'
@@ -1266,7 +1311,7 @@ def test_grok_edit_rejects_more_than_five_sources_before_provider_post(image_rou
             router.image_edits(
                 SimpleNamespace(),
                 router.EditImageForm(prompt='edit', image=[source] * 6, engine_id='grok-edit'),
-                user=SimpleNamespace(role='user'),
+                user=SimpleNamespace(id='user-1', role='user'),
             )
         )
     assert exc.value.status_code == 400
@@ -1300,7 +1345,7 @@ def test_grok_edit_ratio_override_skips_configured_dimensions(image_router, monk
                 size='16:9',
                 engine_id='grok-edit',
             ),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
 
@@ -1329,7 +1374,7 @@ def test_grok_edit_singleton_list_uses_image_field(image_router, monkeypatch):
         router.image_edits(
             SimpleNamespace(),
             router.EditImageForm(prompt='edit', image=[source], engine_id='grok-edit'),
-            user=SimpleNamespace(role='user'),
+            user=SimpleNamespace(id='user-1', role='user'),
         )
     )
 

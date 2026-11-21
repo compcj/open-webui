@@ -25,6 +25,7 @@ def issue(policy, **changes):
         owner_id='user-1',
         metadata={'chat_id': 'chat-1'},
         secret='synthetic-signing-secret',
+        base_url='https://terminal.test',
     )
 
 
@@ -65,6 +66,7 @@ def test_no_links_for_errors_or_unsafe_paths(policy, result):
         owner_id='u',
         metadata={},
         secret='secret',
+        base_url='https://terminal.test',
     )
     assert 'download_url' not in enriched
 

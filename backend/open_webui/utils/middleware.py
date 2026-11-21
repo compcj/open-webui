@@ -15,7 +15,6 @@ import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
 from html import escape
-from types import SimpleNamespace
 from typing import Any, Optional
 from urllib.parse import unquote
 from uuid import uuid4
@@ -47,7 +46,8 @@ from open_webui.env import (
     GLOBAL_LOG_LEVEL,
     RAG_SYSTEM_CONTEXT,
 )
-from open_webui.events import EVENTS, publish_event
+from open_webui.events import EVENTS, build_event, publish_event
+from open_webui.models.chat_messages import ChatMessages
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
@@ -101,7 +101,6 @@ from open_webui.utils.files import (
     get_image_url_from_base64,
 )
 from open_webui.utils.images.context import build_tool_result_parts, get_image_tool_result_files
-from open_webui.utils.images.engines import resolve_image_edit_config
 from open_webui.utils.filter import (
     FilterContext,
     get_filter_context,
@@ -111,7 +110,10 @@ from open_webui.utils.filter import (
 from open_webui.utils.json_codec import JSONCodec, dumps_bytes
 from open_webui.utils.mcp.apps import MCPAppResult
 from open_webui.utils.memory import add_memory_context, recall_memories, review_memory_after_turn
+from open_webui.utils.images.connections import get_image_tool_settings, get_requested_image_model
+from open_webui.utils.models import add_tether_model
 from open_webui.utils.misc import (
+    is_empty_reply,
     add_or_update_system_message,
     add_or_update_user_message,
     convert_output_to_messages,
@@ -182,7 +184,7 @@ from open_webui.utils.tool_calling import (
     final_answer_payload,
     prepare_tool_call,
     recover_tool_calls,
-    set_tool_call_visibility,
+    set_tool_call_metadata,
     tool_repetition_error,
 )
 from open_webui.utils.tool_search import apply_tool_search, resolve_tool_call, split_tool_call_batches
@@ -262,7 +264,8 @@ async def publish_chat_finished_event(
 
     content = content or get_output_text(output)
     webui_url = await Config.get('webui.url')
-    await publish_event(
+    model = (getattr(request.app.state, 'MODELS', {}) or {}).get(metadata.get('model_id'), {})
+    event = build_event(
         request,
         EVENTS.CHAT_FINISHED,
         actor=user,
@@ -273,12 +276,25 @@ async def publish_chat_finished_event(
             'chat_id': chat_id,
             'message_id': metadata.get('message_id'),
             'model_id': metadata.get('model_id'),
+            'model_name': model.get('name'),
             'title': title,
             'url': f'{webui_url}/c/{chat_id}' if webui_url else f'/c/{chat_id}',
             'message': content,
         },
         message=title or 'Chat finished',
     )
+    try:
+        from open_webui.internal.db import get_async_db_context
+        from open_webui.models.notifications import emit_changes
+        from open_webui.utils.inbox import consume_event
+
+        async with get_async_db_context() as db:
+            recipients = await consume_event(event, db=db)
+            await db.commit()
+        await emit_changes(recipients)
+    except Exception:
+        log.exception('Chat mention notification failed for %s', chat_id)
+    await publish_event(request, event)
     event_emitter = await get_event_emitter(metadata, update_db=False)
     if event_emitter:
         folder_id = metadata.get('folder_id') or await Chats.get_chat_folder_id(chat_id, metadata.get('user_id'))
@@ -1469,7 +1485,7 @@ async def chat_completion_tools_handler(
 
         recent_messages = messages[-4:] if len(messages) > 4 else messages
         chat_history = '\n'.join(
-            f'{message["role"].upper()}: """{get_content_from_message(message)}"""' for message in recent_messages
+            f'{message["role"].upper()}: """{get_content_from_message(message) or ""}"""' for message in recent_messages
         )
 
         prompt = f'History:\n{chat_history}\nQuery: {user_message}' if chat_history else f'Query: {user_message}'
@@ -2024,14 +2040,7 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
     # Called directly, bypassing the /images routes that enforce these switches.
     editing = len(input_images) > 0 and await Config.get('images.edit.enable')
     if editing and metadata.get('image_generation_engine_id'):
-        try:
-            editing = resolve_image_edit_config(
-                SimpleNamespace(ENABLE_IMAGE_EDIT=True),
-                await Config.get('image_generation.engines') or [],
-                metadata['image_generation_engine_id'],
-            ).ENABLE_IMAGE_EDIT
-        except ValueError:
-            log.warning('Unable to resolve image editing availability from configured engines')
+        _, _, editing = await get_image_tool_settings(request, user, metadata['image_generation_engine_id'])
     if not editing and not await Config.get('image_generation.enable'):
         return form_data
 
@@ -2053,6 +2062,7 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
                 form_data=EditImageForm(
                     prompt=prompt,
                     image=input_images,
+                    model=get_requested_image_model(metadata),
                     engine_id=metadata.get('image_generation_engine_id'),
                 ),
                 metadata=image_metadata,
@@ -2166,7 +2176,11 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
         try:
             images = await image_generations(
                 request=request,
-                form_data=CreateImageForm(prompt=prompt, engine_id=metadata.get('image_generation_engine_id')),
+                form_data=CreateImageForm(
+                    prompt=prompt,
+                    model=get_requested_image_model(metadata),
+                    engine_id=metadata.get('image_generation_engine_id'),
+                ),
                 metadata=image_metadata,
                 user=user,
             )
@@ -2436,9 +2450,7 @@ async def load_messages_from_db(chat_id: str, message_id: str) -> Optional[list[
             set_last_user_message_content(skills_create['expanded_text'], [msg])
 
     return [
-        {k: v for k, v in msg.items() if k in MESSAGE_REPLAY_KEYS}
-        for msg in db_messages
-        if not (msg.get('role') == 'assistant' and not msg.get('content') and not msg.get('output'))
+        {k: v for k, v in msg.items() if k in MESSAGE_REPLAY_KEYS} for msg in db_messages if not is_empty_reply(msg)
     ]
 
 
@@ -2901,7 +2913,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             request.state.model['id']: request.state.model,
         }
     else:
-        models = request.app.state.MODELS
+        models = await add_tether_model(request, user, form_data.get('model'))
 
     task_model_id = get_task_model_id(
         form_data['model'],
@@ -3514,7 +3526,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         # so system terminals work even when no other tools are selected)
         terminal_capability = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
         terminal_connection_ids = {connection.get('id') for connection in await get_terminal_connections(user)}
-        if terminal_id and terminal_capability and terminal_id in terminal_connection_ids:
+        if terminal_id and terminal_capability:
             try:
                 terminal_result = await get_terminal_tools(
                     request,
@@ -4834,7 +4846,10 @@ async def background_tasks_handler(ctx):
 
     if message and 'model' in message:
         if tasks and messages:
-            if TASKS.FOLLOW_UP_GENERATION in tasks and tasks[TASKS.FOLLOW_UP_GENERATION]:
+            if tasks.get(TASKS.FOLLOW_UP_GENERATION) and not (
+                metadata.get('steering_task')
+                and await ChatMessages.has_queued_message(metadata['chat_id'], metadata['message_id'])
+            ):
                 follow_up_messages = list(messages)
                 assistant_message = ctx.get('assistant_message')
                 if not is_saved_chat_id(metadata.get('chat_id')) and assistant_message:
@@ -5010,7 +5025,7 @@ async def background_tasks_handler(ctx):
                         except Exception as e:
                             pass
 
-        if messages:
+        if messages and not is_temporary_chat_id(metadata.get('chat_id')):
             await review_memory_after_turn(
                 request=request,
                 user=user,
@@ -5412,6 +5427,10 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 **({'usage': usage} if usage else {}),
                             },
                         )
+                        if metadata.get('steering_task'):
+                            await Chats.publish_steering_output(
+                                metadata['chat_id'], metadata['message_id'], metadata.get('task_id'), response_output
+                            )
 
                     await publish_chat_finished_event(request, user, metadata, title, content, response_output)
 
@@ -5869,7 +5888,7 @@ async def streaming_chat_response_handler(response, ctx):
 
             def full_output():
                 for item in output:
-                    set_tool_call_visibility(item, metadata.get('tools', {}))
+                    set_tool_call_metadata(item, metadata.get('tools', {}))
                 if is_message_continuation():
                     return [
                         *prior_output[:-1],
@@ -6123,7 +6142,7 @@ async def streaming_chat_response_handler(response, ctx):
                             response_data.get('item') or {},
                             *((response_data.get('response') or {}).get('output') or []),
                         ]:
-                            set_tool_call_visibility(item, metadata.get('tools', {}))
+                            set_tool_call_metadata(item, metadata.get('tools', {}))
                         if response_data.get('type', '').endswith('.delta'):
                             await queue_pending_delta_data(
                                 response_data,
@@ -6172,6 +6191,13 @@ async def streaming_chat_response_handler(response, ctx):
                                         **({'usage': usage} if usage else {}),
                                     },
                                 )
+                                if metadata.get('steering_task'):
+                                    await Chats.publish_steering_output(
+                                        metadata['chat_id'],
+                                        metadata['message_id'],
+                                        metadata.get('task_id'),
+                                        interrupted_output,
+                                    )
                             await event_emitter({'type': 'chat:completion', 'data': {'output': interrupted_output}})
                             await clear_response_stream(request.app.state.redis, response_stream_task_id)
                             raise
@@ -7589,6 +7615,10 @@ async def streaming_chat_response_handler(response, ctx):
                     await emit_output()
                     if scoped_execution_error is not None:
                         raise scoped_execution_error
+                    if metadata.get('steering_task') and await ChatMessages.has_queued_message(
+                        metadata['chat_id'], metadata['message_id']
+                    ):
+                        break
                     if final_answer_requested:
                         await emit_message_error(round_error or 'The provider requested tools after tool use stopped.')
                         break
@@ -8274,6 +8304,10 @@ async def streaming_chat_response_handler(response, ctx):
                             **({'usage': usage} if usage else {}),
                         },
                     )
+                    if metadata.get('steering_task'):
+                        await Chats.publish_steering_output(
+                            metadata['chat_id'], metadata['message_id'], metadata.get('task_id'), current_output
+                        )
 
                 await clear_response_stream(request.app.state.redis, response_stream_task_id)
                 await publish_chat_finished_event(
@@ -8339,6 +8373,10 @@ async def streaming_chat_response_handler(response, ctx):
                                 'output': cancelled_output,
                             },
                         )
+                        if metadata.get('steering_task'):
+                            await Chats.publish_steering_output(
+                                metadata['chat_id'], metadata['message_id'], metadata.get('task_id'), cancelled_output
+                            )
                     await clear_response_stream(request.app.state.redis, response_stream_task_id)
 
                 try:

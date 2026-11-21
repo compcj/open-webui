@@ -87,10 +87,17 @@ async def terminal_ws(api, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('chat_id', ['', 'chat-1'])
-@pytest.mark.parametrize('orchestrator', [False, True])
-async def test_created_terminal_can_attach_and_forward_frames(terminal_ws, chat_id, orchestrator):
+@pytest.mark.parametrize('protocol', ['standalone', 'legacy-policy', 'template'])
+async def test_created_terminal_can_attach_and_forward_frames(terminal_ws, chat_id, protocol):
     api, state = terminal_ws.api, terminal_ws.state
-    if orchestrator:
+    if protocol == 'template':
+        api.connection.update(
+            server_type='orchestrator',
+            template_id='sandbox',
+            terminal_context={'user_id': 'user-1', 'chat_id': chat_id, 'model_id': 'model-a'},
+            context_id='model:model-a',
+        )
+    elif protocol == 'legacy-policy':
         api.connection.update(
             server_type='orchestrator',
             policy_id='policy-1',
@@ -125,7 +132,12 @@ async def test_created_terminal_can_attach_and_forward_frames(terminal_ws, chat_
     created, attached = state.requests
     assert created.headers['X-User-Id'] == attached.headers['X-User-Id'] == 'user-1'
     assert created.headers.get('X-Session-Id', '') == attached.headers.get('X-Session-Id', '') == chat_id
-    expected_context = f'chat:{chat_id}' if orchestrator and chat_id else None
+    if protocol == 'template':
+        for request in (created, attached):
+            assert request.headers['X-Terminal-Template-Id'] == 'sandbox'
+            assert request.headers['X-Terminal-Model-Id'] == 'model-a'
+            assert request.headers.get('X-Terminal-Chat-Id', '') == chat_id
+    expected_context = f'chat:{chat_id}' if protocol == 'legacy-policy' and chat_id else None
     assert created.headers.get('X-Terminal-Context-Id') == expected_context
     assert attached.headers.get('X-Terminal-Context-Id') == expected_context
     assert attached.query == {'user_id': 'user-1'}

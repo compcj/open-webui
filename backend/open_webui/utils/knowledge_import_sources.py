@@ -197,7 +197,12 @@ async def terminal_access(request, user, metadata):
     if not isinstance(terminal_id, str) or not terminal_id or terminal_id.startswith('tether:'):
         raise ImportSourceError('Terminal import requires a saved administrator terminal connection')
     connections = await Config.get('terminal_server.connections', []) or []
-    if not any(connection.get('id') == terminal_id for connection in connections):
+    connection_id = terminal_id
+    if terminal_id.startswith('template:'):
+        from open_webui.utils.terminals import split_template_id
+
+        connection_id, _ = split_template_id(terminal_id)
+    if not any(connection.get('id') == connection_id for connection in connections):
         raise ImportSourceError('Terminal import requires a saved administrator terminal connection')
     return await _http_terminal_context(terminal_id, request, user, metadata, require_context=True)
 

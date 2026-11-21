@@ -7,19 +7,18 @@ AGENTS.md instructions, and the current user request govern implementation.
 
 | Upstream release | Design and upgrade record                                                      |
 | ---------------- | ------------------------------------------------------------------------------ |
-| v0.13.3          | [Current decisions, compatibility and validation](v0.13.3-decisions.md)        |
+| v0.13.4          | [Fork 0.13.4+f1 decisions and upgrade requirements](v0.13.4-decisions.md)      |
+| v0.13.3          | [Historical decisions, compatibility and validation](v0.13.3-decisions.md)     |
 | v0.12.4          | [Historical decisions, compatibility and validation](v0.12.4-decisions.md)     |
 | v0.12.2          | [Historical decisions, compatibility and validation](v0.12.2-decisions.md)     |
 | v0.12.0          | [Historical decisions, compatibility and validation](v0.12.0-decisions.md)     |
 | v0.11.4          | [Decisions, implementation evidence, and upgrade checks](v0.11.4-decisions.md) |
 
-The current integrated release is v0.13.3, targeting official commit
-`b0e6098e940942281d9c83f3529ea117287a3a22`. Read its [decision record](v0.13.3-decisions.md),
-[temporary V2 contracts](../temporary-context-v2.md), [complete audit](v0.13.3-fork-audit.md),
-[file inventory](v0.13.3-fork-files.md) and [actual validation with limits](v0.13.3-validation.md).
-The genuine two-parent merge and runtime code cutoff is `3241fa15a81db4fb43bcda51df74570e59c0ee5d`.
-Its second parent is the official target above; the following documentation commit archives final
-reports and audits. The integration is local, with no push, release or deployment.
+The target for fork `0.13.4+f1` is official
+`0666e59d26a4d056e0bacee41742486badd71cf8`. See the [17 integration decisions](v0.13.4-decisions.md),
+[fork audit](v0.13.4-fork-audit.md), [file inventory](v0.13.4-fork-files.md) and
+[validation record](v0.13.4-validation.md). The v0.13.3 decision record and its subsequent
+provider, temporary-context and cache follow-ups continue to apply wherever the new record preserves them.
 These records are dated snapshots; recompute tree/history comparisons for later work. Earlier
 release records and validation numbers remain historical evidence.
 

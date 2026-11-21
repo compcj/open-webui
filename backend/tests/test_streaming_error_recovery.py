@@ -22,7 +22,7 @@ from open_webui.utils.tool_calling import (
     INCOMPLETE_CALL_ERROR,
     final_answer_payload,
     recover_tool_calls,
-    set_tool_call_visibility,
+    set_tool_call_metadata,
     tool_repetition_error,
 )
 from test_web_tool_citations import load_functions
@@ -110,7 +110,7 @@ def runtime():
         'INCOMPLETE_CALL_ERROR': INCOMPLETE_CALL_ERROR,
         'final_answer_payload': final_answer_payload,
         'recover_tool_calls': recover_tool_calls,
-        'set_tool_call_visibility': set_tool_call_visibility,
+        'set_tool_call_metadata': set_tool_call_metadata,
         'tool_repetition_error': tool_repetition_error,
         'get_reasoning_format': lambda model: None,
         'convert_url_images_to_base64': AsyncMock(side_effect=lambda data, **kwargs: data),
@@ -584,7 +584,7 @@ async def test_legacy_round_usage_counts_only_latest_response_and_new_tool_text(
 
     snapshots = []
     threshold = load(
-        {'_exceeds_token_threshold', '_usage_token_count'},
+        {'_estimate_request_tokens', '_exceeds_token_threshold', '_usage_token_count'},
         _estimate_messages_tokens=lambda rows: sum(len(row.get('content') or '') for row in rows),
         _estimate_tokens=len,
     )['_exceeds_token_threshold']

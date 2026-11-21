@@ -21,6 +21,11 @@ BACKEND = Path(__file__).parents[1] / 'open_webui'
 
 def extract(path, name, namespace):
     namespace.setdefault('Optional', Optional)
+    if name in ('generate_image', 'edit_image', 'chat_image_generation_handler'):
+        from test_web_tool_citations import load_functions
+
+        load_functions(namespace, 'utils/images/connections.py', {'get_requested_image_model', 'get_requested_model'})
+        namespace.setdefault('get_image_tool_settings', AsyncMock(return_value=('', '', True)))
     tree = ast.parse((BACKEND / path).read_text(encoding='utf-8'))
     node = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
     node.decorator_list = []
@@ -169,6 +174,7 @@ def test_legacy_image_mode_generates_instead_of_editing_when_selected_editor_is_
         'resolve_image_edit_config': load_engines_module().resolve_image_edit_config,
         'CreateImageForm': SimpleNamespace,
         'EditImageForm': SimpleNamespace,
+        'get_image_tool_settings': AsyncMock(return_value=('', '', False)),
         'image_generations': generate,
         'image_edits': edit,
         'Config': SimpleNamespace(get=AsyncMock(side_effect=lambda key: values.get(key))),
@@ -222,6 +228,7 @@ def test_chat_metadata_consumes_engine_id_before_calling_text_provider():
         'model': {},
         'model_item': {},
         'model_info_params': {},
+        'model_id': 'text-model',
         'stream_delta_chunk_size': 1,
         'reasoning_tags': [],
         'compact_token_threshold': 0,

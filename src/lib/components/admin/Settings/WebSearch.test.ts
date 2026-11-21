@@ -21,11 +21,13 @@ const setup = (web: Record<string, unknown>) => {
 		getRAGConfig,
 		updateRAGConfig,
 		getContext: () => ({}),
+		$i18n: { t: (key: string) => key },
 		onMount: (callback: typeof mount) => (mount = callback),
 		localStorage: { token: 'synthetic-token' }
 	};
 	const body = `
 		const { ${Object.keys(dependencies).join(', ')} } = dependencies;
+		let settingLabels;
 		${script}
 		return { submit: submitHandler, getConfig: () => webConfig };
 	`;

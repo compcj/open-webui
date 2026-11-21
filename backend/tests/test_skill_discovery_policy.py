@@ -362,7 +362,11 @@ def terminal_runtime(monkeypatch):
 
     stub('open_webui.models.users', UserModel=TerminalUser)
     stub('open_webui.models.groups', Groups=SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])))
-    stub('open_webui.utils.access_control', has_connection_access=AsyncMock(return_value=True))
+    stub(
+        'open_webui.utils.access_control',
+        has_connection_access=AsyncMock(return_value=True),
+        has_permission=AsyncMock(return_value=True),
+    )
     stub('open_webui.utils.tools', build_tool_server_headers=AsyncMock(side_effect=lambda *args, **kwargs: ({}, {})))
     stub('open_webui.utils.headers', bearer_auth_header=lambda key: {'Authorization': f'Bearer {key}'})
 
@@ -372,7 +376,9 @@ def terminal_runtime(monkeypatch):
     stub(
         'open_webui.utils.tether',
         get_terminal_connections=connections,
-        get_terminal_client=lambda url, user_id=None, **kwargs: aiohttp.ClientSession(**kwargs),
+        get_terminal_client=lambda url, user_id=None, service='open_terminal', **kwargs: aiohttp.ClientSession(
+            **kwargs
+        ),
     )
     ns = dict(
         asyncio=asyncio,
@@ -393,11 +399,23 @@ def terminal_runtime(monkeypatch):
         get_terminal_server_url=lambda connection: connection['url'],
         log=logging.getLogger(__name__),
     )
+
+    async def find_connection(user, selector, metadata, request=None):
+        from open_webui.utils.access_control import has_connection_access
+        from open_webui.utils.tether import get_terminal_connections
+
+        for item in await get_terminal_connections(user):
+            if item.get('id') == selector and item.get('enabled', True) and await has_connection_access(user, item):
+                return item
+        return None
+
+    ns.update(find_terminal_connection=find_connection, terminal_headers=lambda _: {})
     compile_nodes(
         'utils/terminals.py',
         {
             'get_terminal_request_info',
             '_get_terminal_request_info',
+            'can_use_personal_terminal',
             'resolve_terminal_connection',
             'get_terminal_json',
             'get_terminal_skills',

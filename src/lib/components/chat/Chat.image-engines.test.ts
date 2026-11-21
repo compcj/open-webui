@@ -46,6 +46,7 @@ const createChat = (initialSettings: Record<string, unknown> = {}) => {
 		const localStorage = {token: 'token-a'};
 		const $i18n = {t: text => text};
 		const console = {error: () => {}};
+		let selectedImageModelId = 'prior-explicit-model';
 		let imageGenerationEngines = null, imageGenerationEnginesLoading = false;
 		let imageEngineAccountId = null, imageEngineRequestVersion = 0;
 		${declarations}
@@ -54,6 +55,7 @@ const createChat = (initialSettings: Record<string, unknown> = {}) => {
 			choose: handleImageGenerationEngineChange,
 			switchAccount: () => {user.set({id: 'account-b'}); localStorage.token = 'token-b'; settings.set({});},
 			settings: () => get(settings),
+			explicitModel: () => selectedImageModelId,
 			state: () => ({engines: imageGenerationEngines, loading: imageGenerationEnginesLoading,
 				selected: resolveImageGenerationEngineId($settings.imageGenerationEngineId, imageGenerationEngines)})
 		};
@@ -70,6 +72,7 @@ describe('chat image engine account settings', () => {
 		const chat = createChat({ textScale: 1.1 });
 		await chat.load();
 		await chat.choose('studio');
+		expect(chat.explicitModel()).toBe('');
 		expect(chat.updateUserSettings).toHaveBeenLastCalledWith('token-a', {
 			ui: { imageGenerationEngineId: 'studio' }
 		});

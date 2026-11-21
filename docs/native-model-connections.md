@@ -1,5 +1,10 @@
 # 原生模型连接 / Native model connections
 
+Personal browser Direct Connections and per-user Tether models can coexist with the four server protocols.
+Duplicate Tether IDs expose source-qualified selections while the provider receives its original ID.
+The selected server protocol still governs budgeting and signed replay. See the
+[v0.13.4 decisions](upstream/v0.13.4-decisions.md).
+
 ## 配置 / Setup
 
 管理员在 **设置 → 连接 → 编辑连接** 显式选择协议。现有空值仍为 Chat Completions，

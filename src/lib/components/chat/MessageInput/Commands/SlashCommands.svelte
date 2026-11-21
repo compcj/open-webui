@@ -1,23 +1,17 @@
 <script lang="ts">
 	import { createSkillDiscoveryLoader } from '$lib/utils/skill-discovery';
+	export let modelId: string | null = null;
 	import { resolveLocalizedResource } from '$lib/utils/localizedContent';
 	import { getContext, onDestroy } from 'svelte';
+	import type { Readable, Writable } from 'svelte/store';
 	import { getPrompts } from '$lib/apis/prompts';
 	import { getSkillItems } from '$lib/apis/skills';
 	import {
 		listTerminalSkills,
-		resolveTerminalConnection,
+		resolveTerminalTarget,
 		type TerminalSkill
 	} from '$lib/apis/terminal';
-	import {
-		user,
-		chatId,
-		selectedTerminalId,
-		settings,
-		terminalServers,
-		terminalSkills,
-		visibleControls
-	} from '$lib/stores';
+	import { user, settings, terminalServers, visibleControls } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import ChatBubbleDotted from '$lib/components/icons/ChatBubbleDotted.svelte';
 	import ChatBubbleDottedChecked from '$lib/components/icons/ChatBubbleDottedChecked.svelte';
@@ -27,11 +21,16 @@
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
+	import { getChatContext } from '$lib/components/chat/context';
+
+	const { chatId } = getChatContext();
 
 	const temporaryContext: any = getContext('temporary-context');
 	const i18n: any = getContext('i18n');
 
 	export let query = '';
+	export let selectedTerminalId: Readable<string | null>;
+	export let terminalSkills: Writable<any[]>;
 	export let onSelect = (e) => {};
 	export let canCompact = false;
 	export let canCompare = false;
@@ -124,22 +123,17 @@
 	});
 
 	const loadTerminalSkillItems = createSkillDiscoveryLoader<TerminalSkill>(
-		() => JSON.stringify([$selectedTerminalId, $chatId, localStorage.token]),
+		() => JSON.stringify([$selectedTerminalId, $chatId, modelId, localStorage.token]),
 		(items) => terminalSkills.set(items)
 	);
 	const getTerminalItems = async (query = ''): Promise<TerminalSkill[]> => {
-		const connection = resolveTerminalConnection(
+		const target = resolveTerminalTarget(
 			$selectedTerminalId,
 			$terminalServers ?? [],
-			$settings?.terminalServers ?? [],
-			localStorage.token
+			temporaryContext?.terminalCredential(localStorage.token, $chatId) ?? localStorage.token,
+			{ chatId: $chatId || null, modelId: modelId }
 		);
-		if (connection?.system)
-			connection.key =
-				temporaryContext?.terminalCredential(localStorage.token, $chatId) ?? localStorage.token;
-		const items = await loadTerminalSkillItems(() =>
-			listTerminalSkills(connection, $chatId || null).catch(() => [])
-		);
+		const items = await loadTerminalSkillItems(() => listTerminalSkills(target).catch(() => []));
 		const q = query.trim().toLowerCase();
 		return q
 			? items.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(q))

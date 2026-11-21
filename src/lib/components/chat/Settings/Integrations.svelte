@@ -3,11 +3,11 @@
 	import { onMount, getContext } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
-	import { getToolServersData } from '$lib/apis';
+	import { getToolServersData, getPersonalTerminalServers } from '$lib/apis';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
-	import { settings, toolServers, terminalServers } from '$lib/stores';
+	import { settings, toolServers, terminalServers, user } from '$lib/stores';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -40,13 +40,23 @@
 		await updateHandler();
 	};
 
+	let refreshRevision = 0;
 	const updateHandler = async () => {
+		const revision = ++refreshRevision;
+		const actor = $user?.id;
+		const current = () => revision === refreshRevision && actor === $user?.id;
 		await saveSettings({
 			toolServers: servers,
 			terminalServers: terminalServerConfigs
 		});
 
-		let toolServersData = await getToolServersData($settings?.toolServers ?? []);
+		if (!current()) return;
+		const [schemas, personalTerminals] = await Promise.all([
+			getToolServersData($settings?.toolServers ?? []),
+			getPersonalTerminalServers(terminalServerConfigs)
+		]);
+		if (!current()) return;
+		let toolServersData = schemas;
 		toolServersData = toolServersData.filter((data: any) => {
 			if (data.error) {
 				toast.error(
@@ -58,31 +68,10 @@
 		});
 		toolServers.set(toolServersData as any);
 
-		// Refresh terminal servers store (preserve system terminals)
-		const existingSystemTerminals = (($terminalServers ?? []) as any[]).filter((t) => t.id);
-		const activeTerminals = terminalServerConfigs.filter((s) => s.enabled);
-		if (activeTerminals.length > 0) {
-			let terminalServersData = await getToolServersData(
-				activeTerminals.map((t) => ({
-					url: t.url,
-					auth_type: t.auth_type ?? 'bearer',
-					key: t.key ?? '',
-					path: t.path ?? '/openapi.json',
-					config: { enable: true }
-				}))
-			);
-			terminalServersData = terminalServersData.filter((data: any) => data && !data.error);
-			terminalServers.set([
-				...terminalServersData.map((data: any, i: number) => ({
-					...data,
-					key: activeTerminals[i]?.key ?? '',
-					config: activeTerminals[i]?.config ?? data?.config ?? {}
-				})),
-				...existingSystemTerminals
-			] as any);
-		} else {
-			terminalServers.set(existingSystemTerminals as any);
-		}
+		terminalServers.update((current) => [
+			...personalTerminals,
+			...(current ?? []).filter((item) => item.id)
+		]);
 	};
 
 	onMount(async () => {

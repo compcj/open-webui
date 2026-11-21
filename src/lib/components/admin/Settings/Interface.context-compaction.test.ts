@@ -25,6 +25,7 @@ const createForm = () => {
 	const updateChatConfig = vi.fn(async (_token, config) => ({ ...config }));
 	const body = `
         const { updateChatConfig, isValidToolBudgetPercent } = dependencies;
+        const settings = {}, tick = async () => {}; let savedConfig;
         let visibility = {}; const setInterfaceVisibility = async () => ({});
         const updateTaskConfig = async (_token, config) => config;
         const localStorage = { token: 'synthetic' }, $i18n = { t: text => text };

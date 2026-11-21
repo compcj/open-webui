@@ -217,7 +217,7 @@ async def apply_round(runtime, sources):
         ]
     )
     messages = ns['convert_output_to_messages'](ns['output'], raw=True)
-    return '\n'.join(message['content'] for message in [*ns['form_data']['messages'], *messages])
+    return '\n'.join(message['content'] or '' for message in [*ns['form_data']['messages'], *messages])
 
 
 def tool_elements(content):

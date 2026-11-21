@@ -287,7 +287,7 @@ async def test_native_nonstream_router_normalizes_response_and_cleans_up(sender,
     )
     assert result['choices'][0]['message']['content'] == 'Answer'
     assert result['choices'][0]['message']['reasoning_details'][0]['data']['binding']['connection_id'] == '0'
-    ns['cleanup_response'].assert_awaited_once_with(response)
+    ns['cleanup_response'].assert_awaited_once_with(response, None)
 
 
 @pytest.mark.asyncio
@@ -473,4 +473,4 @@ async def test_native_chat_error_status_retry_and_cleanup(sender, status, conten
     assert result.status_code == status
     assert result.headers['retry-after'] == '2'
     assert json.loads(result.body) == error
-    ns['cleanup_response'].assert_awaited_once_with(response)
+    ns['cleanup_response'].assert_awaited_once_with(response, None)

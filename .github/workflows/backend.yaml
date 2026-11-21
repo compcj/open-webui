@@ -1,8 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Backend CI — Python formatting, logic checks, and tests
+# Backend CI — Python formatting, logic checks, tests, and Docker dependency locks
 # Runs on pushes and PRs to main/dev when backend files or locked actions change
 # ─────────────────────────────────────────────────────────────────────────────
 name: Python CI
+
+permissions:
+  contents: read
 
 on:
   push:
@@ -94,3 +97,24 @@ jobs:
         run: |
           mkdir -p "$DATA_DIR" "$STATIC_DIR"
           .venv/bin/python -m pytest backend/tests -q --basetemp "${{ runner.temp }}/backend-pytest"
+
+  # ── Dockerfile lock files match the requirements files ───────────────────
+  lock-check:
+    name: Requirements locks up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5.1.0
+
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv==0.12.10
+
+      - name: Regenerate locks
+        run: backend/update-locks.sh
+
+      - name: Verify locks are up to date
+        run: test -z "$(git status --porcelain -- backend)"

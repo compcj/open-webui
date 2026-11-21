@@ -328,11 +328,85 @@ async def test_retention_failure_blocks_ack_publication_and_remote_delete(runner
     runner.transport.request.assert_not_awaited()
 
 
+def install_run(runner, provider, *, chat=None, messages=None, execution=None, signed=None):
+    """Exercise the signed-checkpoint resolver and the real runner with an isolated terminal carrier."""
+    namespace = runner.namespace
+    chat = chat or SimpleNamespace(id='chat', user_id='author', chat={})
+    namespace.update(
+        PROVIDERS={'codex': provider},
+        RESUMABLE_AT={'codex', 'claude-code'},
+        is_saved_chat_id=lambda _: True,
+        Output=lambda *args: runner.output,
+        copy=copy,
+        decode_token=lambda _: signed,
+        json=__import__('json'),
+        upload_files_to_terminal=AsyncMock(),
+        get_terminal_json=AsyncMock(return_value={'cwd': '/current'}),
+        confirm_remote_completion=AsyncMock(),
+    )
+    load_functions(namespace, 'utils/agents/runner.py', {'run', 'provider_runner'})
+    load_functions(
+        namespace, 'utils/agents/session.py', {'get_resume_point', '_find', '_state', 'branch_digest', 'content_digest'}
+    )
+    load_functions(namespace, 'utils/misc.py', {'get_message_list'})
+    chats = namespace['Chats']
+    chats.get_accessible_chat_by_id = AsyncMock(return_value=chat)
+    saved = dict(messages or {})
+    saved.setdefault(
+        'next-user',
+        {
+            'id': 'next-user',
+            'role': 'user',
+            'user_id': 'author',
+            'content': 'next',
+            'parentId': 'previous' if 'previous' in saved else None,
+        },
+    )
+    for reply_id in ('reply', 'next-reply'):
+        saved[reply_id] = {
+            'id': reply_id,
+            'role': 'assistant',
+            'user_id': 'author',
+            'parentId': 'next-user',
+            'done': False,
+        }
+    chats.get_messages_map_by_chat_id = AsyncMock(return_value=saved)
+    chats.get_agent_execution = AsyncMock(return_value=execution)
+    chats.claim_agent_execution = AsyncMock(return_value=True)
+    chats.update_agent_execution = AsyncMock(return_value=True)
+    runner.transport.start = AsyncMock(return_value={})
+    runner.transport.start_receiving = lambda _journal: None
+
+
+def old_session(runner, signed, binding=None):
+    """Construct an original, settled journal row and its matching server-authored output."""
+    row = {
+        **runner.record,
+        'message_id': 'previous',
+        'model': signed['model'],
+        'provider': signed['provider'],
+        'cwd': signed['cwd'],
+        'state': 'completed',
+        'remote_completed': True,
+        'output_published': True,
+        **(binding or {}),
+    }
+    message = {
+        'id': 'previous',
+        'role': 'assistant',
+        'user_id': 'author',
+        'done': True,
+        'content': 'visible prior reply',
+        'meta': {'agent': 'signed'},
+        'parentId': None,
+    }
+    return row, {'previous': message}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('old_binding', [None, 'digest-for-the-previous-url'])
-async def test_agent_resume_rejects_unproven_or_changed_terminal_url(runner, old_binding):
+async def test_unproven_or_changed_terminal_never_receives_the_prior_session(runner, old_binding):
     provider = AsyncMock()
-    claim = AsyncMock(side_effect=AssertionError('Agent must reject the connection before claiming or starting'))
     agent = {'provider': 'codex', 'terminal_id': 'terminal', 'model': 'agent-model'}
     previous = {
         **agent,
@@ -343,33 +417,20 @@ async def test_agent_resume_rejects_unproven_or_changed_terminal_url(runner, old
         'cwd': '/old-environment',
         'terminal_identity': old_binding,
     }
-    runner.transport.request = AsyncMock()
-    runner.namespace.update(
-        PROVIDERS={'codex': provider},
-        is_saved_chat_id=lambda _: True,
-        decode_token=lambda _: previous,
-        Output=lambda *args: runner.output,
-    )
-    runner.namespace['Chats'].get_message_by_id_and_message_id = AsyncMock(
-        return_value={
-            'meta': {'agent': 'signed'},
-            'childrenIds': ['next-user'],
-        }
-    )
-    runner.namespace['Chats'].get_agent_execution = AsyncMock(return_value=None)
-    runner.namespace['Chats'].claim_agent_execution = claim
-    load_functions(runner.namespace, 'utils/agents/runner.py', {'run'})
+    row, messages = old_session(runner, previous)
+    row['terminal_identity'] = old_binding
+    install_run(runner, provider, messages=messages, execution=row, signed=previous)
     metadata = {
         **runner.record,
         'message_id': 'next-reply',
-        'user_message_id': 'next-user',
-        'user_message': {'parentId': 'previous'},
+        'user_message': {'parentId': 'previous', 'content': 'next'},
     }
-    with pytest.raises(ValueError, match='terminal connection'):
-        await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
-    claim.assert_not_awaited()
-    provider.assert_not_awaited()
-    runner.transport.request.assert_not_awaited()
+    await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
+    options = runner.transport.start.await_args.args[1]
+    assert options['resume'] is None
+    assert options['cwd'] == '/current'
+    assert provider.await_args.args[2] == 'assistant: visible prior reply\n\nuser: next'
+    assert provider.await_args.args[4]['resume_state'] == {}
 
 
 CONTEXT_BINDINGS = [
@@ -386,6 +447,7 @@ CONTEXT_BINDINGS = [
 @pytest.mark.parametrize('binding_source', ['signed', 'execution'])
 @pytest.mark.parametrize('binding,resolved_context,allowed', CONTEXT_BINDINGS)
 async def test_agent_resume_context_binding(runner, binding_source, binding, resolved_context, allowed):
+    provider = AsyncMock()
     agent = {'provider': 'codex', 'terminal_id': 'terminal', 'model': 'agent-model'}
     previous = {
         **agent,
@@ -394,70 +456,23 @@ async def test_agent_resume_context_binding(runner, binding_source, binding, res
         'chat': 'chat',
         'session_id': 'private-provider-session',
         'cwd': '/original-workspace',
-        'terminal_identity': runner.record['terminal_identity'],
     }
-    prior_execution = None
+    row, messages = old_session(runner, previous, binding)
     if binding_source == 'signed':
-        previous.update(binding)
-    else:
-        # Old signed state may obtain its URL binding from the completed execution.
-        previous.pop('terminal_identity')
-        prior_execution = {
-            **runner.record,
-            **agent,
-            'message_id': 'previous',
-            'cwd': previous['cwd'],
-            'state': 'completed',
-            **binding,
-        }
+        previous.update(binding, terminal_identity=row['terminal_identity'])
+    install_run(runner, provider, messages=messages, execution=row, signed=previous)
     runner.transport.terminal_context = resolved_context
-    runner.transport.start = AsyncMock()
-    runner.transport.request = AsyncMock()
-    runner.transport.start_receiving = lambda _journal: None
-    provider, claim, upload, directory, finalize = (AsyncMock() for _ in range(5))
-    claim.return_value = True
-    runner.namespace.update(
-        PROVIDERS={'codex': provider},
-        is_saved_chat_id=lambda _: True,
-        decode_token=lambda _: previous,
-        Output=lambda *args: runner.output,
-        copy=copy,
-        upload_files_to_terminal=upload,
-        get_terminal_json=directory,
-        confirm_remote_completion=finalize,
-    )
-    runner.namespace['Chats'].get_message_by_id_and_message_id = AsyncMock(
-        return_value={'meta': {'agent': 'signed'}, 'childrenIds': ['next-user']}
-    )
-    runner.namespace['Chats'].get_agent_execution = AsyncMock(return_value=prior_execution)
-    runner.namespace['Chats'].claim_agent_execution = claim
-    runner.namespace['Chats'].update_agent_execution = AsyncMock(return_value=True)
-    load_functions(runner.namespace, 'utils/agents/runner.py', {'run'})
     metadata = {
         **runner.record,
         'message_id': 'next-reply',
-        'user_message_id': 'next-user',
-        'user_message': {'parentId': 'previous'},
+        'user_message': {'parentId': 'previous', 'content': 'next'},
     }
-
-    if allowed:
-        result = await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
-        assert result['status'] is True
-        claim.assert_awaited_once()
-        runner.transport.start.assert_awaited_once()
-        assert runner.transport.start.await_args.args[1]['resume'] == previous['session_id']
-        provider.assert_awaited_once()
-        finalize.assert_awaited_once_with(runner.transport, runner.output, metadata, succeeded=True)
-    else:
-        with pytest.raises(ValueError, match='terminal (connection|context)'):
-            await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
-        claim.assert_not_awaited()
-        runner.transport.start.assert_not_awaited()
-        provider.assert_not_awaited()
-        upload.assert_not_awaited()
-        finalize.assert_not_awaited()
-    directory.assert_not_awaited()
-    runner.transport.request.assert_not_awaited()
+    await runner.namespace['run'](object(), {}, SimpleNamespace(id='author'), metadata, {'agent': agent})
+    options = runner.transport.start.await_args.args[1]
+    proven = allowed and binding.get('terminal_context') == resolved_context
+    assert options['resume'] == (previous['session_id'] if proven else None)
+    assert options['cwd'] == (previous['cwd'] if proven else '/current')
+    assert 'visible prior reply' in provider.await_args.args[2] if not proven else provider.await_args.args[2] == 'next'
 
 
 @pytest.mark.asyncio
@@ -492,20 +507,23 @@ async def test_recovered_stop_context_binding(runner, published, binding, resolv
 
 
 @pytest.mark.asyncio
-async def test_output_publication_retries_after_background_save_failure():
-    namespace = {'asyncio': asyncio, 'copy': copy, 'time': time}
+async def test_output_publication_retries_after_storage_failure():
+    namespace = {
+        'asyncio': asyncio,
+        'copy': copy,
+        'time': time,
+        'get_redis_client': lambda **_: None,
+        'clear_response_stream': AsyncMock(),
+    }
     load_functions(namespace, 'utils/agents/output.py', {'Output'})
     output = namespace['Output']({}, SimpleNamespace(id='author'), None, {})
-    output.save = AsyncMock()
+    output.save = AsyncMock(side_effect=[ConnectionError('storage temporarily unavailable'), None])
     output.emitter = AsyncMock()
-    prior_save = asyncio.get_running_loop().create_future()
-    prior_save.set_exception(ConnectionError('storage temporarily unavailable'))
-    output.save_task = prior_save
-
     with pytest.raises(ConnectionError):
         await output.flush(persist=True)
+    namespace['clear_response_stream'].assert_not_awaited()
     await output.flush(persist=True)
-    output.save.assert_awaited_once_with(done=False)
+    assert output.save.await_count == 2
     output.emitter.assert_awaited_once()
 
 
@@ -520,6 +538,7 @@ async def test_agent_approval_polls_only_current_reply_output():
         'json': __import__('json'),
         'uuid4': lambda: SimpleNamespace(hex='token'),
         'Chats': SimpleNamespace(get_agent_approval_output=read),
+        'get_redis_client': lambda **_: None,
     }
     load_functions(namespace, 'utils/agents/output.py', {'Output'})
     metadata = {'chat_id': 'chat', 'message_id': 'reply', 'task_id': 'task'}
@@ -535,17 +554,8 @@ async def test_capacity_stop_does_not_replace_the_confirmed_incomplete_notice(ru
     runner.transport.start = AsyncMock()
     runner.transport.start_receiving = lambda _journal: None
     provider = AsyncMock(side_effect=runner.namespace['AgentOutputRetentionError']('configured output capacity'))
-    finalize = AsyncMock()
-    runner.namespace.update(
-        PROVIDERS={'codex': provider},
-        is_saved_chat_id=lambda _: True,
-        Output=lambda *args: runner.output,
-        copy=copy,
-        upload_files_to_terminal=AsyncMock(),
-        confirm_remote_completion=finalize,
-    )
-    runner.namespace['Chats'].claim_agent_execution = AsyncMock(return_value=True)
-    load_functions(runner.namespace, 'utils/agents/runner.py', {'run'})
+    install_run(runner, provider, execution=runner.record)
+    finalize = runner.namespace['confirm_remote_completion']
     metadata = {**runner.record, 'initial_terminal_cwd': '/workspace'}
     agent = {'provider': 'codex', 'terminal_id': 'terminal', 'model': 'agent-model'}
 
@@ -553,3 +563,82 @@ async def test_capacity_stop_does_not_replace_the_confirmed_incomplete_notice(ru
 
     assert result['status'] is True
     finalize.assert_awaited_once_with(runner.transport, runner.output, metadata, succeeded=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'setting,provider_id,native', [('webui', 'codex', False), ('native', 'codex', True), ('native', 'pi', False)]
+)
+async def test_reviewer_and_attachments_are_bound_to_this_turn(runner, setting, provider_id, native):
+    provider = AsyncMock()
+    install_run(
+        runner,
+        provider,
+        messages={
+            'next-user': {
+                'id': 'next-user',
+                'role': 'user',
+                'content': 'look here',
+                'files': [{'id': 'current-file', 'name': 'current.txt'}],
+            }
+        },
+    )
+    runner.namespace['PROVIDERS'] = {provider_id: provider}
+    runner.namespace['Config'] = SimpleNamespace(get=AsyncMock(return_value=setting))
+
+    async def upload(request, user, files, metadata, extra, *, directory, authorize):
+        runner.namespace['Chats'].claim_agent_execution.assert_awaited_once()
+        assert directory == '/bound'
+        assert [f['id'] for f in files] == ['current-file']
+        files[0]['terminal_path'] = '/bound/current-file.txt'
+
+    runner.namespace['upload_files_to_terminal'] = upload
+    agent = {'provider': provider_id, 'terminal_id': 'terminal', 'model': 'agent-model'}
+    meta = {
+        **runner.record,
+        'params': {'tool_approval_mode': 'auto'},
+        'initial_terminal_cwd': '/bound',
+        'user_message': {'content': 'look here', 'files': [{'id': 'current-file', 'name': 'current.txt'}]},
+    }
+    form = {
+        'files': [{'id': 'historical-file', 'name': 'history.txt'}],
+        'messages': [
+            {
+                'role': 'user',
+                'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,aGlzdG9yeQ=='}}],
+            }
+        ],
+    }
+    await runner.namespace['run'](object(), form, SimpleNamespace(id='author'), meta, {'agent': agent})
+    args = provider.await_args.args
+    assert args[2] == 'look here\n\nAttached files in this environment:\n/bound/current-file.txt'
+    assert args[3] == []
+    assert runner.output.native_auto is native
+    assert args[4]['approval_mode'] == ('auto' if native else 'ask')
+
+
+@pytest.mark.asyncio
+async def test_native_reviewer_escalation_always_waits_for_reply_author():
+    review = AsyncMock(return_value=False)
+    namespace = {
+        'asyncio': asyncio,
+        'copy': copy,
+        'time': time,
+        'json': __import__('json'),
+        'get_redis_client': lambda **_: None,
+        'uuid4': lambda: SimpleNamespace(hex='token'),
+        'requires_tool_approval': review,
+        'Chats': SimpleNamespace(
+            get_agent_approval_output=AsyncMock(
+                return_value=[{'call_id': 'approval_token', 'agent_resolution': {'action': 'reject'}}]
+            )
+        ),
+    }
+    load_functions(namespace, 'utils/agents/output.py', {'Output'})
+    output = namespace['Output'](
+        {'chat_id': 'chat', 'message_id': 'reply', 'task_id': 'task'}, SimpleNamespace(id='author'), lambda: None, {}
+    )
+    output.native_auto = True
+    output.flush = AsyncMock()
+    assert await output.approve('change', {}, {}) == {'action': 'reject'}
+    review.assert_not_awaited()

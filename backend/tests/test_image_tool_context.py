@@ -46,6 +46,7 @@ def runtime():
         'output_id': lambda prefix: prefix + '-1',
         'BASE64_IMAGE_DATA_URI_RE': re.compile(r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2}'),
     }
+    load_functions(ns, 'utils/images/connections.py', {'get_requested_image_model', 'get_requested_model'})
     helper_path = BACKEND / 'utils/images/context.py'
     if helper_path.exists():
         spec = importlib.util.spec_from_file_location('image_context_under_test', helper_path)
@@ -353,7 +354,11 @@ def test_nonvision_models_keep_tool_text_and_history_but_receive_no_images(runti
     messages = runtime.ns['process_messages_with_output'](
         [{'role': 'assistant', 'output': output}], include_tool_images=False
     )
-    assert all(isinstance(message['content'], str) for message in messages)
+    assert all(
+        isinstance(message['content'], str)
+        or (message['role'] == 'assistant' and message['content'] is None and message.get('tool_calls'))
+        for message in messages
+    )
     assert IMAGE_URL in messages[-1]['content']
     assert any(part['type'] == 'input_image' for part in output[-1]['output'])
 

@@ -36,7 +36,7 @@ from open_webui.utils.filter import (
 )
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import add_or_update_system_message
-from open_webui.utils.models import check_model_access, get_all_models
+from open_webui.utils.models import add_tether_model, check_model_access, get_all_models
 from open_webui.utils.payload import (
     apply_system_prompt_to_body,
     convert_chat_completions_payload_to_ollama,
@@ -316,7 +316,7 @@ async def _generate_chat_completion(
         }
         log.debug('direct connection to model: %s', request.state.model['id'])
     else:
-        models = request.app.state.MODELS
+        models = await add_tether_model(request, user, form_data.get('model'))
 
     model_id = form_data['model']
     # Single lookup — membership check plus getitem would be two Redis
@@ -461,7 +461,7 @@ async def chat_completed(request: Request, form_data: dict, user: Any):
             request.state.model['id']: request.state.model,
         }
     else:
-        models = request.app.state.MODELS
+        models = await add_tether_model(request, user, form_data.get('model'))
 
     data = form_data
 

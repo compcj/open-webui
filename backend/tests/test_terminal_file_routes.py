@@ -102,7 +102,7 @@ def api(monkeypatch):
     async def get_terminal_connections(user):
         return await config.get('terminal_server.connections', [])
 
-    def get_terminal_client(url, user_id, **kwargs):
+    def get_terminal_client(url, user_id, service='open_terminal', **kwargs):
         return aiohttp.ClientSession(**kwargs)
 
     for name, values in {
@@ -118,10 +118,12 @@ def api(monkeypatch):
         'open_webui.events': {'EVENTS': SimpleNamespace(), 'publish_event': AsyncMock()},
         'open_webui.models.config': {'Config': config},
         'open_webui.models.chats': {'Chats': chats},
+        'open_webui.models.access_grants': {'AccessGrants': SimpleNamespace()},
         'open_webui.models.groups': {'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[]))},
-        'open_webui.utils.access_control': {'has_connection_access': access},
+        'open_webui.utils.access_control': {'has_connection_access': access, 'validate_access_grants': AsyncMock()},
         'open_webui.utils.auth': {
             'get_verified_user': verified,
+            'decode_token': lambda token: None,
             'get_verified_user_by_token': AsyncMock(return_value=None),
         },
         'open_webui.utils.browser': {
@@ -157,7 +159,20 @@ def api(monkeypatch):
     load('open_webui.utils.chat_id', 'utils/chat_id.py', monkeypatch)
     load('open_webui.utils.terminals', 'utils/terminals.py', monkeypatch)
     policy = load('open_webui.utils.terminal_files', 'utils/terminal_files.py', monkeypatch)
+    templates = load('open_webui.routers.templates', 'routers/templates.py', monkeypatch)
+    preview = load('open_webui.routers.terminal_preview', 'routers/terminal_preview.py', monkeypatch)
     router = load('terminal_router_test', 'routers/terminals.py', monkeypatch)
+
+    # These transport tests exercise signed context, login and ACL revocation with a resolved
+    # connection. The managed template catalog and actor/instance lookup are tested separately.
+    async def resolve_connection(user, server_id, metadata, request=None):
+        if server_id != connection['id'] or not connection.get('enabled', True):
+            return None
+        if not await access(user, connection):
+            raise HTTPException(403, 'Terminal access denied')
+        return connection
+
+    monkeypatch.setattr(router, 'find_terminal_connection', resolve_connection)
     state = SimpleNamespace(response=Upstream(), calls=[], closed=0)
 
     class Session:
@@ -180,6 +195,7 @@ def api(monkeypatch):
             owner_id='user-1',
             metadata=kwargs.get('metadata', {'chat_id': 'chat-1'}),
             context_id=kwargs.get('context_id', 'chat:chat-1'),
+            base_url=router.get_terminal_server_url(connection),
             secret=SECRET,
         )
 
@@ -191,9 +207,26 @@ def api(monkeypatch):
         access=access,
         chats=chats,
         router=router,
+        preview=preview,
+        templates=templates,
         policy=policy,
         app=app,
     )
+
+
+def test_managed_connections_preview_tickets_and_generic_proxy_have_distinct_http_routes(api, monkeypatch):
+    headers = {'Authorization': 'owner'}
+    monkeypatch.setattr(api.templates, 'get_connection', AsyncMock(return_value=api.connection))
+    monkeypatch.setattr(api.templates, 'has_connection_write_access', AsyncMock(return_value=True))
+    managed = api.client.get('/api/v1/terminals/templates/connections', headers=headers)
+    assert managed.status_code == 200 and managed.json() == [{'id': 'terminal-1', 'name': 'terminal-1'}]
+
+    ticket = api.client.post('/api/v1/terminals/terminal-1/preview-tickets', headers=headers, json={})
+    assert ticket.status_code == 422 and any(error['loc'] == ['body', 'kind'] for error in ticket.json()['detail'])
+    assert not api.state.calls
+
+    missing = api.client.get('/api/v1/terminals/missing/files/list', headers=headers)
+    assert missing.status_code == 404 and missing.json()['detail'] == 'Terminal server not found'
 
 
 def test_download_is_authenticated_bound_and_streamed(api):
@@ -235,6 +268,36 @@ def test_revoked_or_tampered_links_are_denied_before_upstream(api, change):
         api.connection['config']['contexts']['chat'] = {'context_id': 'default'}
     assert api.client.get(url, headers={'Authorization': 'owner'}).status_code in (403, 404)
     assert not api.state.calls
+
+
+def test_display_file_link_rejects_a_replaced_terminal_endpoint(api):
+    api.state.response = Upstream(json.dumps({'exists': True, 'path': '/work/report.svg'}).encode(), 'application/json')
+    response = api.client.post(
+        '/api/v1/terminals/terminal-1/chats/chat-1/files/display', headers={'Authorization': 'owner'}
+    )
+    assert response.status_code == 200
+    download = response.json()['download_url']
+    assert len(api.state.calls) == 1
+
+    api.connection['url'] = 'https://other-terminal.test'
+    assert api.client.get(download, headers={'Authorization': 'owner'}).status_code == 403
+    assert len(api.state.calls) == 1
+
+
+def test_pre_upgrade_file_link_keeps_its_actor_and_context_checks(api):
+    legacy = {
+        'v': 1,
+        'owner_id': 'user-1',
+        'server_id': 'terminal-1',
+        'path': '/work/file.txt',
+        'chat_id': 'chat-1',
+        'context_id': 'chat:chat-1',
+    }
+    reference = api.policy._serializer(SECRET).dumps(legacy)
+    url = '/api/v1/terminals/terminal-1/files/download?ref=' + reference
+    assert api.client.get(url, headers={'Authorization': 'owner'}).status_code == 200
+    assert api.client.get(url, headers={'Authorization': 'other'}).status_code == 403
+    assert len(api.state.calls) == 1
 
 
 def test_image_svg_keeps_security_headers_for_img_and_direct_navigation(api):

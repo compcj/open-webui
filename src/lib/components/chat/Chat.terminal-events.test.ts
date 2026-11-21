@@ -15,7 +15,7 @@ const createChat = (options: { terminalContext?: any; files?: any[]; inline?: bo
 	const handler = new Function(
 		'deps',
 		transpileModule(
-			`const { showFileNavDir, terminalTabs, terminalContext, history, displayTerminalFile, $settings } = deps;
+			`const { showFileNavDir, tabs, terminalContext, history, displayTerminalFile, $settings } = deps;
 			const $selectedTerminalId = 'terminal-a', $chatId = 'chat-a';
 			const ${source.slice(declaration.start, declaration.end)};
 			return terminalEventHandler;`,
@@ -25,7 +25,7 @@ const createChat = (options: { terminalContext?: any; files?: any[]; inline?: bo
 		showFileNavDir,
 		displayTerminalFile,
 		$settings: { terminalFileDisplay: options.inline ? 'inline' : 'sidebar' },
-		terminalTabs: { refreshFiles },
+		tabs: { refreshFiles },
 		terminalContext: options.terminalContext ?? null,
 		history: { messages: { user: { files: options.files ?? [] } } }
 	});
@@ -108,14 +108,14 @@ describe('displaying terminal files', () => {
 	});
 });
 
-const tabsSource = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
-const createTabs = (state: { viewReady?: boolean; terminalFilesAvailable?: boolean } = {}) => {
+const tabsSource = readFileSync(new URL('./Tabs.svelte', import.meta.url), 'utf8');
+const createTabs = (state: { viewReady?: boolean; supportsTerminalFiles?: boolean } = {}) => {
 	const declaration: any = parse(tabsSource)
 		.instance!.content.body.flatMap(
 			(node: any) => node.declarations ?? node.declaration?.declarations ?? []
 		)
 		.find((node: any) => node.id?.name === 'refreshFiles');
-	expect(declaration, 'ChatTabs must expose a refresh-only operation').toBeDefined();
+	expect(declaration, 'Tabs must expose a refresh-only operation').toBeDefined();
 	const tabs = {
 		activeId: 'chat',
 		tabs: [
@@ -132,13 +132,13 @@ const createTabs = (state: { viewReady?: boolean; terminalFilesAvailable?: boole
 	const refreshFiles = new Function(
 		'deps',
 		transpileModule(
-			`const {tabs, fileViews, showTabs, viewReady, terminalFilesAvailable} = deps;
+			`const {tabs, fileViews, showTabs, viewReady, supportsTerminalFiles} = deps;
 			const $selectedTerminalId = 'terminal-a';
 			const ${tabsSource.slice(declaration.start, declaration.end)};
 			return refreshFiles;`,
 			{ compilerOptions: { target: ScriptTarget.ES2022 } }
 		).outputText
-	)({ tabs, fileViews, showTabs, viewReady: true, terminalFilesAvailable: true, ...state });
+	)({ tabs, fileViews, showTabs, viewReady: true, supportsTerminalFiles: true, ...state });
 	return { tabs, fileViews, showTabs, refreshFiles };
 };
 
@@ -165,7 +165,7 @@ describe('refreshing existing terminal browsers', () => {
 		}
 	});
 
-	it.each([{ viewReady: false }, { terminalFilesAvailable: false }])(
+	it.each([{ viewReady: false }, { supportsTerminalFiles: false }])(
 		'skips a view that is not ready or accessible: %j',
 		(state) => {
 			const view = createTabs(state);

@@ -52,7 +52,7 @@ it('sends canonical legacy pipe reasoning through the actual chat fallback', asy
 		const reasoningEffortByModel = { [model.id]: effort }, $models = [model];
 		const $selectedTerminalId = null;
 		const $settings = {}, $config = { features: {} }, $user = {}, $socket = {};
-		const $temporaryChatEnabled = false, $selectedFolder = null, embedded = false;
+		const terminalContext = null, $temporaryChat = false, $selectedFolder = null, embedded = false;
 		const selectedToolIds = [], selectedSkillIds = [], selectedFilterIds = [];
 		const localStorage = { token: 'synthetic-token' }, WEBUI_BASE_URL = '';
 		const tick = async () => {}, scrollToBottom = () => {}, shouldAutoScrollResponse = () => false;
@@ -60,13 +60,14 @@ it('sends canonical legacy pipe reasoning through the actual chat fallback', asy
 		const getStopTokens = () => [], getFeatures = () => ({}), getPromptVariables = () => ({});
 		const isTemporaryChatId = () => false;
 		const createMessagesList = history => Object.values(history.messages);
-		${sendDeclaration}
-		return () => sendMessageSocket(model, [], {
+		const history = {
 			messages: {
 				user: { id: 'user', role: 'user', content: 'Synthetic prompt', parentId: null },
 				reply: { id: 'reply', role: 'assistant', parentId: 'user' }
 			}
-		}, 'reply', 'saved-chat');
+		};
+		${sendDeclaration}
+		return () => sendMessageSocket(model, [], structuredClone(history), 'reply', 'saved-chat');
 	`;
 	const send = new Function(
 		'scope',

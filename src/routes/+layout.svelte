@@ -31,22 +31,23 @@
 		socketConnected,
 		chatId,
 		tags,
-		temporaryChatEnabled,
-		openSideChatIds,
+		temporaryChat,
+		openEmbeddedChatIds,
 		isLastActiveTab,
 		isApp,
 		appData,
 		appInfo,
-		toolServers,
 		channels,
 		channelId,
 		channelRequestQueues,
 		terminalServers,
+		toolServers,
 		showFileNavDir,
 		pyodideWorker,
 		desktopEvent
 	} from '$lib/stores';
-	import { refreshChatList } from '$lib/stores/chatList';
+	import { refreshChatList, setChatTitle } from '$lib/stores/chatList';
+	import { clearFolderStates } from '$lib/stores/folderStates';
 	import { getFileBlobById, getFileContentById } from '$lib/apis/files';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -60,9 +61,10 @@
 	import 'tippy.js/dist/tippy.css';
 
 	import { executeToolServer, getBackendConfig, getModels, getVersion } from '$lib/apis';
+	import { chatCompletion } from '$lib/apis/openai';
+	import { resolveTerminalConnection, terminalRequest } from '$lib/apis/terminal';
 	import { getSessionUser, updateUserTimezone, userSignOut } from '$lib/apis/auths';
 	import { getAllTags } from '$lib/apis/chats';
-	import { chatCompletion } from '$lib/apis/openai';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
 	import { displayTerminalFile } from '$lib/utils/terminal-files';
 	import {
@@ -85,7 +87,6 @@
 	import { getUserSettings } from '$lib/apis/users';
 	import { getChannelById, getChannels } from '$lib/apis/channels';
 	import { shouldNotifyChannelMessage } from '$lib/utils/channelNotifications';
-	import { resolveTerminalConnection, terminalRequest } from '$lib/apis/terminal';
 
 	const unregisterServiceWorkers = async () => {
 		if ('serviceWorker' in navigator) {
@@ -469,7 +470,14 @@
 	};
 
 	const resolveToolServer = (serverUrl) => {
-		if (!$config?.features?.enable_direct_integrations)
+		if (
+			!$config?.features?.enable_tool_servers ||
+			!$config.features.enable_direct_integrations ||
+			!(
+				$user?.role === 'admin' ||
+				($user?.role === 'user' && $user.permissions?.features?.direct_tool_servers)
+			)
+		)
 			return { toolServer: null, toolServerData: null, token: null };
 		let toolServer = $settings?.toolServers?.find((server) => server.url === serverUrl);
 		if (!toolServer) {
@@ -657,7 +665,7 @@
 		// This prevents notifications from being sent to other tabs/devices
 		// for privacy, since temporary chats are not meant to be persisted or visible elsewhere.
 		const isTemporaryChat = isTemporaryChatId(event.chat_id);
-		if (isTemporaryChat && event.chat_id !== $chatId && !$openSideChatIds.has(event.chat_id)) {
+		if (isTemporaryChat && event.chat_id !== $chatId && !$openEmbeddedChatIds.has(event.chat_id)) {
 			return;
 		}
 
@@ -717,7 +725,7 @@
 			return;
 		}
 
-		// Session-targeted RPC calls (code execution, tool calls, direct completion)
+		// Session-targeted RPC calls (code execution)
 		// must ALWAYS be processed regardless of active chat or tab visibility,
 		// because the backend's sio.call blocks waiting for our callback response.
 		if (data?.session_id === $socket.id) {
@@ -847,11 +855,10 @@
 			}
 		}
 
-		if (
-			!event?.internal &&
-			!$openSideChatIds.has(event.chat_id) &&
-			((event.chat_id !== $chatId && !$temporaryChatEnabled) || isInBackground)
-		) {
+		const isVisible = !!document
+			.querySelector(`[data-chat-id="${CSS.escape(event.chat_id)}"]`)
+			?.checkVisibility();
+		if (!event?.internal && ((!isVisible && !$temporaryChat) || isInBackground)) {
 			if (type === 'chat:completion') {
 				const { done, content, output, title } = data;
 				const displayTitle = title || $i18n.t('New Chat');
@@ -896,6 +903,7 @@
 					});
 				}
 			} else if (type === 'chat:title') {
+				setChatTitle(event.chat_id, data);
 				await refreshChatList(localStorage.token);
 			} else if (type === 'chat:tags') {
 				tags.set(await getAllTags(localStorage.token));
@@ -1022,7 +1030,7 @@
 								body: content,
 								icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
 							},
-							`/channels/${event.channel_id}`
+							`/channels/${event.channel_id}${data?.parent_id ? `?thread=${data.parent_id}` : ''}`
 						);
 					}
 				}
@@ -1156,14 +1164,7 @@
 		if (event.type === 'models:refresh') {
 			const token = localStorage.token;
 			if (token) {
-				models.set(
-					await getModels(
-						token,
-						$config?.features?.enable_direct_connections
-							? ($settings?.directConnections ?? null)
-							: null
-					)
-				);
+				models.set(await getModels(token));
 			}
 			return;
 		}
@@ -1371,6 +1372,7 @@
 		let queueUserId = $user?.id;
 		const unsubscribeQueueUser = user.subscribe(async (value) => {
 			if (queueUserId !== value?.id) {
+				clearFolderStates();
 				channelRequestQueues.set({});
 				queueUserId = value?.id;
 			}

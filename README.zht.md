@@ -1,9 +1,8 @@
 <h2>Open WebUI</h2>
 
-> 本倉庫為 compcj/open-webui 分支，基於官方 **v0.13.3**。完整功能清單、預設值與升級影響見[主 README](README.md#与上游的差异--differences-from-upstream)。
-> Tether 使用獨立且預設關閉的管理員開關；Agent 停止需要遠端確認；Proxy 預覽需要獨立主機名稱。
-> 參閱 [Tether/Agents](docs/tether-agents.md)、[預覽部署](docs/terminal-preview.md)及[驗收紀錄](docs/upstream/v0.13.3-validation.md)。
-> 下方 pip 與官方映像範例安裝上游版本；使用分支功能需要[從本倉庫建置](docs/DEVELOPMENT.md)。
+> 本分支版本 **0.13.4+f1** 以官方 **v0.13.4** 為基礎。更新面板分別列出分支與官方版本。[完整中英雙語清單](README.md#与上游的差异--differences-from-upstream) · [17 項合併決策](docs/upstream/v0.13.4-decisions.md) · [本版驗收](docs/upstream/v0.13.4-validation.md)
+> 圖像生成與編輯保留原有的命名配對。個人直連與 Tether 開關獨立，終端預設上傳到 WebUI。原回覆作者可從已驗證的檢查點重新生成或分支。[Tether/Agents](docs/tether-agents.md) · [獨立預覽部署](docs/terminal-preview.md)
+> 發布後可使用分支映像 `ghcr.io/compcj/open-webui:0.13.4-f1`，或使用 `0.13.4` 標籤跟隨同系列。下方 pip 與官方映像範例安裝上游版本。也可[從本倉庫建置](docs/DEVELOPMENT.md)。
 
 <p>Open WebUI 是 <a href="https://docs.openwebui.com/"><strong>AI 的家</strong></a>：一個可擴充、易於使用的自架平台，支援完全離線執行。透過 Ollama 連接本機模型，或使用相容於 OpenAI 的 API 連接本機和雲端模型。</p>
 

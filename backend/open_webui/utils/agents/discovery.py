@@ -1,8 +1,23 @@
 """Models exposed by the selected Open Terminal environment."""
 
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
-from open_webui.utils.terminals import get_terminal_json
+from open_webui.utils.agents.session import legacy_model_id, model_id
+from open_webui.utils.terminals import MissingTerminalContext, get_terminal_json
+
+
+def resolve_catalog_model(catalog, requested_id):
+    """Resolve both generations of IDs only when the current actor's live catalog proves one target."""
+    matches = {}
+    for model in catalog:
+        agent = model.get('agent') or {}
+        if all(isinstance(agent.get(k), str) and agent[k] for k in ('terminal_id', 'provider', 'model')):
+            if requested_id == model.get('id') or (model.get('legacy_id', legacy_model_id(agent)) == requested_id):
+                identity = (agent['terminal_id'], agent['provider'], agent['model'])
+                matches[identity] = model
+    if len(matches) == 1:
+        return next(iter(matches.values()))
+    return None
 
 
 def model_controls(model):
@@ -13,7 +28,7 @@ def model_controls(model):
             'Reasoning effort',
             'supportedReasoningEfforts',
             'reasoningEffort',
-            'reasoningEffort',
+            'label',
             'defaultReasoningEffort',
         ),
         ('service_tier', 'Service tier', 'serviceTiers', 'id', 'name', 'defaultServiceTier'),
@@ -36,19 +51,22 @@ async def get_models(request, user, metadata, *, provider=None, cwd=None):
     terminal_id = metadata.get('terminal_id')
     if not terminal_id:
         return []
-    if not cwd:
-        directory = await get_terminal_json(request, user, metadata, '/files/cwd')
-        cwd = (directory or {}).get('cwd')
-    params = {'provider': provider} if provider else {}
-    if cwd:
-        params['cwd'] = cwd
-    path = '/agents' + ('?' + urlencode(params) if params else '')
-    catalog = await get_terminal_json(request, user, metadata, path)
+    try:
+        if not cwd:
+            directory = await get_terminal_json(request, user, metadata, '/files/cwd')
+            cwd = (directory or {}).get('cwd')
+        params = {'provider': provider} if provider else {}
+        if cwd:
+            params['cwd'] = cwd
+        path = '/agents' + ('?' + urlencode(params) if params else '')
+        catalog = await get_terminal_json(request, user, metadata, path)
+    except MissingTerminalContext:
+        return []
     if not catalog or catalog.get('protocol_version') != 1:
         return []
     models = [
         {
-            'id': f'agent:{quote(terminal_id, safe="")}:{agent["id"]}:{quote(model["id"], safe="")}',
+            'id': model_id({'terminal_id': terminal_id, 'provider': agent['id'], 'model': model['id']}),
             'name': f'{agent["id"]}/{model["id"]}',
             'owned_by': 'terminal',
             'object': 'model',
@@ -61,6 +79,7 @@ async def get_models(request, user, metadata, *, provider=None, cwd=None):
                         'file_upload': True,
                         'web_search': False,
                         'image_generation': False,
+                        'video_generation': False,
                         'code_interpreter': False,
                         'builtin_tools': False,
                     }
@@ -71,4 +90,18 @@ async def get_models(request, user, metadata, *, provider=None, cwd=None):
         if agent.get('available')
         for model in agent.get('models', [])
     ]
-    return list({model['id']: model for model in models}.values())
+    # Canonical and legacy IDs may collide even though the raw server tuples differ.
+    # Never select a model by collection or enumeration order.
+    identities = {}
+    for item in models:
+        agent = item['agent']
+        identity = (agent['terminal_id'], agent['provider'], agent['model'])
+        for candidate in (item['id'], legacy_model_id(agent)):
+            identities.setdefault(candidate, set()).add(identity)
+    result = {}
+    for item in models:
+        if len(identities[item['id']]) != 1:
+            continue
+        alias = legacy_model_id(item['agent'])
+        result[item['id']] = {**item, 'legacy_id': alias if len(identities[alias]) == 1 else None}
+    return list(result.values())

@@ -24,6 +24,10 @@ Proxy 网页和端口预览通过与主站不同的主机名访问同一 WebUI �
 只说明新部署接线，不修改已有部署。将域名改为自己控制的域名，配置 DNS 和 TLS。主站 Cookie 应使用
 host-only 范围，不能设为同时覆盖主站与预览的父域；预览网关仍会丢弃 Cookie、Authorization 和 Referer。
 
+## 共享和托管实例
+
+在共享聊天中，打开预览的成员须对选中的终端有独立的用户或群组使用授权。只有获委派显式写权限的管理者才能管理模板和访问其他用户的托管实例。预览票据同时绑定实际目标和操作者，更改聊天、连接配置、实例或终端上下文时重新授权。Tether 使用自己的设备绑定，管理员关闭 Tether 后停止新授权。普通附件的 WebUI 上传或启用 filesystem 上传均独立于预览票据。
+
 ## 票据和请求
 
 登录用户向主站发送 `POST /api/v1/terminals/{server_id}/preview-tickets`：
@@ -70,7 +74,7 @@ iframe 和响应 CSP 都保持严格沙箱，不使用 `allow-same-origin`，不
 内部的后续重定向沿用上游浏览器网络权限，允许离开初始端口，不宣称端到端端口网络隔离。
 需要登录网站、存储或完整浏览器语义时使用 Chrome。不要把沙箱预览当作不可信代码的操作系统隔离。
 
-实际验证的 Open Terminal 0.17.7 配合 websockets 17.4 对未指定子协议的 WebSocket 会发送空
+v0.13.3 验证时的 Open Terminal 0.17.7 配合 websockets 17.4 对未指定子协议的 WebSocket 会发送空
 `Sec-WebSocket-Protocol`，严格目标服务器可能返回 400。带 `vite-hmr` 子协议的链路已验证；这是
 终端依赖的兼容边界，不通过放宽 WebUI 沙箱或同源代理解决。部署应核对终端与目标服务的协议兼容性。
 
@@ -81,5 +85,4 @@ iframe 和响应 CSP 都保持严格沙箱，不使用 `allow-same-origin`，不
 禁用配置后入口立即停止授权；关闭并确认活动任务后再协调更换 worker。回滚恢复升级前数据库、
 上传、配置和镜像，不能只把新迁移数据库交给旧版应用。
 
-检查命令见 [DEVELOPMENT](DEVELOPMENT.md#v0133-integration-verification)，实际运行结果和仍未覆盖的
-真实浏览器/终端场景见[本次验收记录](upstream/v0.13.3-validation.md)。
+检查命令见[开发指南](DEVELOPMENT.md)。本版的实际运行结果及未覆盖的真实浏览器/终端场景见[v0.13.4 验收记录](upstream/v0.13.4-validation.md)。

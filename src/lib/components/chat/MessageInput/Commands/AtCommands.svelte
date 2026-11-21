@@ -1,19 +1,10 @@
 <script lang="ts">
-	import type { TerminalCredential } from '$lib/apis/terminal';
+	import { resolveTerminalTarget, type TerminalTarget } from '$lib/apis/terminal';
 	import Fuse from 'fuse.js';
 	import { getContext, onDestroy, onMount, tick } from 'svelte';
+	import type { Readable } from 'svelte/store';
 
-	import {
-		chatId as activeChatId,
-		folders,
-		config,
-		models,
-		selectedTerminalId,
-		settings,
-		terminalServers,
-		temporaryChatEnabled,
-		user
-	} from '$lib/stores';
+	import { folders, settings, terminalServers, user } from '$lib/stores';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getFolders } from '$lib/apis/folders';
 	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
@@ -32,11 +23,16 @@
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import Youtube from '$lib/components/icons/Youtube.svelte';
 	import { toast } from 'svelte-sonner';
+	import { getChatContext } from '$lib/components/chat/context';
+
+	const { chatId: activeChatId, models, temporary } = getChatContext();
 
 	const temporaryContext: any = getContext('temporary-context');
 	const i18n = getContext<any>('i18n');
 
 	export let query = '';
+	export let selectedTerminalId: Readable<string | null>;
+	export let modelId: string | null = null;
 	export let onSelect: (e: any) => void = () => {};
 	export let fileUploadEnabled: boolean = true;
 	export let filesystemEnabled = false;
@@ -125,10 +121,7 @@
 		getKnowledgeFileItems(signal);
 	};
 
-	const getFilesystemItems = async (
-		terminal: { url: string; key: TerminalCredential } | null,
-		signal: AbortSignal
-	) => {
+	const getFilesystemItems = async (terminal: TerminalTarget | null, signal: AbortSignal) => {
 		if (!terminal) {
 			filesystemItems = [];
 			return;
@@ -137,19 +130,25 @@
 		const terminalId = $selectedTerminalId;
 		const sessionId = $activeChatId;
 		const res = await searchFiles(
-			terminal.url,
-			terminal.key,
+			terminal,
 			query,
 			'.',
 			20,
 			'any',
-			sessionId || undefined,
 			localStorage.getItem('fileNav:showHidden') === 'true',
 			signal
 		).catch(() => null);
 
 		if (signal.aborted) return;
-		if (terminalId !== $selectedTerminalId || sessionId !== $activeChatId) return;
+		const current = getSelectedTerminal();
+		if (
+			terminalId !== $selectedTerminalId ||
+			sessionId !== $activeChatId ||
+			current?.baseUrl !== terminal.baseUrl ||
+			current?.key !== terminal.key ||
+			current?.context.modelId !== terminal.context.modelId
+		)
+			return;
 		filesystemItems = (res?.results ?? []).map((item: any) => ({
 			...filesystemFile(item, terminalId!, sessionId || null),
 			filesystem_type: item.type,
@@ -157,39 +156,23 @@
 		}));
 	};
 
-	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
-
-	const getSelectedTerminal = (): { url: string; key: TerminalCredential } | null => {
-		if (!filesystemEnabled || !$config?.features?.enable_tool_servers || !$selectedTerminalId)
+	const getSelectedTerminal = (): TerminalTarget | null => {
+		if (!filesystemEnabled || !$selectedTerminalId) return null;
+		const server = ($terminalServers ?? []).find((item) => item.id === $selectedTerminalId);
+		if (server?.contexts?.chat === false) return null;
+		if (
+			(server?.scope === 'chat' || server?.contexts?.chat?.context_id === 'chat_id') &&
+			($temporary || isTemporaryChatId($activeChatId)) &&
+			(!temporaryContext?.chatId || temporaryContext.chatId !== $activeChatId)
+		)
 			return null;
-		if ($selectedTerminalId.startsWith('tether:') && !$config?.features?.enable_tether) return null;
-
-		const systemTerminal = ($terminalServers ?? []).find(
-			(t) => t.id && t.id === $selectedTerminalId
+		return resolveTerminalTarget(
+			$selectedTerminalId,
+			$terminalServers ?? [],
+			temporaryContext?.terminalCredential(localStorage.token, $activeChatId) ?? localStorage.token,
+			{ chatId: $activeChatId || null, modelId },
+			$settings?.terminalServers ?? []
 		);
-		const systemChatContext = chatContext(systemTerminal);
-		if (systemTerminal) {
-			if (
-				systemChatContext === false ||
-				(isTemporaryChatId($activeChatId) &&
-					systemChatContext?.context_id === 'chat_id' &&
-					temporaryContext?.chatId !== $activeChatId)
-			) {
-				return null;
-			}
-
-			return {
-				url: systemTerminal.url,
-				key:
-					temporaryContext?.terminalCredential(localStorage.token, $activeChatId) ??
-					localStorage.token
-			};
-		}
-
-		const directTerminal = (
-			$config?.features?.enable_direct_integrations ? ($settings?.terminalServers ?? []) : []
-		).find((t: any) => t.url === $selectedTerminalId && t.enabled);
-		return directTerminal?.url ? { url: directTerminal.url, key: directTerminal.key ?? '' } : null;
 	};
 
 	$: folderItems = (($folders ?? []) as any[])
@@ -299,7 +282,7 @@
 				{#if item?.type === 'folder'}
 					{$i18n.t('Folders')}
 				{:else if item?.type === 'collection'}
-					{$i18n.t('Collections')}
+					{$i18n.t('Knowledge')}
 				{:else if item?.type === 'file'}
 					{$i18n.t('Files')}
 				{:else if item?.type === 'filesystem'}
@@ -332,7 +315,7 @@
 							: item?.type === 'file'
 								? `${item?.collection?.name} > ${$i18n.t('File')}`
 								: item?.type === 'collection'
-									? $i18n.t('Collection')
+									? $i18n.t('Knowledge Base')
 									: item?.type === 'youtube'
 										? $i18n.t('YouTube')
 										: item?.type === 'web'

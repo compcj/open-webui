@@ -4,7 +4,7 @@ import { parse } from 'svelte/compiler';
 import { ScriptTarget, transpileModule } from 'typescript';
 import { config } from '$lib/stores';
 import { createViewSession, serializeChatView } from '$lib/stores/chatViewStates';
-import { emptyTabs, openTab } from './ChatTabs/tabs';
+import { createTabsState, openTab } from './Tabs/tabs';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -32,7 +32,7 @@ function chat(temporary = false) {
 		const chatId = { set: id => { state.id = $chatId = id; } };
 		const $socket = { id: 'socket' }, $user = { id: 'alice' }, embedded = false;
 		const history = { messages: { reply: {role: 'assistant', user_id: 'alice'} } };
-		const terminalTabs = { openBrowserTabForTool: open };
+		const tabs = { openBrowserTabForTool: open };
 		const temporaryController = { identity: temporary, receive, capture: () => () => true };
 		const tick = async () => {}, reportTemporaryError = () => {};
 		${handlers}
@@ -83,7 +83,7 @@ it('opens a scoped temporary tab only through its claimed RPC', async () => {
 });
 
 it('rechecks the view, actor and selected terminal after browser features load', async () => {
-	const source = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
+	const source = readFileSync(new URL('./Tabs.svelte', import.meta.url), 'utf8');
 	const method = parse(source)
 		.instance!.content.body.map((node: any) => node.declaration)
 		.find((node: any) => node?.id?.name === 'openBrowserTabForTool');
@@ -97,7 +97,7 @@ it('rechecks the view, actor and selected terminal after browser features load',
 		'terminalFeaturesReady',
 		transpileModule(
 			`
-		const chatId='chat', $selectedTerminalId='selected', $user={id:'alice'}, promotion=null, viewReady=true;
+		const chatId='chat', $selectedTerminalId='selected', $user={id:'alice'}, viewState={status:'ready'}, viewReady=true, supportsBrowser=true;
 		${source.slice(method.start, method.end)}
 		return openBrowserTabForTool;`,
 			{ compilerOptions: { target: ScriptTarget.ES2022 } }
@@ -124,11 +124,17 @@ it('rechecks the view, actor and selected terminal after browser features load',
 
 it('opens one blank session, waits for Chrome, and gives the caller the same tab ID as the view', async () => {
 	config.set({ features: { enable_tool_servers: true } } as any);
-	const connection = { selector: 'terminal', baseUrl: '/terminal', key: 'login', system: true };
+	const connection = {
+		selector: 'terminal',
+		baseUrl: '/terminal',
+		key: 'login',
+		system: true,
+		context: { chatId: 'chat-1', modelId: null }
+	};
 	const tab = { id: 'panel-1', kind: 'browser' as const, terminalId: 'terminal', label: 'Browser' };
 	const entry = {
 		chatId: 'chat-1',
-		state: { schemaVersion: 1, panels: openTab(emptyTabs(), tab) },
+		state: { schemaVersion: 1, panels: openTab(createTabsState(), tab) },
 		pending: new Map(),
 		sessionErrors: {},
 		revision: 0

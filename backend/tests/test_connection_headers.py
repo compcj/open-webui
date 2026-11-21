@@ -229,6 +229,7 @@ async def test_real_send_boundary_keeps_connection_headers(headers_runtime, monk
         'BYPASS_MODEL_ACCESS_CONTROL': False,
         'Models': SimpleNamespace(get_model_by_id=AsyncMock(return_value=None)),
         'check_model_access': AsyncMock(),
+        'get_tether_model': AsyncMock(return_value=None),
         'get_openai_connection': AsyncMock(return_value=('https://provider.invalid/v1', 'synthetic-key', config)),
         'strip_provider_model_prefix': strip_provider_model_prefix,
         'is_openai_new_model': lambda model: False,

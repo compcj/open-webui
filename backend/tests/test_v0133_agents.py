@@ -16,6 +16,8 @@ from fastapi import HTTPException
 
 
 def transport():
+    from open_webui.utils.terminals import resolved_terminal_context
+
     source = Path(__file__).parents[1] / 'open_webui/utils/agents/transport.py'
     nodes = [node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.ClassDef)]
     ns = {
@@ -28,7 +30,8 @@ def transport():
         'time': time,
         'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': False,
         'get_terminal_server_url': lambda connection: connection['url'],
-        'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
+        'terminal_instance': lambda _: None,
+        'resolved_terminal_context': resolved_terminal_context,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), ns)
     value = ns['TerminalTransport']({'url': 'http://synthetic-terminal'}, {}, {}, 'actor')

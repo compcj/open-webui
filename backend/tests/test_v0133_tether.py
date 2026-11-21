@@ -133,7 +133,13 @@ async def test_relay_bounded_file_probe_preserves_remaining_stream_bytes():
         for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name in {'RelayResponse', 'RelayInterrupted'}
     ]
-    ns = {'asyncio': asyncio, 'CIMultiDict': CIMultiDict, 'HTTPException': HTTPException, 'MAX_MESSAGE': 1024}
+    ns = {
+        'json': __import__('json'),
+        'asyncio': asyncio,
+        'CIMultiDict': CIMultiDict,
+        'HTTPException': HTTPException,
+        'MAX_MESSAGE': 1024,
+    }
     exec(compile(ast.Module(body=classes, type_ignores=[]), '<relay-response>', 'exec'), ns)
     stream = SimpleNamespace(
         receive=AsyncMock(side_effect=[({'type': 'data'}, b'ab'), ({'type': 'data'}, b'cdef'), ({'type': 'end'}, b'')]),

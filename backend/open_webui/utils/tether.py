@@ -5,7 +5,7 @@ import json
 import re
 import struct
 import time
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlencode
 from uuid import uuid4
@@ -13,13 +13,26 @@ from uuid import uuid4
 import aiohttp
 from multidict import CIMultiDict
 from fastapi import HTTPException
-from open_webui.env import ENABLE_WEBSOCKET_SUPPORT, REDIS_KEY_PREFIX, UVICORN_WORKERS
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
+from open_webui.env import ENABLE_TOOL_SERVERS, ENABLE_WEBSOCKET_SUPPORT, REDIS_KEY_PREFIX, UVICORN_WORKERS
 from open_webui.models.auth_sessions import AuthSessions
 from open_webui.models.config import Config
 
 CHUNK = 65536
-WINDOW = 2 * 1024 * 1024
+# ~40 MB/s per stream at 100 ms round trip. Buffers fill only while a reader falls behind.
+WINDOW = 4 * 1024 * 1024
 MAX_MESSAGE = 16 * 1024 * 1024
+# Used when Tether does not state its own limit.
+DEFAULT_CONCURRENT_STREAMS = 16
+MAX_CONCURRENT_STREAMS = 64
+# Both ends may buffer one window per open stream, so streams × window stays within this.
+BUFFER_BUDGET = MAX_CONCURRENT_STREAMS * WINDOW
+# The receive window bounds bytes; frames are counted only to bound floods of tiny ones.
+MIN_FRAME_COST = 64
+SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
+# One default for every service: long streams stay open while data flows; silence ends them.
+TIMEOUT = aiohttp.ClientTimeout(total=None, sock_read=300)
 
 
 async def require_tether_enabled():
@@ -29,11 +42,17 @@ async def require_tether_enabled():
 
 
 class RelayInterrupted(ConnectionError):
-    def __init__(self, reason='Connection lost'):
+    def __init__(self, reason='Connection lost', disconnected=False):
         super().__init__(
             f'Tether connection interrupted: {reason}. '
             'The operation may have completed. Check its result before trying again; do not automatically repeat it.'
         )
+        # Set when Tether's socket dropped, as opposed to a timeout or a rejected operation.
+        self.disconnected = disconnected
+        # Set when no response header arrived; with a safe method the request can be repeated once.
+        self.before_response = False
+        self.connection = None
+        self.device = None
 
     def result(self):
         return {'error': str(self), 'code': 'tether_interrupted', 'outcome': 'unknown', 'retryable': False}
@@ -47,6 +66,83 @@ def get_services(value):
     ):
         raise ValueError('Invalid Tether services')
     return list(dict.fromkeys(value))
+
+
+def get_max_concurrent_streams(hello, window):
+    """Tether's stated stream limit, bounded so each open stream can hold a full window."""
+    value = hello.get('max_concurrent_streams', DEFAULT_CONCURRENT_STREAMS)
+    if type(value) is not int or value < 1:
+        raise ValueError('Invalid stream limit')
+    return min(value, MAX_CONCURRENT_STREAMS, BUFFER_BUDGET // window)
+
+
+def get_connections(value):
+    """Connections the user added in Tether. Each is a relay service of its own, like `open_terminal`;
+    URLs and keys stay on the device."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 16:
+        raise ValueError('Invalid Tether connections')
+    connections = []
+    for item in value:
+        if (
+            not isinstance(item, dict)
+            or item.get('type') not in ('openai', 'openapi', 'terminal', 'mcp')
+            or not isinstance(item.get('name'), str)
+        ):
+            raise ValueError('Invalid Tether connection')
+        service = get_services([item.get('service')])[0]
+        if service == 'open_terminal' or any(previous['service'] == service for previous in connections):
+            raise ValueError('Tether connection service must be unique')
+        connection = {'service': service, 'name': item['name'].strip()[:100] or service, 'type': item['type']}
+        if item['type'] == 'mcp':
+            if item.get('transport') not in ('stdio', 'streamable-http'):
+                raise ValueError('Invalid MCP transport')
+            connection['transport'] = item['transport']
+            revision = item.get('revision', '')
+            if not isinstance(revision, str) or len(revision) > 64:
+                raise ValueError('Invalid MCP revision')
+            connection['revision'] = revision
+        connections.append(connection)
+    return connections
+
+
+@contextmanager
+def relay_authorization():
+    try:
+        yield
+    except (RedisError, SQLAlchemyError) as error:
+        raise HTTPException(
+            503, 'Tether authorization is temporarily unavailable', headers={'Retry-After': '2'}
+        ) from error
+
+
+async def live_presences(user_id):
+    if not ENABLE_WEBSOCKET_SUPPORT or not await Config.get('tether.enable', False):
+        return []
+    result = []
+    with relay_authorization():
+        for presence in await hub.presences(user_id):
+            if presence.get('user') != user_id:
+                continue
+            row = await AuthSessions.get(presence['session'])
+            if row and row.user_id == user_id and row.refresh_token_id is not None and row.expires_at > time.time():
+                result.append(presence)
+    return result
+
+
+async def get_tether_connections(user_id, type):
+    """(presence, connection) pairs of this type across the user's online devices."""
+    if type == 'openai' and not await Config.get('openai.enable', True):
+        return []
+    if type != 'openai' and not ENABLE_TOOL_SERVERS:
+        return []
+    return [
+        (presence, item)
+        for presence in await live_presences(user_id)
+        for item in presence.get('connections', [])
+        if item['type'] == type and item['service'] in presence.get('services', [])
+    ]
 
 
 def encode(header, data=b''):
@@ -82,7 +178,8 @@ class Stream:
         self.window = presence.get('window', 256 * 1024)
         self.credit = self.receive_credit = self.window
         self.wake = asyncio.Event()
-        self.queue = asyncio.Queue(maxsize=64)
+        # Model output arrives as many tiny frames; a count of 64 failed streams far inside their window.
+        self.queue = asyncio.Queue(maxsize=self.window // MIN_FRAME_COST)
         self.closed = False
         self.lock = asyncio.Lock()
         self.error = None
@@ -114,14 +211,18 @@ class Stream:
             try:
                 await self.owner.send(self.presence, header, data)
             except (OSError, TimeoutError) as error:
-                self.fail(str(error) or 'Send failed')
+                self.fail(str(error) or 'Send failed', disconnected=isinstance(error, ConnectionError))
                 raise self.error from error
 
     def feed(self, header, data):
         if self.closed:
             return
         if header['sequence'] != self.incoming:
-            self.fail('Missing relay packet')
+            if header['type'] == 'error':
+                # Failures sent on another's behalf (a dropped socket, a full device) carry sequence 0.
+                self.fail(str(header.get('message', 'Response interrupted'))[:500], header.get('disconnected') is True)
+            else:
+                self.fail('Missing relay packet')
             return
         self.incoming += 1
         if header['type'] == 'window':
@@ -141,13 +242,15 @@ class Stream:
         except asyncio.QueueFull:
             self.fail('Relay consumer too slow')
 
-    def fail(self, message):
-        self.error = RelayInterrupted(message)
+    def fail(self, message, disconnected=False):
+        if self.error:
+            return
+        self.error = RelayInterrupted(message, disconnected)
         self.closed = True
         self.wake.set()
         while not self.queue.empty():
             self.queue.get_nowait()
-        self.queue.put_nowait(({'type': 'error', 'message': message}, b''))
+        self.queue.put_nowait(({'type': 'error', 'message': message, 'disconnected': disconnected}, b''))
 
     async def receive(self):
         if self.error:
@@ -158,7 +261,7 @@ class Stream:
             self.fail('Response timed out')
             raise self.error from error
         if header['type'] == 'error':
-            self.fail(header.get('message', 'Response interrupted'))
+            self.fail(str(header.get('message', 'Response interrupted'))[:500], header.get('disconnected') is True)
             raise self.error
         return header, data
 
@@ -188,6 +291,65 @@ class Stream:
                         await self.owner.send(self.presence, header, b'')
         finally:
             self.owner.streams.pop(self.id, None)
+
+
+class Connection:
+    """A Tether socket held by this worker."""
+
+    def __init__(self, ws, presence):
+        self.ws, self.presence = ws, presence
+        # Stream id -> worker awaiting the replies.
+        self.routes = {}
+        self.lock = asyncio.Lock()
+        # Frames from other workers go through one ordered queue, so a slow socket never blocks the
+        # worker's Redis listener and the other devices it serves.
+        self.outbox = asyncio.Queue()
+        self.queued = 0
+        self.closing = None
+        self.forwarder = asyncio.create_task(self._forward())
+
+    def full(self):
+        return len(self.routes) >= self.presence.get('max_concurrent_streams', DEFAULT_CONCURRENT_STREAMS)
+
+    async def send(self, header, data):
+        # Lock waiters are FIFO; each stream yields after one chunk.
+        async with self.lock:
+            try:
+                await asyncio.wait_for(self.ws.send_bytes(encode(header, data)), 10)
+            except TimeoutError as error:
+                # A socket that cannot drain fails every stream at once, not each after its own timeout.
+                await self.disconnect()
+                raise ConnectionError('Tether is not receiving') from error
+
+    def forward(self, header, data):
+        if self.closing:
+            return
+        if self.queued + len(data) > BUFFER_BUDGET:
+            # Never block the listener on a stuck socket: drop the connection in the background.
+            self.closing = asyncio.create_task(self.disconnect())
+            return
+        self.queued += len(data)
+        self.outbox.put_nowait((header, data))
+
+    async def _forward(self):
+        while True:
+            header, data = await self.outbox.get()
+            self.queued -= len(data)
+            try:
+                await self.send(header, data)
+            except Exception:
+                # The router's cleanup fails the affected streams on every worker.
+                await self.disconnect()
+                return
+
+    async def disconnect(self):
+        with suppress(Exception):
+            async with asyncio.timeout(5):
+                await self.ws.close(code=1011)
+
+    async def close(self):
+        self.forwarder.cancel()
+        await asyncio.gather(self.forwarder, return_exceptions=True)
 
 
 class Hub:
@@ -235,26 +397,15 @@ class Hub:
             async for message in pubsub.listen():
                 if message['type'] != 'message':
                     continue
-                header, data = decode(message['data'])
+                try:
+                    header, data = decode(message['data'])
+                except ValueError:
+                    # One malformed frame must not drop every relay this worker holds.
+                    continue
                 if header.pop('route', None) == 'connection':
                     connection = self.connections.get(header.pop('connection', ''))
-                    if not connection:
-                        continue
-                    if header['type'] == 'notification':
-                        await connection.send(header, data)
-                        continue
-                    reply = header.pop('reply', '')
-                    if header['type'] in ('http-open', 'ws-open'):
-                        if len(connection.routes) >= 16:
-                            continue
-                        connection.routes[header['stream']] = reply
-                    elif connection.routes.get(header['stream']) != reply:
-                        continue
-                    try:
-                        await connection.send(header, data)
-                    finally:
-                        if header['type'] == 'cancel':
-                            connection.routes.pop(header['stream'], None)
+                    if connection:
+                        await self.deliver(connection, header.pop('reply', ''), header, data)
                 else:
                     stream = self.streams.get(header['stream'])
                     if stream and header.pop('connection', None) == stream.presence['connection']:
@@ -267,6 +418,41 @@ class Hub:
                     await connection.ws.close(code=1011)
         finally:
             await pubsub.aclose()
+
+    async def deliver(self, connection, reply, header, data):
+        """Accept a frame another worker sent to a Tether socket held here."""
+        stream_id = header['stream']
+        if header['type'] in ('http-open', 'ws-open', 'stdio-open'):
+            # This worker holds the socket, so its count is the device's true count.
+            if connection.full():
+                await self.reject(reply, connection, stream_id, 'Tether has too many active operations.')
+                return
+            connection.routes[stream_id] = reply
+        elif header['type'] != 'notification':
+            if connection.routes.get(stream_id) != reply:
+                return
+            if header['type'] == 'cancel':
+                connection.routes.pop(stream_id, None)
+        connection.forward(header, data)
+
+    async def reject(self, worker, connection, stream_id, message, disconnected=False):
+        """Fail a remote stream at once instead of leaving it to time out."""
+        with suppress(Exception):
+            await self.redis.publish(
+                self.channel(worker),
+                encode(
+                    {
+                        'type': 'error',
+                        'stream': stream_id,
+                        'sequence': 0,
+                        'route': 'stream',
+                        'connection': connection.presence['connection'],
+                        'message': message,
+                        'disconnected': disconnected,
+                    },
+                    b'',
+                ),
+            )
 
     async def presence(self, user_id, connection_id):
         await require_tether_enabled()
@@ -298,20 +484,41 @@ class Hub:
         return list({record['connection_id']: record for record in records if record['user'] == user_id}.values())
 
     async def open(self, user_id, connection_id, service):
-        await require_tether_enabled()
-        presence = await self.presence(user_id, connection_id)
-        if not presence or presence['user'] != user_id or presence['connection_id'] != connection_id:
-            raise HTTPException(503, 'Tether is offline.')
-        row = await AuthSessions.get(presence['session'])
-        if not row or row.user_id != user_id or row.refresh_token_id is None or row.expires_at <= time.time():
-            raise HTTPException(403, 'Tether session is no longer available.')
+        with relay_authorization():
+            await require_tether_enabled()
+            presence = await self.presence(user_id, connection_id)
+            if not presence or presence['user'] != user_id or presence['connection_id'] != connection_id:
+                raise HTTPException(503, 'Tether is offline.')
+            row = await AuthSessions.get(presence['session'])
+            if not row or row.user_id != user_id or row.refresh_token_id is None or row.expires_at <= time.time():
+                raise HTTPException(403, 'Tether session is no longer available.')
+        model_service = any(
+            item.get('service') == service and item.get('type') == 'openai' for item in presence.get('connections', [])
+        )
+        if model_service and not await Config.get('openai.enable', True):
+            raise HTTPException(403, 'OpenAI connections are disabled')
+        if not model_service and not ENABLE_TOOL_SERVERS:
+            raise HTTPException(403, 'Tool servers are disabled')
         if service not in presence.get('services', []):
             raise HTTPException(503, 'Tether service is unavailable.')
-        if sum(s.presence['connection'] == presence['connection'] for s in self.streams.values()) >= 16:
+        # Only this worker's streams are visible here; the socket's worker enforces the device total.
+        active = sum(s.presence['connection'] == presence['connection'] for s in self.streams.values())
+        if active >= presence.get('max_concurrent_streams', DEFAULT_CONCURRENT_STREAMS):
             raise HTTPException(429, 'Tether has too many active operations.')
         stream = Stream(self, presence)
         self.streams[stream.id] = stream
         return stream
+
+    async def wait_for_presence(self, user_id, connection_id, service, previous, timeout=20):
+        """Wait for a reconnected Tether, not the socket that just dropped, to offer `service` again."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with suppress(Exception):
+                presence = await self.presence(user_id, connection_id)
+                if presence and presence['connection'] != previous and service in presence.get('services', []):
+                    return True
+            await asyncio.sleep(1)
+        return False
 
     async def send(self, presence, header, data):
         if header['type'] != 'cancel':
@@ -320,8 +527,8 @@ class Hub:
         if presence['worker'] == self.worker:
             if not connection:
                 raise ConnectionError('Tether disconnected')
-            if header['type'] in ('http-open', 'ws-open'):
-                if len(connection.routes) >= 16:
+            if header['type'] in ('http-open', 'ws-open', 'stdio-open'):
+                if connection.full():
                     raise HTTPException(429, 'Tether has too many active operations.')
                 connection.routes[header['stream']] = self.worker
             try:
@@ -407,32 +614,51 @@ async def notify(user_id, notification_id, title, body, path):
             )
 
 
-async def get_terminal_connections(user):
+async def get_terminal_connections(user, include_templates=True):
     """Resolve personal targets alongside existing configured servers."""
     user_id = user['id'] if isinstance(user, dict) else user.id
     connections = list(await Config.get('terminal_server.connections', []) or [])
+    if include_templates and any(c.get('server_type') == 'orchestrator' for c in connections):
+        from open_webui.utils.terminals import list_template_connections
+
+        managed = [c for c in connections if c.get('server_type') == 'orchestrator']
+        connections = [c for c in connections if c.get('server_type') != 'orchestrator']
+        connections.extend(await list_template_connections(user, managed))
     if not ENABLE_WEBSOCKET_SUPPORT or not await Config.get('tether.enable', False):
         return connections
-    for presence in await hub.presences(user_id):
-        if 'open_terminal' not in presence.get('services', []):
-            continue
-        row = await AuthSessions.get(presence['session'])
-        if not row or row.user_id != user_id or row.refresh_token_id is None or row.expires_at <= time.time():
-            continue
+    if not ENABLE_TOOL_SERVERS:
+        return connections
+    settings = user.get('settings') if isinstance(user, dict) else getattr(user, 'settings', None)
+    ui = settings.get('ui', {}) if isinstance(settings, dict) else getattr(settings, 'ui', {})
+    uploads = (ui or {}).get('tetherTerminalUploads') or {}
+    for presence in await live_presences(user_id):
         connection_id = presence['connection_id']
-        connections.append(
-            {
-                'id': 'tether:' + connection_id,
-                'name': presence['name'],
-                'url': 'tether://' + connection_id,
-                'auth_type': 'none',
-                'enabled': True,
-                'owner_id': user_id,
-                'config': {
-                    'access_grants': [{'principal_type': 'user', 'principal_id': user_id, 'permission': 'read'}]
-                },
-            }
-        )
+        for item in [
+            {'service': 'open_terminal', 'type': 'terminal', 'name': presence['name']},
+            *presence.get('connections', []),
+        ]:
+            service = item['service']
+            if item['type'] != 'terminal' or service not in presence.get('services', []):
+                continue
+            built_in = service == 'open_terminal'
+            selector = 'tether:' + connection_id + ('' if built_in else ':' + service)
+            connections.append(
+                {
+                    'id': selector,
+                    'name': presence['name'] if built_in else f'{presence["name"]} · {item["name"]}',
+                    'url': 'tether://' + connection_id,
+                    'service': service,
+                    'auth_type': 'none',
+                    'enabled': True,
+                    'owner_id': user_id,
+                    'config': {
+                        'chat_uploads': 'filesystem'
+                        if isinstance(uploads, dict) and uploads.get(selector) == 'filesystem'
+                        else 'default',
+                        'access_grants': [{'principal_type': 'user', 'principal_id': user_id, 'permission': 'read'}],
+                    },
+                }
+            )
     return connections
 
 
@@ -462,6 +688,7 @@ class RelayResponse:
         self.cached = None
         self.buffer = b''
         self.chunks = self._iter_transport()
+        self.closed = False
 
     async def _iter_transport(self):
         while True:
@@ -482,6 +709,11 @@ class RelayResponse:
 
     def iter_chunked(self, size):
         return self.iter_any()
+
+    async def iter_chunks(self):
+        # aiohttp yields (data, end_of_http_chunk); the relay has no HTTP chunk boundaries.
+        async for data in self.iter_any():
+            yield data, False
 
     async def read(self, size=-1):
         if size >= 0:
@@ -506,10 +738,11 @@ class RelayResponse:
     async def text(self):
         return (await self.read()).decode('utf-8', errors='replace')
 
-    async def json(self):
-        return json.loads(await self.read())
+    async def json(self, loads=json.loads, **_):
+        return loads(await self.read())
 
     async def close(self):
+        self.closed = True
         self.upload.cancel()
         await asyncio.gather(self.upload, return_exceptions=True)
         await self.stream.close()
@@ -567,13 +800,16 @@ class RelaySocket:
 
 
 class RelayClient:
+    """aiohttp-like client for `tether://<device>/<path>` URLs, served by one of the device's services."""
+
     def __init__(self, user_id, service, timeout=None):
         if not user_id:
             raise HTTPException(403, 'A user is required for Tether.')
         self.user_id = user_id
         self.service = get_services([service])[0]
         self.operations = []
-        self.timeout = timeout if timeout is not None else aiohttp.ClientTimeout(total=300)
+        self.timeout = timeout if timeout is not None else TIMEOUT
+        self.closed = False
 
     async def __aenter__(self):
         return self
@@ -582,29 +818,51 @@ class RelayClient:
         await self.close()
 
     async def close(self):
+        self.closed = True
         await asyncio.gather(*(operation.close() for operation in self.operations), return_exceptions=True)
 
     def request(self, method, url, **kwargs):
-        return Operation(self._request(method, url, **kwargs))
+        return Operation(self._retrying(method, url, **kwargs))
 
     def ws_connect(self, url, **kwargs):
         return Operation(self._request(None, url, **kwargs))
+
+    async def _open(self, device):
+        return await hub.open(self.user_id, device, self.service)
 
     def __getattr__(self, name):
         if name in ('get', 'post', 'put', 'patch', 'delete', 'head', 'options'):
             return lambda url, **kwargs: self.request(name.upper(), url, **kwargs)
         raise AttributeError(name)
 
+    async def _retrying(self, method, url, idempotent=None, **kwargs):
+        """Repeat a safe request once when Tether dropped before any response arrived."""
+        if idempotent is None:
+            idempotent = method in SAFE_METHODS
+        body = kwargs.get('data')
+        replayable = idempotent and (body is None or isinstance(body, (bytes, bytearray, str)))
+        try:
+            return await self._request(method, url, **kwargs)
+        except RelayInterrupted as error:
+            if not (replayable and error.disconnected and error.before_response and error.connection):
+                raise
+            if not await hub.wait_for_presence(self.user_id, error.device, self.service, error.connection):
+                raise
+        return await self._request(method, url, **kwargs)
+
     async def _request(self, method, url, **kwargs):
         parsed = urlsplit(str(url))
         if parsed.scheme != 'tether' or not parsed.hostname:
             raise ValueError('Invalid Tether URL')
+        device, path = parsed.hostname, parsed.path or '/'
         headers = dict(kwargs.get('headers') or {})
-        headers['X-User-Id'] = self.user_id
+        if self.service == 'open_terminal':
+            # Only the built-in terminal reads this; never send it to the user's own servers.
+            headers['X-User-Id'] = self.user_id
         query = parsed.query
         if kwargs.get('params'):
             query += ('&' if query else '') + urlencode(kwargs['params'], doseq=True)
-        stream = await hub.open(self.user_id, parsed.hostname, self.service)
+        stream = await self._open(device)
         body = kwargs.get('data')
         if kwargs.get('json') is not None:
             body = json.dumps(kwargs['json']).encode()
@@ -623,9 +881,10 @@ class RelayClient:
                 'http-open' if method else 'ws-open',
                 service=self.service,
                 method=method,
-                path=parsed.path or '/',
+                path=path,
                 query=query,
                 headers=headers,
+                **({'revision': kwargs['revision']} if 'revision' in kwargs else {}),
             )
             if method:
 
@@ -667,14 +926,24 @@ class RelayClient:
                 upload.cancel()
                 await asyncio.gather(upload, return_exceptions=True)
             await stream.close()
-            if isinstance(error, (OSError, TimeoutError)) and not isinstance(error, RelayInterrupted):
-                raise RelayInterrupted(str(error) or 'Response timed out') from error
-            raise
+            if isinstance(error, RelayInterrupted):
+                interrupted = error
+            elif isinstance(error, (OSError, TimeoutError)):
+                interrupted = RelayInterrupted(str(error) or 'Response timed out')
+            else:
+                raise
+            # Everything in this block precedes the response header.
+            interrupted.before_response = True
+            interrupted.connection = stream.presence['connection']
+            interrupted.device = device
+            if interrupted is error:
+                raise
+            raise interrupted from error
 
 
-def get_terminal_client(url, user_id=None, **kwargs):
+def get_terminal_client(url, user_id=None, service='open_terminal', **kwargs):
     if str(url).startswith('tether://'):
-        return RelayClient(user_id, service='open_terminal', timeout=kwargs.get('timeout'))
+        return RelayClient(user_id, service=service, timeout=kwargs.get('timeout'))
     # aiohttp's WebSocket handshake follows redirects internally. Abort before
     # following one so server credentials and the later auth frame stay bound.
     trace = aiohttp.TraceConfig()

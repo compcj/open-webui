@@ -130,20 +130,15 @@
 			await config.set(await getBackendConfig());
 
 			// Refresh the terminalServers store so changes are reflected immediately
-			// Preserve user direct terminals, refresh system terminals from backend
-			const existingDirectTerminals = (($terminalServers ?? []) as TerminalConnection[]).filter(
-				(t) => !t.id
-			);
 			const systemTerminals = await getTerminalServers(localStorage.token);
 			const systemEntries = systemTerminals.map((t) => ({
-				id: t.id,
+				...t,
 				url: `${WEBUI_API_BASE_URL}/terminals/${t.id}`,
 				name: t.name,
 				key: localStorage.token,
-				contexts: t.contexts ?? {},
 				config: t.config ?? {}
 			}));
-			terminalServers.set([...existingDirectTerminals, ...systemEntries] as any);
+			terminalServers.set(systemEntries as any);
 		}
 	};
 
@@ -224,7 +219,7 @@
 	</h2>
 
 	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
-		{#if servers !== null && connectionsConfig !== null}
+		{#if servers !== null}
 			<fieldset
 				disabled={!$config?.features?.enable_tool_servers}
 				class="min-w-0 disabled:opacity-50"
@@ -373,7 +368,7 @@
 
 						<div class="mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 							{$i18n.t(
-								'Connect to Open Terminal instances. Admins and users granted access can use file browsing and terminal tools through these servers.'
+								'Connect to Open Terminal servers. Admins and users granted access can use file browsing and terminal tools through these servers.'
 							)}
 						</div>
 						<a

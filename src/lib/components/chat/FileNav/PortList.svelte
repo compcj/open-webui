@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { TerminalConnection } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
 	import { onMount, onDestroy, getContext, createEventDispatcher } from 'svelte';
 	import type { ListeningPort } from '$lib/apis/terminal';
 	import { getListeningPorts, getTerminalFeatures } from '$lib/apis/terminal';
@@ -10,9 +10,9 @@
 	const i18n = getContext<any>('i18n');
 	const dispatch = createEventDispatcher<{ previewPort: number }>();
 
-	export let connection: TerminalConnection;
+	export let target: TerminalTarget;
 	export let active = true;
-	export let chatId: string | null = null;
+	$: chatId = target.context.chatId;
 
 	let ports: ListeningPort[] = [];
 	let loading = false;
@@ -24,7 +24,7 @@
 	const loadPorts = async () => {
 		const current = generation;
 		loading = true;
-		const next = await getListeningPorts(connection.baseUrl, connection.key, chatId);
+		const next = await getListeningPorts(target);
 		if (current !== generation) return;
 		ports = next;
 		loading = false;
@@ -37,14 +37,13 @@
 		if (context !== key) ports = [];
 		context = key;
 		loading = false;
-		if (!enabled || !connection.baseUrl) return;
-		const features = await getTerminalFeatures(connection, chatId);
+		if (!enabled || !target.baseUrl) return;
+		const features = await getTerminalFeatures(target);
 		if (current !== generation) return;
 		if (features.events === true) {
 			loading = true;
 			stopWatching = watchTerminalPorts(
-				connection,
-				chatId,
+				target,
 				(next) => {
 					ports = next;
 					loading = false;
@@ -63,7 +62,7 @@
 	};
 
 	// Only discover ports while the browser start view is visible.
-	$: configure(JSON.stringify([connection.baseUrl, connection.key, chatId]), mounted && active);
+	$: configure(JSON.stringify([target]), mounted && active);
 	onMount(() => {
 		mounted = true;
 	});

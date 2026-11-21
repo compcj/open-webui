@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { TerminalCredential } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
+	export let target: TerminalTarget;
 	import { getContext, onMount, onDestroy } from 'svelte';
 	import type { Readable } from 'svelte/store';
 	import type { i18n as I18n } from 'i18next';
@@ -10,9 +11,6 @@
 	import Dropdown from '../../common/Dropdown.svelte';
 	import DropdownMenu from '../../common/DropdownMenu.svelte';
 
-	export let baseUrl: string;
-	export let apiKey: TerminalCredential;
-	export let chatId: string | null = null;
 	export let paths: [string, string];
 	export let onClose: () => void;
 
@@ -41,10 +39,8 @@
 		result = null;
 		try {
 			const response = await compareFiles(
-				baseUrl,
-				apiKey,
+				target,
 				{ original, revised, ignore_whitespace: ignoreWhitespace },
-				chatId ?? undefined,
 				request.signal
 			);
 			if (!request.signal.aborted) result = response;

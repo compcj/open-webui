@@ -16,7 +16,7 @@ const create = (readComparisonSource: any) => {
 		`
 		const { readComparisonSource, onClose } = dependencies;
 		const sourceFiles = [{ name: 'a', path: '/a', size: 1 }, { name: 'b', path: '/b', size: 2 }];
-		const connection = { baseUrl: '/terminal-a', apiKey: 'token-a', chatId: 'chat-a' };
+		const capturedTarget = { baseUrl: '/terminal-a', key: 'token-a', context: {chatId:'chat-a',modelId:null} };
 		let controller = null, generation = 0, closed = false;
 		const $i18n = { t: text => text };
 		${declarations}
@@ -29,7 +29,7 @@ const create = (readComparisonSource: any) => {
 
 describe('file comparison request ownership', () => {
 	it('reads both sources with the captured terminal and chat', async () => {
-		const read = vi.fn(async (_url: string, _key: string, path: string) =>
+		const read = vi.fn(async (_target: unknown, path: string) =>
 			path === '/a' ? 'left' : 'right'
 		);
 		const { view } = create(read);
@@ -38,8 +38,18 @@ describe('file comparison request ownership', () => {
 			proposedContent: 'right'
 		});
 		expect(read.mock.calls).toEqual([
-			['/terminal-a', 'token-a', '/a', expect.any(AbortSignal), 'chat-a', 1],
-			['/terminal-a', 'token-a', '/b', expect.any(AbortSignal), 'chat-a', 2]
+			[
+				{ baseUrl: '/terminal-a', key: 'token-a', context: { chatId: 'chat-a', modelId: null } },
+				'/a',
+				expect.any(AbortSignal),
+				1
+			],
+			[
+				{ baseUrl: '/terminal-a', key: 'token-a', context: { chatId: 'chat-a', modelId: null } },
+				'/b',
+				expect.any(AbortSignal),
+				2
+			]
 		]);
 	});
 	it('aborts both reads and refuses their late completion when closed', async () => {
@@ -50,15 +60,15 @@ describe('file comparison request ownership', () => {
 		const { view, onClose } = create(read);
 		const pending = view.read();
 		view.close();
-		expect(read.mock.calls[0][3].aborted).toBe(true);
-		expect(read.mock.calls[1][3].aborted).toBe(true);
+		expect(read.mock.calls[0][2].aborted).toBe(true);
+		expect(read.mock.calls[1][2].aborted).toBe(true);
 		resolvers.forEach((resolve) => resolve('late content'));
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(onClose).toHaveBeenCalledOnce();
 	});
 	it('aborts the other source when one source fails', async () => {
 		let otherSignal: AbortSignal | undefined;
-		const read = vi.fn((_url: string, _key: string, path: string, signal: AbortSignal) => {
+		const read = vi.fn((_target: unknown, path: string, signal: AbortSignal) => {
 			if (path === '/a') return Promise.reject(new Error('Permission denied.'));
 			otherSignal = signal;
 			return new Promise(() => {});

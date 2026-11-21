@@ -22,7 +22,7 @@ type PreviewLifecycle = {
 
 function previewLifecycle(request: typeof requestPreviewTicket): PreviewLifecycle {
 	const source = readFileSync(
-		new URL('../../components/chat/ChatTabs/Browser.svelte', import.meta.url),
+		new URL('../../components/chat/Tabs/Browser.svelte', import.meta.url),
 		'utf8'
 	);
 	const declaration = parse(source)

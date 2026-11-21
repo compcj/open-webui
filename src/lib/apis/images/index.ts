@@ -2,25 +2,12 @@ import { IMAGES_API_BASE_URL } from '$lib/constants';
 
 export type ImageGenerationEngineOption = { id: string; name: string };
 
-export type ImageEngineConfig<Engine extends string = 'openai' | 'gemini' | 'grok' | 'comfyui'> = {
-	engine: Engine;
-	model: string;
+export type ImageProfile = ImageGenerationEngineOption & {
+	generation_model: string;
+	edit_model: string | null;
 	tool_description_suffix: string;
-	base_url: string;
-	api_key: string;
-	api_version: string;
-	params: Record<string, unknown>;
-	size: string;
-	steps: number | null;
-	gemini_endpoint_method: 'predict' | 'generateContent';
-	comfyui_workflow: string;
-	comfyui_workflow_nodes: { type: string; key: string; node_ids: string[] }[];
+	edit_tool_description_suffix: string;
 };
-
-export type ImageEditEngineConfig = ImageEngineConfig<ImageEngineConfig['engine'] | 'disabled'>;
-
-export type ImageGenerationEngine = ImageGenerationEngineOption &
-	ImageEngineConfig & { edit?: ImageEditEngineConfig | null };
 
 export const getImageGenerationEngines = async (
 	token: string = ''
@@ -128,6 +115,38 @@ export const verifyConnection = async (
 			return res.json();
 		})
 		.catch((err) => {
+			if ('detail' in err) {
+				error = err.detail;
+			} else {
+				error = 'Server connection failed';
+			}
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const verifyImageConnection = async (token: string = '', connection: object) => {
+	let error = null;
+
+	const res = await fetch(`${IMAGES_API_BASE_URL}/connections/verify`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify(connection)
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
 			console.error(err);
 			if ('detail' in err) {
 				error = err.detail;
@@ -144,10 +163,10 @@ export const verifyConnection = async (
 	return res;
 };
 
-export const getImageGenerationConfig = async (token: string = '') => {
+export const getImageConnectionModels = async (token: string = '') => {
 	let error = null;
 
-	const res = await fetch(`${IMAGES_API_BASE_URL}/image/config`, {
+	const res = await fetch(`${IMAGES_API_BASE_URL}/connections/models`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -176,40 +195,7 @@ export const getImageGenerationConfig = async (token: string = '') => {
 	return res;
 };
 
-export const updateImageGenerationConfig = async (token: string = '', config: object) => {
-	let error = null;
-
-	const res = await fetch(`${IMAGES_API_BASE_URL}/image/config/update`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		},
-		body: JSON.stringify({ ...config })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			if ('detail' in err) {
-				error = err.detail;
-			} else {
-				error = 'Server connection failed';
-			}
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const getImageGenerationModels = async (token: string = '') => {
+export const getImageModels = async (token: string = '') => {
 	let error = null;
 
 	const res = await fetch(`${IMAGES_API_BASE_URL}/models`, {

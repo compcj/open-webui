@@ -91,11 +91,13 @@ const createChat = (initialSettings: Record<string, any> = {}) => {
 		const skills = { set: value => $skills = value };
 		const getFunctions = async () => [], getSkills = async () => [];
 		const continueOAuthRedirect = async () => {};
+		const chatLoadController = new AbortController(), loading = false;
+		let selectedImageModelId = '', selectedVideoModelId = '', videoGenerationEnabled = false;
 		let defaultsModelIds = [], modelDefaults = null;
 		const $chatId = 'history-chat', $selectedTerminalId = null, $selectedFolder = null;
 		const history = { currentId: null };
 		const selectedTerminalId = { set: () => {} };
-		let settingDefaults = false, $temporaryChatEnabled = false, $showCallOverlay = false;
+		let settingDefaults = false, $temporaryChat = false, $voiceCall = false;
 		let chatIdProp = 'history-chat', prompt = '', files = [], messageInput;
 		const handleToolApprovalModeChange = async () => {};
 		${declarations}

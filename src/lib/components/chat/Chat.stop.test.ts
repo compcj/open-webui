@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 const source = readFileSync(new URL('./Chat.svelte', import.meta.url), 'utf8');
 const names = new Set([
 	'stopResponse',
+	'usesBackendQueue',
 	'sendQueuedMessageNow',
 	'submitHandler',
 	'processNextInQueue',
@@ -34,6 +35,7 @@ const createChat = (stop: () => Promise<unknown>, chatId: string | null = 'chat'
   const temporaryController = { chatId: null, identity: null, capture: () => () => true };
 		const $user = { id: 'author' }, chat = { user_id: 'author' };
 		let $chatId = chatId;
+		const $temporaryChat = false, isTemporaryChatId = () => false, isSystemOAuthTool = () => true;
 		const stoppingChats = new Map(), processingQueueChats = new Set();
 		let $chatRequestQueues = {}, files = [], prompt = 'draft';
 		const chatRequestQueues = { update: (fn) => { $chatRequestQueues = fn($chatRequestQueues); } };

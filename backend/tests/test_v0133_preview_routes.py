@@ -168,7 +168,9 @@ def preview_api(api, monkeypatch, preview_database):
     monkeypatch.setattr(auth, 'get_verified_user', get_verified_user)
     monkeypatch.setattr(auth, 'get_verified_user_by_token', get_verified_user_by_token)
     monkeypatch.setitem(sys.modules, 'open_webui.routers.terminals', api.router)
-    preview = load('open_webui.routers.terminal_preview', 'routers/terminal_preview.py', monkeypatch)
+    preview = api.preview
+    monkeypatch.setattr(preview, 'decode_token', claims.get)
+    monkeypatch.setattr(preview, 'get_verified_user_by_token', get_verified_user_by_token)
     browser = load('open_webui.utils.browser', 'utils/browser.py', monkeypatch)
     monkeypatch.setattr(api.router, 'browser_ticket', browser.browser_ticket)
     monkeypatch.setattr(api.router, 'browser_access', browser.browser_access)
@@ -277,7 +279,6 @@ def preview_api(api, monkeypatch, preview_database):
     app = FastAPI()
     app.dependency_overrides[api.router.get_verified_user] = get_verified_user
     app.state.terminal_preview_tickets = TicketStore(clock=lambda: clock[0])
-    app.include_router(preview.router, prefix='/api/v1/terminals')
     app.include_router(api.router.router, prefix='/api/v1/terminals')
     app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, allow_methods=['*'])
 
@@ -343,6 +344,27 @@ async def test_ticket_issue_and_renewal_use_actor_login_and_existing_target(prev
         assert denied.status_code == 403
         assert_no_secrets(denied)
     assert len(preview_api.calls) == count
+
+
+@pytest.mark.asyncio
+async def test_template_preview_keeps_its_resolved_context_private(preview_api):
+    connection = preview_api.api.connection
+    connection.update(
+        template_id='sandbox',
+        terminal_context={'user_id': 'alice', 'model_id': 'model-a'},
+        context_id='model:model-a',
+    )
+    opened = await issue(preview_api, {**PORT, 'model_id': 'model-a'})
+    assert opened.status_code == 200
+    headers = preview_api.calls[0][3]['headers']
+    assert headers['X-Terminal-Template-Id'] == 'sandbox' and headers['X-Terminal-Model-Id'] == 'model-a'
+    assert 'X-Terminal-Context-Id' not in headers
+    token = urlsplit(opened.json()['url']).path.split('/')[2]
+    saved = await preview_api.app.state.terminal_preview_tickets.get(token)
+    assert saved['terminal_context'] == 'model:model-a'
+    connection.update(context_id='model:model-b', terminal_context={'user_id': 'alice', 'model_id': 'model-b'})
+    denied = await issue(preview_api, {**PORT, 'model_id': 'model-a', 'previous_url': opened.json()['url']})
+    assert denied.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -634,6 +656,25 @@ async def test_chrome_control_ticket_survives_token_refresh_within_the_same_logi
     assert renewed.json()['token'] == first
     other_login = await request(preview_api, 'GET', route, headers={'Authorization': 'Bearer alice-login-2'})
     assert other_login.json()['token'] != first
+
+
+@pytest.mark.asyncio
+async def test_chrome_control_ticket_requires_the_instance_that_returned_the_session(preview_api, monkeypatch):
+    preview_api.remote_session['mode'] = 'chrome'
+    read = Upstream.read
+
+    async def read_and_replace_endpoint(response):
+        result = await read(response)
+        preview_api.api.connection['url'] = 'https://other-terminal.test'
+        return result
+
+    monkeypatch.setattr(Upstream, 'read', read_and_replace_endpoint)
+    route = '/api/v1/terminals/terminal-1/chats/chat-1/browser/sessions/browser-1'
+    response = await request(preview_api, 'GET', route, headers=ALICE)
+
+    assert response.status_code == 409
+    assert not preview_api.app.state.terminal_preview_tickets.memory
+    assert_no_secrets(response)
 
 
 def asgi_scope(url, kind, headers=()):

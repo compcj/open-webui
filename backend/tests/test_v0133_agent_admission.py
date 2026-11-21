@@ -19,7 +19,7 @@ from open_webui.models import chat_messages, chats
 from open_webui.models.chat_messages import ChatMessage
 from open_webui.models.chats import Chat, Chats
 from open_webui.utils import tool_permissions
-from open_webui.utils.agents import discovery
+from open_webui.utils.agents import discovery, references
 from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
 from open_webui.utils.context_store_errors import ContextStoreError
 
@@ -29,7 +29,7 @@ ACTOR = SimpleNamespace(id='owner', name='Owner', role='admin')
 
 @pytest.fixture
 def completion_chat_access():
-    return AsyncMock(return_value=SimpleNamespace(user_id=ACTOR.id, variables={}))
+    return AsyncMock(return_value=SimpleNamespace(id='chat', user_id=ACTOR.id, variables={}, chat={}, meta={}))
 
 
 @pytest.fixture
@@ -42,8 +42,14 @@ def completion_client(monkeypatch, completion_chat_access):
     )
     app = FastAPI()
     app.state.MODELS = {'ordinary': {'id': 'ordinary'}}
-    chat = SimpleNamespace(user_id=ACTOR.id, variables={})
-    monkeypatch.setattr(discovery, 'get_models', AsyncMock(return_value=[{'id': AGENT, 'agent': {}}]))
+    chat = SimpleNamespace(id='chat', user_id=ACTOR.id, variables={}, chat={}, meta={})
+    monkeypatch.setattr(
+        discovery,
+        'get_models',
+        AsyncMock(
+            return_value=[{'id': AGENT, 'agent': {'terminal_id': 'terminal', 'provider': 'codex', 'model': 'model'}}]
+        ),
+    )
     monkeypatch.setattr(tool_permissions, 'resolve_tool_approval_mode', AsyncMock(return_value='off'))
 
     async def verified_user():
@@ -61,7 +67,11 @@ def completion_client(monkeypatch, completion_chat_access):
         get_chat_by_id=AsyncMock(return_value=chat),
         get_accessible_chat_by_id=completion_chat_access,
         get_message_by_id_and_message_id=AsyncMock(
-            return_value={'id': 'old-reply', 'model': AGENT, 'user_id': ACTOR.id, 'parentId': 'old-user'}
+            side_effect=lambda _, mid: (
+                {'id': 'old-reply', 'role': 'assistant', 'model': AGENT, 'user_id': ACTOR.id, 'parentId': 'old-user'}
+                if mid == 'old-reply'
+                else None
+            )
         ),
         insert_chat_turn=unexpected_write,
         edit_message_output=edit_message_output,
@@ -100,7 +110,7 @@ def completion_client(monkeypatch, completion_chat_access):
 
 @pytest.mark.parametrize('model_id', [AGENT, 'ordinary'])
 @pytest.mark.parametrize('action', ['assistant_message_id', 'regeneration_message_id'])
-def test_agent_reply_cannot_be_continued_or_regenerated(completion_client, model_id, action):
+def test_agent_regeneration_admits_only_a_fresh_native_sibling(completion_client, model_id, action):
     response = completion_client.post(
         '/api/chat/completions',
         json={
@@ -112,8 +122,14 @@ def test_agent_reply_cannot_be_continued_or_regenerated(completion_client, model
             action: 'old-reply',
         },
     )
-    assert response.status_code == 400
-    assert response.json()['detail'] == 'Continue an agent conversation with a new message'
+    if action == 'assistant_message_id':
+        assert response.status_code == 400
+        assert response.json()['detail'] == 'Continue an agent conversation with a new message'
+    elif model_id == AGENT:
+        assert response.status_code == 418
+        assert response.json()['detail'] == 'Reached chat mutation'
+    else:
+        assert response.status_code == 403
 
 
 def test_agent_request_cannot_dispatch_an_ordinary_response_entry(completion_client):
@@ -214,6 +230,7 @@ def test_terminal_model_discovery_requires_live_chat_read_access(monkeypatch, ch
     read_access = AsyncMock(return_value=access)
     agent_models = AsyncMock(return_value=[{'id': AGENT}])
     monkeypatch.setattr(discovery, 'get_models', agent_models)
+    monkeypatch.setattr(references, 'migrate_model_references', AsyncMock())
     actor = SimpleNamespace(id='viewer', role=role)
 
     async def verified_user():
@@ -224,6 +241,7 @@ def test_terminal_model_discovery_requires_live_chat_read_access(monkeypatch, ch
         'Request': Request,
         'Depends': Depends,
         'get_verified_user': verified_user,
+        'get_tether_models': AsyncMock(return_value={}),
         'get_all_models': AsyncMock(return_value=[{'id': 'ordinary'}]),
         'get_filtered_models': AsyncMock(return_value=[{'id': 'ordinary'}]),
         'Config': SimpleNamespace(get=AsyncMock(return_value=None)),

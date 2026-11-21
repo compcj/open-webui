@@ -3,75 +3,84 @@ import { parse } from 'svelte/compiler';
 import { transpileModule, ScriptTarget } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
-const source = readFileSync(new URL('./Images.svelte', import.meta.url), 'utf8');
-const names = new Set(['parseJSONObject', 'updateConfigHandler']);
-const declarations = parse(source)
-	.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
-	.filter((node: any) => names.has(node.id?.name))
-	.map((node: any) => `const ${source.slice(node.start, node.end)};`)
-	.join('\n');
+import { prepareImageProfiles } from './image-engine-editor';
 
-const setup = () => {
-	const config = {
-		IMAGE_GENERATION_ENGINE: 'openai',
-		IMAGES_OPENAI_API_KEY: 'synthetic-key',
-		IMAGES_OPENAI_API_PARAMS: {},
-		AUTOMATIC1111_PARAMS: {},
-		IMAGE_GENERATION_ENGINES: [{ id: 'studio', params: { quality: 'low' } }],
-		IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: '  Generate\ncarefully  ',
-		IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: '\nEdit\ncarefully  '
-	};
-	const edited = [{ id: 'studio', params: { quality: 'high' } }];
-	const imageGenerationEnginesEditor = { getValidatedEngines: vi.fn(() => edited) };
-	const updateConfig = vi.fn(async (_token, payload) => payload);
-	const toast = { error: vi.fn() };
-	const dependencies = { config, imageGenerationEnginesEditor, updateConfig, toast };
-	const body = `
-		const { ${Object.keys(dependencies).join(', ')} } = dependencies;
-		const localStorage = {token: 'synthetic-token'};
-		const $i18n = {t: text => text};
-		const backendConfig = {set: () => {}};
-		const getBackendConfig = async () => ({});
-		const getModels = () => {};
+function handlers(filename: string, names: string[], dependencies: Record<string, any>) {
+	const source = readFileSync(new URL(filename, import.meta.url), 'utf8');
+	const declarations = parse(source)
+		.instance!.content.body.flatMap((node: any) => node.declarations ?? [])
+		.filter((node: any) => names.includes(node.id?.name))
+		.map((node: any) => `const ${source.slice(node.start, node.end)};`)
+		.join('\n');
+	const body = `let { ${Object.keys(dependencies).join(', ')} } = dependencies;
 		${declarations}
-		return updateConfigHandler;
-	`;
-	const update = new Function(
+		return { ${names.join(', ')} };`;
+	return new Function(
 		'dependencies',
-		transpileModule(body, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText
+		transpileModule(body, {
+			compilerOptions: { target: ScriptTarget.ES2022 }
+		}).outputText
 	)(dependencies);
-	return { update, updateConfig, toast, imageGenerationEnginesEditor, edited };
+}
+
+const next = {
+	IMAGE_CONNECTIONS: [{ id: 'workspace', config: { access_grants: [] } }],
+	IMAGE_PROFILES: [
+		{
+			id: 'studio',
+			name: 'Studio',
+			generation_model: 'workspace:artist',
+			edit_model: 'disabled',
+			tool_description_suffix: '',
+			edit_tool_description_suffix: ''
+		}
+	],
+	IMAGE_GENERATION_ENGINES: [{ id: 'studio', api_key: 'legacy-fixture' }],
+	IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: ' Draw\ncarefully ',
+	IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: ' Edit\ncarefully '
 };
 
-describe('image settings update paths', () => {
-	it('materializes current engine parameter drafts for connection verification saves', async () => {
-		const context = setup();
-		await context.update();
-		expect(context.updateConfig).toHaveBeenCalledWith(
-			'synthetic-token',
-			expect.objectContaining({ IMAGE_GENERATION_ENGINES: context.edited })
-		);
-	});
-
-	it('prevents all configuration writes when an engine draft is invalid', async () => {
-		const context = setup();
-		context.imageGenerationEnginesEditor.getValidatedEngines.mockImplementation(() => {
-			throw new Error('Invalid JSON');
+describe('image settings save', () => {
+	it('saves canonical connections, model pairs and independent descriptions', async () => {
+		const updateConfig = vi.fn(async (_token, _payload) => null);
+		const { save } = handlers('./Images.svelte', ['save'], {
+			prepareImageProfiles,
+			updateConfig,
+			localStorage: { token: 'test' }
 		});
-		expect(await context.update()).toBeNull();
-		expect(context.updateConfig).not.toHaveBeenCalled();
-		expect(context.toast.error).toHaveBeenCalledWith('Invalid JSON');
+		await save(next);
+		const payload = updateConfig.mock.calls[0][1];
+		expect(payload).toMatchObject({
+			IMAGE_CONNECTIONS: next.IMAGE_CONNECTIONS,
+			IMAGE_PROFILES: next.IMAGE_PROFILES,
+			IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: 'Draw\ncarefully',
+			IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: 'Edit\ncarefully'
+		});
+		expect(payload).not.toHaveProperty('IMAGE_GENERATION_ENGINES');
 	});
-
-	it('saves independent trimmed default tool descriptions', async () => {
-		const context = setup();
-		await context.update();
-		expect(context.updateConfig).toHaveBeenCalledWith(
-			'synthetic-token',
-			expect.objectContaining({
-				IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: 'Generate\ncarefully',
-				IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: 'Edit\ncarefully'
-			})
+	it('rejects malformed provider parameters before a connection write', async () => {
+		const onSubmit = vi.fn();
+		const toast = { error: vi.fn() };
+		const { submitHandler } = handlers(
+			'./Images/ImageConnectionModal.svelte',
+			['isJSONObject', 'validate', 'submitHandler'],
+			{
+				showAdvanced: false,
+				loading: false,
+				show: true,
+				onSubmit,
+				toast,
+				$i18n: { t: (s: string) => s },
+				url: 'https://example.test',
+				headers: '',
+				params: '{invalid',
+				workflow: '',
+				editWorkflow: '',
+				steps: ''
+			}
 		);
+		await submitHandler();
+		expect(toast.error).toHaveBeenCalledWith('Invalid JSON format for Parameters');
+		expect(onSubmit).not.toHaveBeenCalled();
 	});
 });

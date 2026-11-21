@@ -23,6 +23,8 @@ def runtime(monkeypatch):
         'BYPASS_MODEL_ACCESS_CONTROL': False,
         'Config': SimpleNamespace(get=AsyncMock(return_value=True)),
         'check_model_access': AsyncMock(),
+        'get_tether_model': AsyncMock(return_value=None),
+        'add_tether_model': AsyncMock(side_effect=lambda request, user, model_id: request.app.state.MODELS),
     }
     load_functions(
         ns,
@@ -48,7 +50,7 @@ def runtime(monkeypatch):
     end = next(
         i
         for i, node in enumerate(router.body)
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'models' for t in node.targets)
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'relay' for t in node.targets)
     )
     wrapper = ast.parse('async def router_prepare(request, form_data, user, **kwargs): pass')
     wrapper.body[0].body = router.body[:end] + [ast.Return(value=ast.Name(id='payload', ctx=ast.Load()))]

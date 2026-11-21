@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / 'open_webui' / 'utils' / 'skills_runtime.py'
 
 
@@ -566,7 +568,8 @@ def test_canonical_runtime_preserves_empty_openclaw_bag_as_package_marker():
     assert sr.skill_files(sr.openclaw_meta(skill))['run.sh']['content'] == 'echo ok'
 
 
-def test_terminal_sync_cache_isolates_actor_and_effective_terminal_context(monkeypatch):
+@pytest.mark.parametrize('template', [False, True])
+def test_terminal_sync_cache_isolates_actor_and_effective_terminal_context(monkeypatch, template):
     import asyncio
     import types
     from unittest.mock import AsyncMock
@@ -575,7 +578,8 @@ def test_terminal_sync_cache_isolates_actor_and_effective_terminal_context(monke
     tools.execute_tool_server = AsyncMock(return_value=({}, None))
 
     async def cwd(url, headers, cookies):
-        return f'/users/{headers["X-User-Id"]}/{headers["X-Terminal-Context-Id"]}'
+        current = headers.get('X-Terminal-Model-Id') or headers.get('X-Terminal-Context-Id')
+        return f'/users/{headers["X-User-Id"]}/{current}'
 
     tools.get_terminal_cwd = AsyncMock(side_effect=cwd)
     monkeypatch.setitem(sys.modules, tools.__name__, tools)
@@ -587,7 +591,11 @@ def test_terminal_sync_cache_isolates_actor_and_effective_terminal_context(monke
             {
                 'X-User-Id': actor,
                 'X-Session-Id': metadata['chat_id'],
-                'X-Terminal-Context-Id': metadata['effective_context'],
+                **(
+                    {'X-Terminal-Template-Id': 'sandbox', 'X-Terminal-Model-Id': metadata['effective_context']}
+                    if template
+                    else {'X-Terminal-Context-Id': metadata['effective_context']}
+                ),
             },
             {},
         )

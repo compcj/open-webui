@@ -81,7 +81,10 @@ async def runtime(monkeypatch):
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def get_async_db():
+    async def get_async_db(db=None):
+        if db is not None:
+            yield db
+            return
         async with sessions() as session:
             yield session
 
@@ -98,6 +101,7 @@ async def runtime(monkeypatch):
         'ClassVar': ClassVar,
         'time': time,
         'get_async_db': get_async_db,
+        'get_async_db_context': get_async_db,
         'jsonable_encoder': jsonable_encoder,
         'log': logging.getLogger(__name__),
         'BaseModel': BaseModel,

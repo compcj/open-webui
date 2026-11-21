@@ -25,7 +25,7 @@ const createChat = (initial: any, { id = 'shared', temporary = false, active = f
 		const localStorage = { token: 'synthetic-token' };
 		const $user = { id: 'writer', name: 'Writer' };
 		let $chatId = chatId;
-		const $temporaryChatEnabled = temporary;
+		const $temporaryChat = temporary;
 		const selectedModelIds = ['chat-model'];
 		const chat = { user_id: 'owner' };
 		const generating = active, taskIds = [];
@@ -443,34 +443,34 @@ it('ends both call transports when switching into another owner chat', () => {
 		(node: any) =>
 			node.type === 'LabeledStatement' &&
 			source.slice(node.start, node.end).includes('if (isShared)') &&
-			source.slice(node.start, node.end).includes('showCallOverlay.set(false)')
+			source.slice(node.start, node.end).includes('voiceCall.set(false)')
 	);
 	expect(statement).toBeTruthy();
-	const showCallOverlay = { set: vi.fn() };
+	const voiceCall = { set: vi.fn() };
 	const bridge = { connected: true, connecting: false, end: vi.fn() };
 	const run = new Function(
 		'isShared',
-		'$showCallOverlay',
-		'showCallOverlay',
+		'$voiceCall',
+		'voiceCall',
 		'bridge',
 		transpileModule(source.slice(statement.start, statement.end), {
 			compilerOptions: { target: ScriptTarget.ES2022 }
 		}).outputText
 	);
-	run(true, true, showCallOverlay, bridge);
-	expect(showCallOverlay.set).toHaveBeenCalledWith(false);
+	run(true, true, voiceCall, bridge);
+	expect(voiceCall.set).toHaveBeenCalledWith(false);
 	expect(bridge.end).toHaveBeenCalledOnce();
 	bridge.end.mockClear();
-	run(true, false, showCallOverlay, bridge);
+	run(true, false, voiceCall, bridge);
 	expect(bridge.end).toHaveBeenCalledOnce();
 	bridge.end.mockClear();
 	bridge.connected = false;
 	bridge.connecting = true;
-	run(true, false, showCallOverlay, bridge);
+	run(true, false, voiceCall, bridge);
 	expect(bridge.end).toHaveBeenCalledOnce();
 	bridge.end.mockClear();
 	bridge.connecting = false;
-	run(true, false, showCallOverlay, bridge);
+	run(true, false, voiceCall, bridge);
 	expect(bridge.end).not.toHaveBeenCalled();
 });
 
@@ -488,14 +488,14 @@ const loadChatFunction = (name: string, bindings: Record<string, any>) => {
 };
 
 it.each(['user', 'admin'])('prevents the nonowner %s from opening either call mode', (role) => {
-	const showCallOverlay = { set: vi.fn() };
+	const voiceCall = { set: vi.fn() };
 	const open = loadChatFunction('openCallOverlay', {
 		isShared: true,
 		$user: { role },
-		showCallOverlay
+		voiceCall
 	});
 	open();
-	expect(showCallOverlay.set).not.toHaveBeenCalled();
+	expect(voiceCall.set).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -509,7 +509,7 @@ it.each([
 		$user: { role: 'admin' },
 		$settings: {},
 		getToolFeatureContext: () => ({ available: { image_generation: false } }),
-		$showCallOverlay: overlay,
+		$voiceCall: overlay,
 		callMode: mode,
 		bridge: { connected },
 		imageGenerationEnabled: true,

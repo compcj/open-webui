@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { config } from '$lib/stores';
+import { config, user } from '$lib/stores';
 
 import {
 	downloadDeliveryFile,
@@ -235,11 +235,28 @@ describe('direct terminal connection runtime authorization', () => {
 		);
 		expect(direct).toEqual([{ url: 'https://terminal.example', key: 'synthetic' }]);
 	});
+	it.each([
+		{ role: 'user', permissions: {} },
+		{ role: 'pending', permissions: { features: { direct_tool_servers: true } } }
+	])('rejects saved direct credentials without a current personal integration grant', (actor) => {
+		config.set({
+			features: { enable_tool_servers: true, enable_direct_integrations: true }
+		} as any);
+		user.set({ id: 'actor', ...actor } as any);
+		expect(resolveTerminalConnection(direct[0].url, [], direct, 'token')).toBeNull();
+		user.set(undefined);
+	});
 	it('permits direct selection when the global switch is on', () => {
+		user.set({
+			id: 'actor',
+			role: 'user',
+			permissions: { features: { direct_tool_servers: true } }
+		} as any);
 		config.set({
 			features: { enable_tool_servers: true, enable_direct_integrations: true }
 		} as any);
 		expect(resolveTerminalConnection(direct[0].url, [], direct, 'token')?.system).toBe(false);
+		user.set(undefined);
 	});
 	it('rechecks the switch before using an already captured direct connection', async () => {
 		const fetchMock = vi.fn();

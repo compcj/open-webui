@@ -1,5 +1,9 @@
 # 上下文压缩 / Context compaction
 
+Fork 0.13.4+f1 keeps the existing mode on upgrade. Each chat tab has its own temporary scope. A new
+side chat inherits visible raw history without the parent's selection, checkpoint, steering or Agent
+execution identities. See the [v0.13.4 integration record](upstream/v0.13.4-decisions.md).
+
 管理员在 **设置 → 界面 → 上下文压缩** 全局选择模式。工作区模型编辑页的
 **压缩用最大上下文长度**（`meta.context_window`）遵循现有模型编辑权限，随模型导入、导出；
 留空继承基础模型，再回退到全局缺省值。它是压缩元数据，不会成为供应商推理参数。

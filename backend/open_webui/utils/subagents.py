@@ -92,51 +92,125 @@ async def _build_request(source: Request, user_id: str, *, internal: bool) -> Re
     return request
 
 
+async def queue_user_message(
+    request: Request, chat_id: str, user: UserModel, user_message: dict, parent_id: str
+) -> bool:
+    queued = await Chats.enqueue_steering(chat_id, parent_id, user, user_message)
+    if queued == 'retry':
+        await process_pending_internal_messages(request, chat_id, user.id, {}, reply_id=parent_id)
+    return bool(queued)
+
+
+async def confirmed_steering_exit(request, metadata, user_id):
+    chat_id, reply_id, task_id = (metadata.get(key) for key in ('chat_id', 'message_id', 'task_id'))
+    run = get_pending_run(metadata)
+    if await Chats.confirm_steering_task(chat_id, reply_id, user_id, task_id, run=run):
+        await process_pending_internal_messages(request, chat_id, user_id, run, reply_id=reply_id)
+        if not await has_active_tasks(request.app.state.redis, chat_id):
+            await process_pending_internal_messages(request, chat_id, user_id, run)
+
+
+def get_pending_run(metadata: dict, model_id: str | None = None) -> dict:
+    """The settings a turn started for pending messages takes from the turn before it."""
+    context = copy.deepcopy(metadata.get('chat_context') or {})
+    mode = (metadata.get('params') or {}).get('tool_approval_mode')
+    if mode in {'ask', 'auto', 'full'}:
+        context['params'] = {**(context.get('params') or {}), 'tool_approval_mode': mode}
+    return {
+        'model_id': metadata.get('model_id') or model_id,
+        'session_id': metadata.get('session_id'),
+        'tool_ids': metadata.get('tool_ids') or [],
+        'skill_ids': metadata.get('skill_ids') or [],
+        'chat_context': context,
+        'filter_ids': metadata.get('filter_ids') or [],
+        'terminal_id': metadata.get('terminal_id'),
+        'features': metadata.get('features') or {},
+        'variables': metadata.get('variables') or {},
+    }
+
+
+def queued_content(batch):
+    contents = [item.get('content') for item in batch if item.get('content')]
+    if all(isinstance(content, str) for content in contents):
+        return '\n\n'.join(contents)
+    blocks = []
+    for content in contents:
+        if blocks:
+            blocks.append({'type': 'text', 'text': '\n\n'})
+        if isinstance(content, str):
+            blocks.append({'type': 'text', 'text': content})
+        elif isinstance(content, list):
+            blocks.extend(copy.deepcopy(content))
+    return blocks
+
+
 async def process_pending_internal_messages(
     source_request: Request,
     parent_chat_id: str,
     user_id: str,
     run: dict,
+    reply_id: str | None = None,
 ) -> None:
+    """Answer pending messages once the chat is idle. With reply_id, answer only the messages queued under that
+    reply as soon as it is saved, without waiting for its follow-ups, title and other background work."""
     lock = _parent_locks.setdefault(parent_chat_id, asyncio.Lock())
-    while await has_active_tasks(source_request.app.state.redis, parent_chat_id):
-        await asyncio.sleep(0.25)
+    if reply_id is None:
+        while await has_active_tasks(source_request.app.state.redis, parent_chat_id):
+            await asyncio.sleep(0.25)
+    else:
+        # The turn started below asks whether its parent reply is still running, without taking this lock.
+        reply = await Chats.get_message_by_id_and_message_id(parent_chat_id, reply_id)
+        if not reply or reply.get('done') is not True:
+            return
 
     async with lock:
-        if await has_active_tasks(source_request.app.state.redis, parent_chat_id):
+        if reply_id is None and await has_active_tasks(source_request.app.state.redis, parent_chat_id):
             return
 
         user = await Users.get_user_by_id(user_id)
         if not user or user.role not in VERIFIED_USER_ROLES:
             return
 
-        async with Chats._chat_transaction(parent_chat_id) as (_, chat):
+        async with Chats._chat_transaction(parent_chat_id) as (db, chat):
             if not chat or chat.user_id != user_id:
                 return
 
             history = copy.deepcopy((chat.chat or {}).get('history') or {})
             messages = history.get('messages') or {}
-            pending = [
-                message
-                for message in messages.values()
-                for meta in [message.get('meta') or {}]
-                if message.get('role') == 'user'
-                and not message.get('childrenIds')
-                and (
-                    (
-                        meta.get('internal') is True
-                        and meta.get('type') == 'subagent'
+            if reply_id is not None:
+                pending = await Chats.take_steering_messages(db, chat, reply_id, user_id)
+            else:
+                if await ChatMessages.has_unsettled_steering(
+                    parent_chat_id, db=db
+                ) or await ChatMessages.get_unconfirmed_agent_execution(parent_chat_id, db=db):
+                    return
+                pending = [
+                    message
+                    for message in messages.values()
+                    for meta in [message.get('meta') or {}]
+                    if message.get('role') == 'user'
+                    and not message.get('childrenIds')
+                    and meta.get('internal') is True
+                    and (
+                        meta.get('type') == 'timer'
+                        or meta.get('type') == 'subagent'
                         and meta.get('status') in (None, 'pending')
                     )
-                    or (meta.get('internal') is True and meta.get('type') == 'timer')
-                )
-            ]
+                ]
             if not pending:
                 return
 
             first = pending[0]
+            if first.get('_prepared_reply') or not run and first.get('_saved_run'):
+                run = first['_saved_run']
             first_meta = first.get('meta') or {}
-            kind = 'timer' if first_meta.get('internal') is True and first_meta.get('type') == 'timer' else 'subagent'
+            kind = (
+                'timer'
+                if first_meta.get('internal') is True and first_meta.get('type') == 'timer'
+                else 'queued'
+                if first_meta.get('internal') is not True
+                else 'subagent'
+            )
             parent_id = first.get('parentId')
             if kind == 'timer' and first_meta.get('timer_id'):
                 timer = await Chats.get_chat_by_id(first_meta['timer_id'])
@@ -146,6 +220,12 @@ async def process_pending_internal_messages(
             model_id = first.get('model') or run['model_id']
             if kind == 'timer':
                 batch = [first]
+            elif kind == 'queued':
+                batch = [
+                    message
+                    for message in pending
+                    if message.get('parentId') == parent_id and (message.get('meta') or {}).get('internal') is not True
+                ]
             else:
                 batch = [
                     message
@@ -159,7 +239,7 @@ async def process_pending_internal_messages(
                         and meta.get('status') in (None, 'pending')
                     )
                 ]
-            combined_content = '\n\n'.join(message.get('content', '') for message in batch if message.get('content'))
+            combined_content = queued_content(batch)
             if kind == 'timer':
                 timer_ids = [
                     message['meta']['timer_id'] for message in batch if (message.get('meta') or {}).get('timer_id')
@@ -169,6 +249,9 @@ async def process_pending_internal_messages(
                     combined_meta['timer_id'] = timer_ids[0]
                 elif timer_ids:
                     combined_meta['timer_ids'] = timer_ids
+            elif kind == 'queued':
+                # The user's own words, answered as an ordinary message.
+                combined_meta = {}
             else:
                 delegation_ids = [
                     message['meta']['delegation_id']
@@ -190,7 +273,11 @@ async def process_pending_internal_messages(
                 elif subagent_chat_ids:
                     combined_meta['subagent_chat_ids'] = subagent_chat_ids
 
-            reuse_message = len(batch) == 1 and (first.get('meta') or {}).get('status') != 'pending'
+            reuse_message = (
+                bool(first.get('_prepared_reply'))
+                or len(batch) == 1
+                and (first.get('meta') or {}).get('status') != 'pending'
+            )
             user_message_id = first['id'] if reuse_message else str(uuid4())
             removed_ids = set()
             if not reuse_message:
@@ -204,7 +291,7 @@ async def process_pending_internal_messages(
                         if child_id not in removed_ids
                     ]
 
-            assistant_message_id = str(uuid4())
+            assistant_message_id = first.get('_prepared_reply') or str(uuid4())
             message_list = get_message_list(messages, parent_id)
             user_message = {
                 'id': user_message_id,
@@ -216,6 +303,11 @@ async def process_pending_internal_messages(
                 'meta': combined_meta,
                 'timestamp': int(time.time()),
             }
+            if kind == 'queued':
+                user_message.update(user_id=user.id, user={'id': user.id, 'name': user.name})
+                held_files = [file for message in batch for file in message.get('files') or []]
+                if held_files:
+                    user_message['files'] = held_files
             assistant_message = {
                 'id': assistant_message_id,
                 'parentId': user_message_id,
@@ -236,15 +328,26 @@ async def process_pending_internal_messages(
             messages[user_message_id] = {**messages.get(user_message_id, {}), **user_message}
             messages[assistant_message_id] = assistant_message
             history['messages'] = messages
-            history['currentId'] = assistant_message_id
+            if kind != 'queued' or history.get('currentId') in {
+                None,
+                reply_id,
+                user_message_id,
+                assistant_message_id,
+                *removed_ids,
+            }:
+                history['currentId'] = assistant_message_id
+                chat.current_message_id = assistant_message_id
             chat.chat = {**(chat.chat or {}), 'history': history}
-            chat.current_message_id = assistant_message_id
             chat.updated_at = int(time.time())
 
-        if removed_ids:
-            await ChatMessages.delete_message_ids_by_chat_id(parent_chat_id, removed_ids)
-        await ChatMessages.upsert_message(user_message_id, parent_chat_id, user_id, user_message)
-        await ChatMessages.upsert_message(assistant_message_id, parent_chat_id, user_id, assistant_message)
+            if removed_ids:
+                await ChatMessages.delete_message_ids_by_chat_id(parent_chat_id, removed_ids, db=db)
+            await ChatMessages.upsert_message(user_message_id, parent_chat_id, user_id, user_message, db=db)
+            await ChatMessages.upsert_message(assistant_message_id, parent_chat_id, user_id, assistant_message, db=db)
+            if kind == 'queued':
+                await Chats.record_steering_dispatch(
+                    db, parent_chat_id, reply_id, user_message, assistant_message_id, run
+                )
 
         from open_webui.socket.main import sio
 
@@ -286,7 +389,16 @@ async def process_pending_internal_messages(
             'skill_ids': run.get('skill_ids') or [],
             'filter_ids': run.get('filter_ids') or [],
             'features': run.get('features') or {},
-            'files': run.get('files') or [],
+            'files': [
+                *(run.get('files') or []),
+                # Documents attached to held messages; their images reach the model with the message itself.
+                *[
+                    file
+                    for file in user_message.get('files') or []
+                    if file.get('type') in ('doc', 'text', 'note', 'chat', 'collection', 'folder')
+                    or (file.get('type') == 'file' and not is_raster_image_content_type(file.get('content_type')))
+                ],
+            ],
             'variables': run.get('variables') or {},
             'chat_variables': chat_context.get('chat_variables'),
         }
@@ -361,19 +473,15 @@ async def delegate(
         'tool_ids': copy.deepcopy(metadata.get('tool_ids') or []),
         'skill_ids': copy.deepcopy(metadata.get('skill_ids') or []),
         'chat_context': copy.deepcopy(metadata.get('chat_context') or {}),
-        'tool_servers': [] if background else copy.deepcopy(metadata.get('tool_servers') or []),
         'filter_ids': copy.deepcopy(metadata.get('filter_ids') or []),
         'terminal_id': metadata.get('terminal_id'),
         'features': features,
         'files': copy.deepcopy(metadata.get('files') or []),
         'variables': copy.deepcopy(metadata.get('variables') or {}),
-        'direct': bool(metadata.get('direct')),
         'folder_id': folder_id,
     }
     if not run.get('model_id'):
         return 'Error: model context is required.'
-    if run.get('direct'):
-        return 'Error: sub-agents are unavailable for direct connections.'
     if model_id:
         available_models = await get_subagent_models(request, UserModel(**user_data), metadata.get('model') or {})
         available_ids = [model['id'] for model in available_models]
@@ -538,8 +646,6 @@ async def delegate(
             }
             if run.get('terminal_id'):
                 form_data['terminal_id'] = run['terminal_id']
-            if run.get('tool_servers'):
-                form_data['tool_servers'] = run['tool_servers']
             await request.app.state.CHAT_COMPLETION_HANDLER(child_request, form_data, user=user)
             message = await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
             if not message:
@@ -668,23 +774,24 @@ async def delegate(
                 updated_history = updated_chat.setdefault('history', {})
                 updated_messages = updated_history.setdefault('messages', {})
                 parent_message = updated_messages.get(parent_message_id)
-                done_assistants = [
+                is_active = await has_active_tasks(request.app.state.redis, parent_chat_id)
+                assistants = [
                     message
                     for message_id, message in updated_messages.items()
                     if message.get('role') == 'assistant'
-                    and message.get('done') is not False
+                    and (is_active or message.get('done') is not False)
                     and (
                         parent_message is None
                         or any(entry is parent_message for entry in get_message_list(updated_messages, message_id))
                     )
                 ]
                 result_parent_id = (
-                    max(done_assistants, key=lambda message: message.get('timestamp', 0)).get('id')
-                    if done_assistants
+                    max(assistants, key=lambda message: message.get('timestamp', 0)).get('id')
+                    if assistants
                     else parent_message_id
                 )
                 pending_message['parentId'] = result_parent_id
-                if await has_active_tasks(request.app.state.redis, parent_chat_id):
+                if is_active:
                     pending_message['meta']['status'] = 'pending'
                 updated_messages[pending_message_id] = pending_message
                 if result_parent_id and result_parent_id in updated_messages:

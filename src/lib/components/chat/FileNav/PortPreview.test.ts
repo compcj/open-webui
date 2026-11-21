@@ -3,7 +3,7 @@ import { parse } from 'svelte/compiler';
 import { ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
-const source = readFileSync(new URL('../ChatTabs/Browser.svelte', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../Tabs/Browser.svelte', import.meta.url), 'utf8');
 const ast = parse(source);
 const findIframe = (node: any): any => {
 	if (node?.name === 'iframe') return node;

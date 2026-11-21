@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { config, selectedTerminalId, selectedFolder, chatId } from '$lib/stores';
+import { config, settings, user, selectedTerminalId, selectedFolder, chatId } from '$lib/stores';
 import { WEBUI_BASE_URL } from '$lib/constants';
 import { convertOpenApiToToolPayload, resolveSchema } from '$lib/utils';
 import { normalizeTags } from '$lib/utils/tags';
@@ -23,13 +23,34 @@ const OPENAPI_HTTP_METHODS = new Set([
 
 // Let every request reach its destination,
 // and let those who wait receive an answer worthy of their patience.
+type ModelListContext = { terminalId: string | null; chatId?: string | null; cwd?: string | null };
+type PersonalModelConnections = {
+	OPENAI_API_BASE_URLS: string[];
+	OPENAI_API_KEYS: string[];
+	OPENAI_API_CONFIGS: Record<string, Record<string, any>>;
+};
+
 export const getModels = async (
-	token: string = '',
-	connections: object | null = null,
-	base: boolean = false,
-	refresh: boolean = false,
-	context?: { terminalId: string | null; chatId?: string | null; cwd?: string | null }
+	token = '',
+	connections?: PersonalModelConnections | boolean | null,
+	base = false,
+	refresh: boolean | ModelListContext = false,
+	context?: ModelListContext
 ) => {
+	// Upstream callers pass (base, refresh, context). Personal connections occupy
+	// a separate argument in the fork's existing API.
+	if (typeof connections === 'boolean') {
+		if (typeof refresh === 'object') context = refresh;
+		refresh = base;
+		base = connections;
+		connections = undefined;
+	} else if (typeof refresh === 'object') {
+		context = refresh;
+		refresh = false;
+	}
+	if (connections === undefined && !base && get(config)?.features?.enable_direct_connections) {
+		connections = get(settings)?.directConnections ?? null;
+	}
 	const searchParams = new URLSearchParams();
 	if (context === undefined) {
 		const terminalId = get(selectedTerminalId);
@@ -83,7 +104,7 @@ export const getModels = async (
 	let models = res?.data ?? [];
 
 	if (connections && !base) {
-		let localModels = [];
+		let localModels: Record<string, any>[] = [];
 
 		if (connections) {
 			const OPENAI_API_BASE_URLS = connections.OPENAI_API_BASE_URLS;
@@ -92,8 +113,8 @@ export const getModels = async (
 
 			const requests = [];
 			const requestIndexes: string[] = [];
-			for (const idx in OPENAI_API_BASE_URLS) {
-				const url = OPENAI_API_BASE_URLS[idx];
+			for (const [position, url] of OPENAI_API_BASE_URLS.entries()) {
+				const idx = String(position);
 
 				if (idx.toString() in OPENAI_API_CONFIGS) {
 					requestIndexes.push(idx);
@@ -106,7 +127,7 @@ export const getModels = async (
 						if (modelIds.length > 0) {
 							const modelList = {
 								object: 'list',
-								data: modelIds.map((modelId) => ({
+								data: modelIds.map((modelId: string) => ({
 									id: modelId,
 									name: modelId,
 									owned_by: 'openai',
@@ -123,7 +144,7 @@ export const getModels = async (
 						} else {
 							requests.push(
 								(async () => {
-									return await getOpenAIModelsDirect(url, OPENAI_API_KEYS[idx])
+									return await getOpenAIModelsDirect(url, OPENAI_API_KEYS[position])
 										.then((res) => {
 											return res;
 										})
@@ -158,7 +179,11 @@ export const getModels = async (
 				const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
 
 				let models = Array.isArray(response) ? response : (response?.data ?? []);
-				models = models.map((model) => ({ ...model, openai: { id: model.id }, urlIdx: idx }));
+				models = models.map((model: Record<string, any>) => ({
+					...model,
+					openai: { id: model.id },
+					urlIdx: idx
+				}));
 
 				const prefixId = apiConfig.prefix_id;
 				if (prefixId) {
@@ -187,7 +212,7 @@ export const getModels = async (
 		);
 
 		// Remove duplicates
-		const modelsMap = {};
+		const modelsMap: Record<string, Record<string, any>> = {};
 		for (const model of models) {
 			const existing = modelsMap[model.id];
 			modelsMap[model.id] = existing
@@ -509,9 +534,33 @@ export const getToolServerData = async (token: string, url: string) => {
 	return res;
 };
 
-export const getToolServersData = async (servers: object[]) => {
-	if (!get(config)?.features?.enable_tool_servers) return [];
-	return (
+type PersonalToolServer = {
+	url: string;
+	auth_type?: string;
+	key?: string;
+	path?: string;
+	spec_type?: string;
+	spec?: string;
+	enabled?: boolean;
+	config?: Record<string, any>;
+};
+
+const personalIntegrationsEnabled = () => {
+	const features = get(config)?.features;
+	const actor = get(user);
+	return !!(
+		features?.enable_tool_servers &&
+		features.enable_direct_integrations &&
+		(actor?.role === 'admin' ||
+			(actor?.role === 'user' && actor.permissions?.features?.direct_tool_servers))
+	);
+};
+
+export const getToolServersData = async (servers: PersonalToolServer[]) => {
+	const owner = get(user)?.id;
+	const current = () => !!owner && owner === get(user)?.id && personalIntegrationsEnabled();
+	if (!current()) return [];
+	const result = (
 		await Promise.all(
 			servers
 				.filter((server) => server?.config?.enable)
@@ -542,7 +591,7 @@ export const getToolServersData = async (servers: object[]) => {
 							error = err;
 							return null;
 						});
-					} else if ((specType === 'json' && server?.spec) ?? null) {
+					} else if (specType === 'json' && server?.spec) {
 						try {
 							res = JSON.parse(server?.spec);
 						} catch (e) {
@@ -577,7 +626,7 @@ export const getToolServersData = async (servers: object[]) => {
 							const configRes = await fetch(`${baseUrl}/api/config`, {
 								signal: AbortSignal.timeout(TOOL_SERVER_FETCH_TIMEOUT)
 							});
-							if (configRes.ok) {
+							if (configRes.ok && current()) {
 								const config = await configRes.json();
 								if (config?.features?.system) {
 									const headers: Record<string, string> = {};
@@ -611,7 +660,28 @@ export const getToolServersData = async (servers: object[]) => {
 					}
 				})
 		)
-	).filter((server) => server);
+	).filter((server) => server !== null);
+	return current() ? result : [];
+};
+
+export const getPersonalTerminalServers = async (servers: PersonalToolServer[]) => {
+	const results = await Promise.all(
+		servers
+			.filter((server) => server.enabled)
+			.map(async (server) => {
+				const [data] = await getToolServersData([
+					{
+						...server,
+						path: server.path ?? '/openapi.json',
+						config: { enable: true }
+					}
+				]);
+				return data && !data.error
+					? { ...data, key: server.key ?? '', config: server.config ?? {} }
+					: null;
+			})
+	);
+	return results.filter((server) => server !== null);
 };
 
 export const executeToolServer = async (

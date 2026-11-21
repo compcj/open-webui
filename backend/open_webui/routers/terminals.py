@@ -24,6 +24,8 @@ from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.chats import Chats
 from open_webui.models.groups import Groups
+from open_webui.routers.templates import router as templates_router
+from open_webui.routers.terminal_preview import router as preview_router
 from open_webui.utils.access_control import has_connection_access
 from open_webui.utils.auth import get_verified_user, get_verified_user_by_token
 from open_webui.utils.chat_id import is_saved_chat_id
@@ -37,9 +39,12 @@ from open_webui.utils.terminal_files import (
     add_file_delivery_links,
     detect_image_type,
     file_response_headers,
+    terminal_file_endpoint_id,
     verify_file_reference,
 )
 from open_webui.utils.terminals import (
+    find_terminal_connection,
+    terminal_headers,
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
     is_terminal_orchestrator,
@@ -56,6 +61,9 @@ from yarl import URL
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+# Install specific routes before the terminal catch-all proxy.
+router.include_router(templates_router, prefix='/templates')
+router.include_router(preview_router, tags=['terminal-preview'])
 
 # Response headers from a terminal are untrusted on the WebUI origin. All
 # security/MIME headers are set here, including after custom proxy headers.
@@ -203,55 +211,26 @@ async def relay_to_browser(ws, upstream):
 async def watch_access(server_id, sid, ticket, request):
     while True:
         await asyncio.sleep(10)
-        current_user, _ = await browser_access(server_id, sid, ticket, request)
-        latest = await get_terminal_connections(current_user)
-        current = next((c for c in latest if c.get('id') == server_id), None)
-        if (
-            not current
-            or not current.get('enabled', True)
-            or not ENABLE_TOOL_SERVERS
-            or not await has_connection_access(current_user, current)
-            or not terminal_context_available(current, 'chat')
-        ):
-            return
+        await browser_access(server_id, sid, ticket, request)
 
 
 @router.websocket('/{server_id}/browser/view/{sid}/{ticket}/{kind}')
 async def browser_ws(ws: WebSocket, server_id: str, sid: str, ticket: str, kind: str):
     try:
         user, data = await browser_access(server_id, sid, ticket, ws)
-        connections = await get_terminal_connections(user)
-        connection = next((c for c in connections if c.get('id') == server_id), None)
-        if (
-            kind not in ('stream', 'vnc')
-            or not ENABLE_TOOL_SERVERS
-            or not connection
-            or not connection.get('enabled', True)
-            or not await has_connection_access(user, connection)
-            or not terminal_context_available(connection, 'chat')
-        ):
+        if kind not in ('stream', 'vnc'):
             raise HTTPException(403, 'Browser access denied')
-        chat = data.get('chat', '')
-        context = data['context_id']
-        if terminal_context_config(connection, 'chat').get('context_id') == 'chat_id' and not context:
-            raise HTTPException(403, 'Saved chat required')
     except HTTPException as error:
         await ws.close(code=1013 if error.status_code == 503 else 4001)
         return
     await ws.accept()
-    base = get_terminal_server_url(connection).replace('https://', 'wss://').replace('http://', 'ws://')
+    base = data['terminal_base'].replace('https://', 'wss://').replace('http://', 'ws://')
     url = f'{base}/browser/view/{sid}/{quote(data["capability"], safe="")}/{kind}'
-    headers = {'X-User-Id': user.id}
-    if chat:
-        headers['X-Session-Id'] = chat
-    if context:
-        headers[TERMINAL_CONTEXT_HEADER] = context
-    if data['relay'].get('authorization'):
-        headers['Authorization'] = data['relay']['authorization']
+    headers = data['relay']['headers']
     tasks = []
     try:
         async with get_terminal_client(
-            base, user.id, cookies=data['relay'].get('cookies', {}), trust_env=True
+            base, user.id, service=relay_service(server_id), cookies=data['relay'].get('cookies', {}), trust_env=True
         ) as client:
             async with client.ws_connect(
                 url,
@@ -277,6 +256,12 @@ async def browser_ws(ws: WebSocket, server_id: str, sid: str, ticket: str, kind:
             await ws.close(code=1011)
 
 
+def relay_service(server_id):
+    if server_id.startswith('tether:'):
+        return server_id.split(':', 2)[2] if server_id.count(':') == 2 else 'open_terminal'
+    return 'open_terminal'
+
+
 @router.get('/')
 async def list_terminal_servers(request: Request, user=Depends(get_verified_user)):
     """Return terminal servers the authenticated user has access to."""
@@ -292,10 +277,13 @@ async def list_terminal_servers(request: Request, user=Depends(get_verified_user
             'url': '' if connection.get('owner_id') else connection.get('url', ''),
             'name': connection.get('name', ''),
             'contexts': terminal_contexts(connection),
+            'template_id': connection.get('template_id'),
+            'scope': connection.get('scope'),
             'config': {'chat_uploads': terminal_chat_uploads(connection)},
         }
         for connection in connections
-        if connection.get('enabled', True) and await has_connection_access(user, connection, user_group_ids)
+        if connection.get('enabled', True)
+        and (connection.get('template_id') or await has_connection_access(user, connection, user_group_ids))
     ]
 
 
@@ -393,15 +381,9 @@ async def _temporary_terminal_scope(request, user, metadata, *, signed_delivery=
 async def _http_terminal_context(server_id, request, user, metadata, *, require_context=False):
     if not ENABLE_TOOL_SERVERS:
         raise HTTPException(403, 'Tool servers are disabled')
-    connections = await get_terminal_connections(user)
-    connection = next((c for c in connections if c.get('id') == server_id), None)
+    connection = await find_terminal_connection(user, server_id, metadata, request=request)
     if connection is None:
         raise HTTPException(404, 'Terminal server not found')
-    if not connection.get('enabled', True):
-        raise HTTPException(403, 'Terminal server disabled')
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
-    if not await has_connection_access(user, connection, user_group_ids):
-        raise HTTPException(403, 'Access denied')
     base_url = get_terminal_server_url(connection)
     if not base_url:
         raise HTTPException(503, 'Terminal server URL not configured')
@@ -420,10 +402,10 @@ async def _http_terminal_context(server_id, request, user, metadata, *, require_
         and not context_id
     ):
         raise HTTPException(409, 'A saved context is required for this terminal')
-    headers = {'X-User-Id': user.id}
+    headers = {'X-User-Id': user.id, **terminal_headers(connection)}
     if session_id:
         headers['X-Session-Id'] = session_id
-    if context_id:
+    if context_id and not connection.get('template_id'):
         headers[TERMINAL_CONTEXT_HEADER] = context_id
     cookies = getattr(request, 'cookies', {}) if connection.get('forward_cookies', False) else {}
     auth_type = connection.get('auth_type', 'bearer')
@@ -477,7 +459,11 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
     # endpoint with the same name as a protected delivery endpoint.
     if safe_path.rstrip('/') in {'files/download', 'files/image'}:
         return _terminal_error(405, 'Method not allowed')
-    metadata = {'chat_id': request.path_params.get('chat_id') or request.headers.get('x-session-id')}
+    metadata = {
+        'chat_id': request.path_params.get('chat_id') or request.headers.get('x-session-id'),
+        'model_id': request.headers.get('x-terminal-model-id'),
+        'instance_user_id': request.headers.get('x-terminal-user-id'),
+    }
     if request.method == 'DELETE':
         segments = safe_path.strip('/').split('/')
         metadata['_temporary_cleanup'] = (len(segments) == 3 and segments[:2] == ['api', 'terminals']) or (
@@ -504,6 +490,12 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
         return _terminal_error(error.status_code, error.detail)
     if payload is not None and context_id != payload.get('context_id'):
         return _terminal_error(403, 'Terminal context has changed')
+    if (
+        payload is not None
+        and payload['v'] == 2
+        and payload['endpoint_id'] != terminal_file_endpoint_id(base_url, WEBUI_SECRET_KEY)
+    ):
+        return _terminal_error(403, 'Terminal endpoint has changed')
 
     query = (
         [('path', payload['path'])]
@@ -532,6 +524,7 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
     session = get_terminal_client(
         base_url,
         user.id,
+        service=relay_service(server_id),
         timeout=aiohttp.ClientTimeout(total=None, connect=10, sock_read=60),
         trust_env=True,
     )
@@ -550,7 +543,11 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
             await session.close()
 
     try:
-        body = await request.body()
+        body = (
+            request.stream()
+            if request.headers.get('content-length') or request.headers.get('transfer-encoding')
+            else None
+        )
         upstream = await session.request(
             method=request.method,
             url=f'{base_url}/{safe_path}',
@@ -584,6 +581,7 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
                     owner_id=user.id,
                     metadata=metadata,
                     secret=WEBUI_SECRET_KEY,
+                    base_url=base_url,
                     context_id=context_id,
                 )
                 data = JSONCodec.dumps(result).encode('utf-8')
@@ -591,7 +589,7 @@ async def _proxy_http(server_id, path, request, user, *, reference=None, image_o
                 browser_session = JSONCodec.loads(data)
                 if isinstance(browser_session, dict) and browser_session.get('id') and browser_session.get('token'):
                     browser_session['token'] = await browser_ticket(
-                        server_id, user.id, metadata, browser_session, request
+                        server_id, user.id, metadata, browser_session, request, expected_instance=(base_url, context_id)
                     )
                     data = JSONCodec.dumps(browser_session).encode('utf-8')
             response_headers['Content-Type'] = 'application/json'
@@ -697,11 +695,11 @@ async def _resolve_authenticated_connection(ws: WebSocket, server_id: str):
         await ws.close(code=4001, reason='Invalid token')
         return None
 
+    ws.state.auth = payload
     result = await _resolve_terminal_access(ws, server_id, token)
     if result is None:
         return None
     user, connection = result
-    ws.state.auth = payload
     chat_id = payload.get('chat_id', '')
     chat_id = chat_id if isinstance(chat_id, str) else ''
     if is_saved_chat_id(chat_id) and not await Chats.get_accessible_chat_by_id(chat_id, user):
@@ -738,8 +736,11 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
     if not ENABLE_TOOL_SERVERS:
         await ws.close(code=4003, reason='Tool servers are disabled')
         return None
-    connections = await get_terminal_connections(user)
-    connection = next((c for c in connections if c.get('id') == server_id), None)
+    try:
+        connection = await find_terminal_connection(user, server_id, socket_metadata(ws), request=ws)
+    except HTTPException as error:
+        await ws.close(code=1013 if error.status_code == 503 else 4003, reason='Terminal access denied')
+        return None
 
     if connection is None:
         if server_id.startswith('tether:'):
@@ -752,7 +753,7 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
         await ws.close(code=4003, reason='Terminal server disabled')
         return None
 
-    if not await has_connection_access(user, connection):
+    if not connection.get('template_id') and not await has_connection_access(user, connection):
         await ws.close(code=4003, reason='Access denied')
         return None
 
@@ -823,7 +824,7 @@ async def _proxy_terminal_websocket(
 
     upstream_params = {}
     # For orchestrator-backed servers, pass user_id
-    upstream_params['user_id'] = user.id
+    upstream_params['user_id'] = connection.get('instance_user_id') or user.id
     if stream_path.startswith('execute/'):
         for key in ('offset', 'tail'):
             if key in ws.query_params:
@@ -833,13 +834,13 @@ async def _proxy_terminal_websocket(
     )
     # Match the ownership headers used to create the session via HTTP. Open
     # Terminal checks both when attaching, independently of first-message auth.
-    upstream_headers = {'X-User-Id': user.id}
+    upstream_headers = {'X-User-Id': user.id, **terminal_headers(connection)}
     if chat_id:
         upstream_headers['X-Session-Id'] = chat_id
     if terminal_context_config(connection, 'chat').get('context_id') == 'chat_id' and not context_id:
         await ws.close(code=4003, reason='A saved chat is required for this terminal')
         return
-    if context_id:
+    if context_id and not connection.get('template_id'):
         upstream_headers[TERMINAL_CONTEXT_HEADER] = context_id
 
     import urllib.parse
@@ -855,7 +856,7 @@ async def _proxy_terminal_websocket(
 
     request = Request({**ws.scope, 'type': 'http', 'method': 'GET'})
     opened = False
-    session = get_terminal_client(base_url, user.id)
+    session = get_terminal_client(base_url, user.id, service=relay_service(server_id))
     try:
         async with session.ws_connect(
             upstream_url,
@@ -980,3 +981,12 @@ async def _proxy_terminal_websocket(
             await ws.close()
         except Exception:
             pass
+
+
+def socket_metadata(ws):
+    auth = getattr(ws.state, 'auth', {})
+    return {
+        'instance_user_id': auth.get('instance_user_id'),
+        'chat_id': auth.get('chat_id'),
+        'model_id': auth.get('model_id'),
+    }

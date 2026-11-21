@@ -26,13 +26,16 @@ const dependencies: Record<string, any> = {
 	'fast-deep-equal': { default: equal },
 	'./structuredOutput': structuredOutput,
 	'./messageAttachments': messageAttachments,
+	'$lib/components/chat/context': {
+		getChatContext: () => dependencies['$lib/stores']
+	},
 	'$lib/stores': {
 		settings,
 		models: writable([]),
 		config: writable({}),
 		user: writable(null),
 		audioQueue: writable(null),
-		temporaryChatEnabled: writable(false),
+		temporaryChat: writable(false),
 		TTSWorker: writable(null)
 	},
 	'$lib/utils': {

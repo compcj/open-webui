@@ -9,6 +9,7 @@ import { type Writable, derived, get, writable } from 'svelte/store';
 import type { CommentTarget } from '$lib/apis/comments';
 import type { ModelConfig } from '$lib/apis';
 import type { Banner } from '$lib/types';
+import type { FolderDetails } from './folderStates';
 import type { Socket } from 'socket.io-client';
 import type { AudioQueue, NotificationSoundStyle } from '$lib/utils/audio';
 import { canUseTemporaryChat } from '$lib/utils/chat-access';
@@ -88,7 +89,7 @@ export type SelectedFolder = {
 	data?: { model_ids?: string[]; [key: string]: unknown };
 	meta?: Record<string, any>;
 };
-export const selectedFolder: Writable<SelectedFolder | null> = writable(null);
+export const selectedFolder = writable<FolderDetails | null>(null);
 
 export const models: Writable<Model[]> = writable([]);
 
@@ -110,6 +111,26 @@ export type WorkspaceFunction = {
 };
 export const functions: Writable<WorkspaceFunction[] | null> = writable(null);
 
+export type ImageModel = {
+	id: string;
+	name: string;
+	model: string;
+	connection_id: string;
+	connection_name: string;
+	image_generation: boolean;
+	image_edit: boolean;
+};
+export const imageModels: Writable<null | ImageModel[]> = writable(null);
+
+export type VideoModel = {
+	id: string;
+	name: string;
+	model: string;
+	connection_id: string;
+	connection_name: string;
+};
+export const videoModels: Writable<null | VideoModel[]> = writable(null);
+
 export type WorkspaceSection = 'models' | 'knowledge' | 'prompts' | 'skills' | 'tools';
 export type WorkspaceAction = {
 	id: string;
@@ -119,14 +140,6 @@ export type WorkspaceAction = {
 	visible?: boolean;
 };
 
-export const workspaceCounts: Writable<Record<WorkspaceSection, number | null>> = writable({
-	models: null,
-	knowledge: null,
-	prompts: null,
-	skills: null,
-	tools: null
-});
-export const workspaceActions: Writable<WorkspaceAction[]> = writable([]);
 export const adminUserCount: Writable<number | null> = writable(null);
 export const adminGroupCount: Writable<number | null> = writable(null);
 export const adminLeaderboardCount: Writable<number | null> = writable(null);
@@ -202,14 +215,18 @@ export const showTabs = writable<
 	| 'comments'
 	| 'files'
 	| 'side'
+	| 'chat'
 	| 'voice'
 	| (CommentTarget & { tab: 'comments'; comment_id?: string })
 >(false);
 export const showEmbeds = writable(false);
-export const showOverview = writable(false);
-export const showArtifacts = writable(false);
-export const showCallOverlay = writable(false);
-export const showFileNav = writable(false);
+/** A voice call is open in the main chat's voice tab. */
+export const voiceCall = writable(false);
+export const showFileNav = writable<{
+	terminalId: string;
+	directory: string;
+	chatId: string | null;
+} | null>(null);
 export type FileNavOpenRequest = string | { path: string; page?: number | null };
 export const showFileNavPath: Writable<FileNavOpenRequest | null> = writable(null);
 export const showFileNavDir: Writable<string | null> = writable(null);
@@ -230,6 +247,10 @@ export const temporaryChatAllowed = derived([config, user], ([$config, $user]) =
 );
 export const openSideChatIds = writable<Set<string>>(new Set());
 export const sideChatRequest = writable<{ parentId: string; prompt: string } | null>(null);
+/** Whether the main chat is temporary, or for a new chat, whether it starts as one. */
+export const temporaryChat = temporaryChatEnabled;
+export const openEmbeddedChatIds = writable<Set<string>>(new Set());
+export const chatTabRequest = writable<{ parentChatId: string; prompt: string } | null>(null);
 
 export type QueryData = {
 	query: string;
@@ -249,10 +270,12 @@ export const isLastActiveTab = writable(true);
 export type Model = OpenAIModel | OllamaModel | ArenaModel | AgentModel;
 
 export interface AgentModel extends BaseModel {
+	legacy_id?: string | null;
 	owned_by: 'terminal';
 	agent: {
 		terminal_id: string;
-		provider: 'codex' | 'claude-code' | 'cursor' | 'grok' | 'opencode' | 'cline' | 'gemini' | 'pi';
+		// Built-in ids such as 'codex' or 'claude-code', or 'acp-<id>' for agents configured in Open Terminal.
+		provider: string;
 		model: string;
 	};
 }
@@ -280,6 +303,9 @@ export interface OpenAIModel extends BaseModel {
 	owned_by: 'openai';
 	external: boolean;
 	source?: string;
+	// Set on the user's own connections, which the server reaches through their Tether.
+	owner_id?: string;
+	base_url?: string;
 }
 
 export interface OllamaModel extends BaseModel {
@@ -320,9 +346,17 @@ type OllamaModelDetails = {
 type Settings = {
 	enableMessageQueue?: boolean;
 	pinnedModels?: string[];
+	directConnections?: {
+		OPENAI_API_BASE_URLS: string[];
+		OPENAI_API_KEYS: string[];
+		OPENAI_API_CONFIGS: Record<string, any>;
+	};
+	tetherTerminalUploads?: Record<string, 'default' | 'filesystem'>;
 	toolServers?: any[];
 	terminalServers?: {
 		url: string;
+		auth_type?: string;
+		path?: string;
 		key?: string;
 		name?: string;
 		enabled?: boolean;
@@ -370,7 +404,6 @@ type Settings = {
 	scrollOnBranchChange?: boolean;
 	scrollOnResponseGeneration?: boolean;
 	terminalFileDisplay?: 'sidebar' | 'inline';
-	directConnections?: null;
 	chatBubble?: boolean;
 	copyFormatted?: boolean;
 	models?: string[];
@@ -500,6 +533,7 @@ type Config = {
 		enable_image_generation: boolean;
 		enable_code_interpreter?: boolean;
 		enable_message_rating?: boolean;
+		enable_video_generation?: boolean;
 		enable_admin_export: boolean;
 		enable_admin_chat_access: boolean;
 		enable_admin_analytics: boolean;
@@ -519,6 +553,8 @@ type Config = {
 		enable_functions?: boolean;
 		enable_tool_servers?: boolean;
 		enable_terminal_servers?: boolean;
+		// The user's own terminals, models and tool servers come from their Tether.
+		tether?: boolean;
 		enable_apps?: boolean;
 		enable_autocomplete_generation: boolean;
 		enable_title_generation: boolean;

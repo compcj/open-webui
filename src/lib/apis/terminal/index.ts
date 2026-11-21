@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { config } from '$lib/stores';
+import { config, settings, user } from '$lib/stores';
 import { checkSourceSize, readSourceResponse } from './sourceText';
 // The same attachment is used by @mentions, terminal uploads, and Files-pane requests.
 export type FilesystemFile = {
@@ -100,6 +100,12 @@ export type TerminalSystemInfo = {
 				memory_bytes: number;
 		  }[]
 		| null;
+	/** Present when the terminal has a setup script. */
+	setup?: {
+		status: 'running' | 'ok' | 'failed';
+		exit_code?: number;
+		log_tail?: string;
+	};
 };
 
 export type TerminalFeatures = {
@@ -113,17 +119,13 @@ export type TerminalFeatures = {
 
 // Missing flags mean unsupported; never probe a new endpoint on an older server.
 export async function getTerminalFeatures(
-	connection: TerminalConnection,
-	chatId: string | null,
+	target: Pick<TerminalTarget, 'baseUrl' | 'key' | 'context'>,
 	signal?: AbortSignal
 ): Promise<TerminalFeatures> {
 	try {
-		const result = await terminalRequest<{ features?: TerminalFeatures }>(
-			connection,
-			chatId,
-			'/api/config',
-			{ signal }
-		);
+		const result = await terminalRequest<{ features?: TerminalFeatures }>(target, '/api/config', {
+			signal
+		});
 		return result.features ?? {};
 	} catch {
 		return {};
@@ -148,7 +150,6 @@ export type TerminalSkill = {
 	is_active: boolean;
 	source: 'terminal';
 	terminal_path: string;
-	terminal_scope: 'global';
 	terminal_selector: string;
 	terminal_name?: string;
 };
@@ -170,6 +171,16 @@ export type TerminalConnection = {
 	baseUrl: string;
 	key: TerminalCredential;
 	system: boolean;
+	context?: TerminalTarget['context'];
+};
+
+export type TerminalTarget = {
+	selector: string;
+	baseUrl: string;
+	key: TerminalCredential;
+	system: boolean;
+	/** userId names another person's instance; only someone who manages the terminal may reach it. */
+	context: { userId?: string | null; chatId: string | null; modelId: string | null };
 };
 export type TerminalProcess = {
 	id: string;
@@ -183,34 +194,118 @@ export type TerminalProcessOutput = TerminalProcess & {
 	truncated: boolean;
 };
 
-export const resolveTerminalConnection = (
+const hasPersonalTerminalPermission = () => {
+	const actor = get(user);
+	return (
+		actor?.role === 'admin' ||
+		(actor?.role === 'user' && actor.permissions?.features?.direct_tool_servers === true)
+	);
+};
+
+export const resolveTerminalTarget = (
 	selector: string | null,
 	servers: any[],
-	directServers: any[],
-	token: string
-): TerminalConnection | null => {
+	token: TerminalCredential,
+	context: Partial<TerminalTarget['context']> = {},
+	directServers = get(settings)?.terminalServers ?? []
+): TerminalTarget | null => {
 	const features = get(config)?.features;
-	if (!features?.enable_tool_servers || !selector) return null;
-	if (selector.startsWith('tether:') && !features.enable_tether) return null;
-	if (servers.some((server) => server.id === selector)) {
+	const actorId = get(user)?.id;
+	if (
+		!features?.enable_tool_servers ||
+		!selector ||
+		(selector.startsWith('tether:') && !features.enable_tether)
+	)
+		return null;
+	const server = servers.find((server) => server.id === selector);
+	if (server) {
+		if (server.scope === 'model' && !context.modelId) return null;
 		return {
 			selector,
 			baseUrl: `${WEBUI_API_BASE_URL}/terminals/${encodeURIComponent(selector)}`,
+			context: {
+				userId: context.userId ?? null,
+				chatId: context.chatId ?? null,
+				modelId: server.scope === 'model' ? (context.modelId ?? null) : null
+			},
 			// Panels outlive Tether's token rotations; read the current session at request time.
 			get key() {
-				return typeof localStorage === 'undefined' ? token : (localStorage.getItem('token') ?? '');
+				if (get(user)?.id !== actorId) return '';
+				return typeof token !== 'string' || typeof localStorage === 'undefined'
+					? token
+					: (localStorage.getItem('token') ?? '');
 			},
 			system: true
 		};
 	}
-	if (!get(config)?.features?.enable_direct_integrations) return null;
-	const direct = directServers.find(
-		(server) => server.url === selector && server.enabled !== false
-	);
+	if (
+		!features.enable_direct_integrations ||
+		!hasPersonalTerminalPermission() ||
+		selector.startsWith('tether:') ||
+		selector.startsWith('template:')
+	)
+		return null;
+	const direct = directServers.find((item) => item.url === selector && item.enabled !== false);
 	return direct
-		? { selector, baseUrl: direct.url.replace(/\/$/, ''), key: direct.key ?? '', system: false }
+		? {
+				selector,
+				baseUrl: direct.url.replace(/\/$/, ''),
+				key: direct.key ?? '',
+				system: false,
+				context: { chatId: context.chatId ?? null, modelId: null }
+			}
 		: null;
 };
+
+export const resolveTerminalConnection = (
+	selector: string | null,
+	servers: any[],
+	directServers: any[],
+	token: TerminalCredential
+) => resolveTerminalTarget(selector, servers, token, {}, directServers);
+
+type RequestTarget = Pick<TerminalTarget, 'key' | 'baseUrl'> &
+	Partial<Pick<TerminalTarget, 'context' | 'selector' | 'system'>>;
+
+function legacyTarget(
+	baseUrl: string,
+	key: TerminalCredential,
+	chatId?: string | null
+): TerminalTarget {
+	const api = new URL(WEBUI_API_BASE_URL, browserOrigin());
+	const url = new URL(baseUrl, api.origin);
+	const prefix = api.pathname.replace(/\/$/, '') + '/terminals/';
+	const canonical = url.origin === api.origin && url.pathname.startsWith(prefix);
+	const proxy = url.origin === api.origin && (canonical || baseUrl.startsWith('/'));
+	const selector = canonical
+		? decodeURIComponent(url.pathname.slice(prefix.length).split('/')[0])
+		: baseUrl;
+	return {
+		baseUrl,
+		key,
+		selector,
+		system: proxy,
+		context: { chatId: chatId ?? null, modelId: null }
+	};
+}
+
+// Older browser integrations pass the session separately. Both forms use the same checked target.
+function withLegacyTerminalArgs<A extends unknown[], R>(
+	operation: (target: TerminalTarget, ...args: A) => R,
+	chatIndex: number
+) {
+	function call(target: TerminalTarget, ...args: A): R;
+	function call(baseUrl: string, key: TerminalCredential, ...args: unknown[]): R;
+	function call(target: TerminalTarget | string, ...args: unknown[]): R {
+		if (typeof target === 'string') {
+			const key = args.shift() as TerminalCredential;
+			const [chatId] = args.splice(chatIndex, 1) as [string | undefined];
+			target = legacyTarget(target, key, chatId);
+		}
+		return operation(target, ...(args as A));
+	}
+	return call;
+}
 
 export class TerminalRequestError extends Error {
 	constructor(
@@ -223,17 +318,24 @@ export class TerminalRequestError extends Error {
 }
 
 export const terminalRequest = async <T>(
-	connection: TerminalConnection,
-	chatId: string | null,
-	path: string,
-	options: RequestInit = {}
+	target: RequestTarget,
+	pathOrChat: string | null,
+	optionsOrPath: RequestInit | string = {},
+	legacyOptions: RequestInit = {}
 ): Promise<T> => {
-	const cleanup = options.method === 'DELETE' && /^\/api\/terminals\/[^/]+$/.test(path);
-	const response = await fetch(`${connection.baseUrl}${path}`, {
+	const legacy = typeof optionsOrPath === 'string';
+	const path = legacy ? optionsOrPath : pathOrChat;
+	const options = legacy ? legacyOptions : optionsOrPath;
+	const cleanup = options.method === 'DELETE' && /^\/api\/terminals\/[^/]+$/.test(path ?? '');
+	if (legacy)
+		target = {
+			...target,
+			context: { ...target.context, chatId: pathOrChat, modelId: target.context?.modelId ?? null }
+		};
+	const response = await fetch(`${target.baseUrl}${path}`, {
 		...options,
 		headers: {
-			...terminalConnectionHeaders(connection, cleanup),
-			...(chatId ? { 'X-Session-Id': chatId } : {}),
+			...terminalHeaders(target, cleanup),
 			...options.headers
 		}
 	});
@@ -251,16 +353,30 @@ export const terminalRequest = async <T>(
 	return response.json();
 };
 
-export const terminalConnectionHeaders = (connection: TerminalConnection, cleanup = false) => {
+export const terminalHeaders = (
+	target: Pick<RequestTarget, 'key' | 'context' | 'system' | 'selector'>,
+	cleanup = false
+): Record<string, string> => {
 	const features = get(config)?.features;
 	if (!cleanup && !features?.enable_tool_servers)
 		throw new TerminalRequestError('Tool servers are disabled', 403);
-	if (!cleanup && !connection.system && !features?.enable_direct_integrations)
+	if (
+		!cleanup &&
+		target.system === false &&
+		(!features?.enable_direct_integrations || !hasPersonalTerminalPermission())
+	)
 		throw new TerminalRequestError('Direct integrations are disabled', 403);
-	if (!cleanup && connection.selector?.startsWith('tether:') && !features?.enable_tether)
+	if (!cleanup && target.selector?.startsWith('tether:') && !features?.enable_tether)
 		throw new TerminalRequestError('Tether is disabled', 403);
-	return bearerHeaders(connection.key, cleanup);
+	return {
+		...bearerHeaders(target.key, cleanup),
+		...(target.context?.userId ? { 'X-Terminal-User-Id': target.context.userId } : {}),
+		...(target.context?.chatId ? { 'X-Session-Id': target.context.chatId } : {}),
+		...(target.context?.modelId ? { 'X-Terminal-Model-Id': target.context.modelId } : {})
+	};
 };
+
+export const terminalConnectionHeaders = terminalHeaders;
 
 const bearerHeaders = (apiKey: TerminalCredential, cleanup = false): Record<string, string> => {
 	if (!cleanup && !get(config)?.features?.enable_tool_servers)
@@ -323,35 +439,36 @@ export const validateDeliveryUrl = (
 	}
 };
 
-export const getFileDelivery = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<TerminalFileDelivery | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/display?path=${encodeURIComponent(path)}`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
-	if (!res?.ok) return null;
-	const result = await res.json().catch(() => null);
-	if (
-		!result ||
-		result.exists !== true ||
-		typeof result.path !== 'string' ||
-		typeof result.owner_id !== 'string'
-	) {
-		return null;
-	}
-	const downloadUrl = validateDeliveryUrl(result.download_url, baseUrl, 'download');
-	if (!downloadUrl) return null;
-	const imageUrl = result.image_url
-		? validateDeliveryUrl(result.image_url, baseUrl, 'image')
-		: undefined;
-	if (result.image_url && !imageUrl) return null;
-	return { ...result, download_url: downloadUrl, ...(imageUrl ? { image_url: imageUrl } : {}) };
-};
+export const getFileDelivery = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string,
+		signal?: AbortSignal
+	): Promise<TerminalFileDelivery | null> => {
+		const baseUrl = target.baseUrl;
+		const url = baseUrl.replace(/\/$/, '') + '/files/display?path=' + encodeURIComponent(path);
+		const headers = terminalHeaders(target);
+		const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
+		if (!res?.ok) return null;
+		const result = await res.json().catch(() => null);
+		if (
+			!result ||
+			result.exists !== true ||
+			typeof result.path !== 'string' ||
+			typeof result.owner_id !== 'string'
+		) {
+			return null;
+		}
+		const downloadUrl = validateDeliveryUrl(result.download_url, baseUrl, 'download');
+		if (!downloadUrl) return null;
+		const imageUrl = result.image_url
+			? validateDeliveryUrl(result.image_url, baseUrl, 'image')
+			: undefined;
+		if (result.image_url && !imageUrl) return null;
+		return { ...result, download_url: downloadUrl, ...(imageUrl ? { image_url: imageUrl } : {}) };
+	},
+	1
+);
 
 const deliveryFilename = (response: Response) => {
 	const disposition = response.headers.get('content-disposition') ?? '';
@@ -366,22 +483,39 @@ const deliveryFilename = (response: Response) => {
 	return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? 'file';
 };
 
-export const downloadDeliveryFile = async (
+export function downloadDeliveryFile(
+	url: string,
+	target: TerminalTarget,
+	signal?: AbortSignal
+): Promise<{ blob: Blob; filename: string } | null>;
+export function downloadDeliveryFile(
 	url: string,
 	baseUrl: string,
-	apiKey: TerminalCredential,
-	sessionId?: string,
+	key: TerminalCredential,
+	chatId?: string,
 	signal?: AbortSignal
-): Promise<{ blob: Blob; filename: string } | null> => {
-	const validated = validateDeliveryUrl(url, baseUrl, 'download');
+): Promise<{ blob: Blob; filename: string } | null>;
+export async function downloadDeliveryFile(
+	url: string,
+	connection: TerminalTarget | string,
+	credentialOrSignal?: TerminalCredential | AbortSignal,
+	chatId?: string,
+	legacySignal?: AbortSignal
+) {
+	const target =
+		typeof connection === 'string'
+			? legacyTarget(connection, credentialOrSignal as TerminalCredential, chatId)
+			: connection;
+	const signal =
+		typeof connection === 'string' ? legacySignal : (credentialOrSignal as AbortSignal | undefined);
+	const validated = validateDeliveryUrl(url, target.baseUrl, 'download');
 	if (!validated) return null;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const headers = terminalHeaders(target);
 	const res = await fetch(validated, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
 	if (!res?.ok) return null;
 	const blob = await res.blob().catch(() => null);
 	return blob ? { blob, filename: deliveryFilename(res) } : null;
-};
+}
 
 export const joinTerminalPath = (base: string, child: string) => {
 	if (!child) return base;
@@ -399,10 +533,12 @@ const hasHiddenPathPart = (path: string) =>
 		.some((part) => part.startsWith('.'));
 
 export type TerminalServer = {
+	contexts?: Record<string, false | { context_id?: string }>;
+	template_id?: string;
+	scope?: 'user' | 'chat' | 'model' | null;
 	id: string;
 	url: string;
 	name: string;
-	contexts?: Record<string, false | { context_id?: string }>;
 	config?: {
 		chat_uploads?: 'default' | 'filesystem';
 		[key: string]: unknown;
@@ -435,562 +571,554 @@ export const getTerminalConfig = async (
 	return res.json().catch(() => null);
 };
 
-export const getCwd = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	sessionId?: string
-): Promise<TerminalCwd | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/cwd`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
-	if (!res || !res.ok) return null;
-	const json = await res.json().catch(() => null);
-	if (!json) return null;
-	return {
-		cwd: json?.cwd ?? null,
-		home: json?.home,
-		root: json?.root
-	};
-};
+export const getCwd = withLegacyTerminalArgs(
+	async (target: TerminalTarget): Promise<TerminalCwd | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/cwd`;
+		const headers: Record<string, string> = terminalHeaders(target);
 
-export const listFiles = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string = '/',
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<TerminalFileList | null> => {
-	// The endpoint uses `directory` as the query param name
-	const url = `${baseUrl.replace(/\/$/, '')}/files/list?directory=${encodeURIComponent(path)}`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) })
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			if (err?.name !== 'AbortError') console.error('open-terminal listFiles error:', err);
+		const res = await fetch(url, { headers }).catch(() => null);
+		if (!res || !res.ok) return null;
+		const json = await res.json().catch(() => null);
+		if (!json) return null;
+		return {
+			cwd: json?.cwd ?? null,
+			home: json?.home,
+			root: json?.root
+		};
+	},
+	0
+);
+
+export const listFiles = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string = '/',
+		signal?: AbortSignal
+	): Promise<TerminalFileList | null> => {
+		// The endpoint uses `directory` as the query param name
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/list?directory=${encodeURIComponent(path)}`;
+		const headers: Record<string, string> = terminalHeaders(target);
+
+		const res = await fetch(url, { headers, ...(signal ? { signal } : {}) })
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				if (err?.name !== 'AbortError') console.error('open-terminal listFiles error:', err);
+				return null;
+			});
+		return res?.entries ? { entries: res.entries, writable: res.writable } : null;
+	},
+	1
+);
+
+export const searchFiles = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		query: string,
+		path: string = '.',
+		limit: number = 20,
+		type: 'file' | 'directory' | 'any' = 'any',
+		showHidden: boolean = false,
+		signal?: AbortSignal
+	): Promise<TerminalFileSearchResponse | null> => {
+		const headers: Record<string, string> = terminalHeaders(target);
+
+		const searchParams = new URLSearchParams({
+			query,
+			path,
+			limit: String(limit),
+			type,
+			show_hidden: String(showHidden)
+		});
+		const base = target.baseUrl.replace(/\/$/, '');
+		const searchRes = await fetch(`${base}/files/search?${searchParams.toString()}`, {
+			headers,
+			signal
+		}).catch(() => null);
+
+		if (searchRes?.ok) {
+			const json = await searchRes.json().catch(() => null);
+			if (Array.isArray(json?.results)) return { results: json.results };
+		}
+
+		if (signal?.aborted) return null;
+
+		const globParams = new URLSearchParams({
+			pattern: query.trim() ? `*${query.trim()}*` : '*',
+			path,
+			type,
+			max_results: String(limit)
+		});
+		const globRes = await fetch(`${base}/files/glob?${globParams.toString()}`, {
+			headers,
+			signal
+		}).catch((err) => {
+			if (!signal?.aborted) console.error('open-terminal searchFiles error:', err);
 			return null;
 		});
-	return res?.entries ? { entries: res.entries, writable: res.writable } : null;
-};
+		if (!globRes?.ok) return null;
 
-export const searchFiles = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	query: string,
-	path: string = '.',
-	limit: number = 20,
-	type: 'file' | 'directory' | 'any' = 'any',
-	sessionId?: string,
-	showHidden: boolean = false,
-	signal?: AbortSignal
-): Promise<TerminalFileSearchResponse | null> => {
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
+		const json = await globRes.json().catch(() => null);
+		const root = json?.path ?? path;
+		return {
+			results: (json?.matches ?? [])
+				.filter((item: FileEntry & { path: string }) => showHidden || !hasHiddenPathPart(item.path))
+				.map((item: FileEntry & { path: string }) => ({
+					path: joinTerminalPath(root, item.path),
+					name: basename(item.path),
+					type: item.type,
+					size: item.size,
+					modified: item.modified
+				}))
+		};
+	},
+	4
+);
 
-	const searchParams = new URLSearchParams({
-		query,
-		path,
-		limit: String(limit),
-		type,
-		show_hidden: String(showHidden)
-	});
-	const base = baseUrl.replace(/\/$/, '');
-	const searchRes = await fetch(`${base}/files/search?${searchParams.toString()}`, {
-		headers,
-		signal
-	}).catch(() => null);
+export const getFileMatches = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		query: string,
+		path: string = '.',
+		showHidden: boolean = false,
+		offset: number = 0,
+		signal?: AbortSignal
+	): Promise<TerminalFileMatchesResponse | null> => {
+		const headers: Record<string, string> = terminalHeaders(target);
 
-	if (searchRes?.ok) {
-		const json = await searchRes.json().catch(() => null);
-		if (Array.isArray(json?.results)) return { results: json.results };
-	}
+		const params = new URLSearchParams({
+			query,
+			path,
+			show_hidden: String(showHidden),
+			offset: String(offset)
+		});
+		const res = await fetch(
+			`${target.baseUrl.replace(/\/$/, '')}/files/matches?${params.toString()}`,
+			{
+				headers,
+				signal
+			}
+		).catch((err) => {
+			if (err?.name !== 'AbortError') console.error('open-terminal getFileMatches error:', err);
+			return null;
+		});
+		if (!res?.ok) return null;
+		const json = await res.json().catch(() => null);
+		return Array.isArray(json?.results) ? json : null;
+	},
+	4
+);
 
-	if (signal?.aborted) return null;
+export const readComparisonSource = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string,
+		signal: AbortSignal,
+		size?: number
+	): Promise<string> => {
+		checkSourceSize(size);
+		const headers = terminalHeaders(target);
 
-	const globParams = new URLSearchParams({
-		pattern: query.trim() ? `*${query.trim()}*` : '*',
-		path,
-		type,
-		max_results: String(limit)
-	});
-	const globRes = await fetch(`${base}/files/glob?${globParams.toString()}`, {
-		headers,
-		signal
-	}).catch((err) => {
-		if (!signal?.aborted) console.error('open-terminal searchFiles error:', err);
-		return null;
-	});
-	if (!globRes?.ok) return null;
+		const response = await fetch(
+			`${target.baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`,
+			{ headers, signal }
+		).catch(() => {
+			signal.throwIfAborted();
+			throw new Error('Could not read file. Check your terminal connection.');
+		});
+		return readSourceResponse(response, signal);
+	},
+	2
+);
 
-	const json = await globRes.json().catch(() => null);
-	const root = json?.path ?? path;
-	return {
-		results: (json?.matches ?? [])
-			.filter((item: FileEntry & { path: string }) => showHidden || !hasHiddenPathPart(item.path))
-			.map((item: FileEntry & { path: string }) => ({
-				path: joinTerminalPath(root, item.path),
-				name: basename(item.path),
-				type: item.type,
-				size: item.size,
-				modified: item.modified
-			}))
-	};
-};
+export const readFile = withLegacyTerminalArgs(
+	async (target: TerminalTarget, path: string, signal?: AbortSignal): Promise<string | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/read?path=${encodeURIComponent(path)}`;
+		const headers: Record<string, string> = terminalHeaders(target);
 
-export const getFileMatches = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	query: string,
-	path: string = '.',
-	showHidden: boolean = false,
-	offset: number = 0,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<TerminalFileMatchesResponse | null> => {
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
+		const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch((err) => {
+			if (err?.name !== 'AbortError') console.error('open-terminal readFile error:', err);
+			return null;
+		});
 
-	const params = new URLSearchParams({
-		query,
-		path,
-		show_hidden: String(showHidden),
-		offset: String(offset)
-	});
-	const res = await fetch(`${baseUrl.replace(/\/$/, '')}/files/matches?${params.toString()}`, {
-		headers,
-		signal
-	}).catch((err) => {
-		if (err?.name !== 'AbortError') console.error('open-terminal getFileMatches error:', err);
-		return null;
-	});
-	if (!res?.ok) return null;
-	const json = await res.json().catch(() => null);
-	return Array.isArray(json?.results) ? json : null;
-};
+		if (!res || !res.ok) return null;
 
-export const readComparisonSource = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	signal: AbortSignal,
-	sessionId?: string,
-	size?: number
-): Promise<string> => {
-	checkSourceSize(size);
-	const headers = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const response = await fetch(
-		`${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`,
-		{ headers, signal }
-	).catch(() => {
-		signal.throwIfAborted();
-		throw new Error('Could not read file. Check your terminal connection.');
-	});
-	return readSourceResponse(response, signal);
-};
+		const contentType = res.headers.get('content-type') ?? '';
+		if (contentType.startsWith('image/') || contentType.startsWith('application/octet')) {
+			// Binary — return a placeholder
+			return `[Binary file: ${contentType}]`;
+		}
 
-export const readFile = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<string | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/read?path=${encodeURIComponent(path)}`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch((err) => {
-		if (err?.name !== 'AbortError') console.error('open-terminal readFile error:', err);
-		return null;
-	});
-
-	if (!res || !res.ok) return null;
-
-	const contentType = res.headers.get('content-type') ?? '';
-	if (contentType.startsWith('image/') || contentType.startsWith('application/octet')) {
-		// Binary — return a placeholder
-		return `[Binary file: ${contentType}]`;
-	}
-
-	// Text files: endpoint returns JSON { path, total_lines, content }
-	// Binary image files: endpoint returns raw bytes (handled above)
-	const json = await res.json().catch(() => null);
-	return json?.content ?? null;
-};
+		// Text files: endpoint returns JSON { path, total_lines, content }
+		// Binary image files: endpoint returns raw bytes (handled above)
+		const json = await res.json().catch(() => null);
+		return json?.content ?? null;
+	},
+	1
+);
 
 export const listTerminalSkills = async (
-	connection: TerminalConnection | null,
-	chatId?: string | null
+	target: TerminalTarget | null
 ): Promise<TerminalSkill[]> => {
-	if (!connection) return [];
+	if (!target) return [];
 
-	const skills = await terminalRequest<TerminalSkill[]>(
-		connection,
-		chatId ?? null,
-		'/skills'
-	).catch(() => []);
+	const skills = await terminalRequest<TerminalSkill[]>(target, '/skills').catch(() => []);
 
 	return (Array.isArray(skills) ? skills : []).map((skill) => ({
 		...skill,
 		is_active: true,
 		source: 'terminal',
 		terminal_path: skill.terminal_path ?? (skill as any).location ?? '',
-		terminal_scope: skill.terminal_scope ?? (skill as any).scope ?? 'global',
-		terminal_selector: connection.selector,
-		terminal_name: connection.selector
+		terminal_selector: target.selector,
+		terminal_name: target.selector
 	}));
 };
 
-export const downloadFileBlob = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<{ blob: Blob; filename: string } | null> => {
-	if (baseUrl.includes('/api/v1/terminals/')) {
-		const delivery = await getFileDelivery(baseUrl, apiKey, path, sessionId, signal);
-		if (!delivery) return null;
-		return downloadDeliveryFile(delivery.download_url, baseUrl, apiKey, sessionId, signal);
-	}
-	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
+export const downloadFileBlob = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string,
+		signal?: AbortSignal
+	): Promise<{ blob: Blob; filename: string } | null> => {
+		if (target.system && target.baseUrl.includes('/api/v1/terminals/')) {
+			const delivery = await getFileDelivery(target, path, signal);
+			if (!delivery) return null;
+			return downloadDeliveryFile(delivery.download_url, target, signal);
+		}
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`;
+		const headers: Record<string, string> = terminalHeaders(target);
 
-	if (!res || !res.ok) return null;
+		const res = await fetch(url, { headers, signal }).catch(() => null);
 
-	const filename = path.split('/').pop() ?? 'file';
-	const blob = await res.blob().catch(() => null);
-	if (!blob) return null;
-	return { blob, filename };
-};
+		if (!res || !res.ok) return null;
 
-export const downloadFilePreview = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<{ blob: Blob; filename: string } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}&preview=true`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers, ...(signal ? { signal } : {}) }).catch(() => null);
+		const filename = path.split('/').pop() ?? 'file';
+		const blob = await res.blob().catch(() => null);
+		if (!blob) return null;
+		return { blob, filename };
+	},
+	1
+);
 
-	if (!res) return null;
-	if (!res.ok) return null;
+export const downloadFilePreview = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string,
+		signal?: AbortSignal
+	): Promise<{ blob: Blob; filename: string } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}&preview=true`;
+		const headers: Record<string, string> = terminalHeaders(target);
 
-	const filename = path.split('/').pop() ?? 'file';
-	const blob = await res.blob().catch(() => null);
-	if (!blob) return null;
-	const { hasPdfSignature } = await import('$lib/utils/terminal-files');
-	if (!hasPdfSignature(await blob.arrayBuffer())) return null;
-	return { blob, filename };
-};
+		const res = await fetch(url, { headers, signal }).catch(() => null);
 
-export const archiveFromTerminal = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	paths: string[],
-	sessionId?: string
-): Promise<{ blob: Blob; filename: string } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/archive`;
-	const headers: Record<string, string> = {
-		...bearerHeaders(apiKey),
-		'Content-Type': 'application/json'
-	};
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ paths })
-	}).catch(() => null);
+		if (!res) return null;
+		if (!res.ok) return null;
 
-	if (!res || !res.ok) return null;
+		const filename = path.split('/').pop() ?? 'file';
+		const blob = await res.blob().catch(() => null);
+		if (!blob) return null;
+		const { hasPdfSignature } = await import('$lib/utils/terminal-files');
+		if (!hasPdfSignature(await blob.arrayBuffer())) return null;
+		return { blob, filename };
+	},
+	1
+);
 
-	const disposition = res.headers.get('content-disposition') ?? '';
-	const match = disposition.match(/filename="?([^"]+)"?/);
-	const filename = match?.[1] ?? 'download.zip';
-	const blob = await res.blob().catch(() => null);
-	if (!blob) return null;
-	return { blob, filename };
-};
+export const archiveFromTerminal = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		paths: string[]
+	): Promise<{ blob: Blob; filename: string } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/archive`;
+		const headers: Record<string, string> = {
+			...terminalHeaders(target),
+			'Content-Type': 'application/json'
+		};
 
-export const uploadToTerminal = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	directory: string,
-	file: File,
-	sessionId?: string
-): Promise<{ path: string; size: number } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/upload?directory=${encodeURIComponent(directory)}`;
-	const body = new FormData();
-	body.append('file', file);
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers,
-		body
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
+		const res = await fetch(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ paths })
+		}).catch(() => null);
+
+		if (!res || !res.ok) return null;
+
+		const disposition = res.headers.get('content-disposition') ?? '';
+		const match = disposition.match(/filename="?([^"]+)"?/);
+		const filename = match?.[1] ?? 'download.zip';
+		const blob = await res.blob().catch(() => null);
+		if (!blob) return null;
+		return { blob, filename };
+	},
+	1
+);
+
+export const uploadToTerminal = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		directory: string,
+		file: File
+	): Promise<{ path: string; size: number } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/upload?directory=${encodeURIComponent(directory)}`;
+		const body = new FormData();
+		body.append('file', file);
+		const headers: Record<string, string> = terminalHeaders(target);
+
+		const res = await fetch(url, {
+			method: 'POST',
+			headers,
+			body
 		})
-		.catch((err) => {
-			console.error('open-terminal uploadToTerminal error:', err);
-			return null;
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal uploadToTerminal error:', err);
+				return null;
+			});
+		return res;
+	},
+	2
+);
 
 // ponytail: serialize new uploads in this page; cross-client races need server-side protection.
 let newFileUploadQueue: Promise<void> = Promise.resolve();
 
-export const uploadNewFileToTerminal = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	directory: string,
-	file: File,
-	sessionId?: string
-): Promise<{ path: string; size: number } | null> => {
-	const upload = newFileUploadQueue.then(async () => {
-		const listing = await listFiles(baseUrl, apiKey, directory, sessionId);
-		if (!listing) return null;
+export const uploadNewFileToTerminal = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		directory: string,
+		file: File
+	): Promise<{ path: string; size: number } | null> => {
+		const upload = newFileUploadQueue.then(async () => {
+			const listing = await listFiles(target, directory);
+			if (!listing) return null;
 
-		const names = new Set(listing.entries.map((entry) => entry.name));
-		const extensionIndex = file.name.startsWith('.') ? -1 : file.name.lastIndexOf('.');
-		const stem = extensionIndex > 0 ? file.name.slice(0, extensionIndex) : file.name;
-		const extension = extensionIndex > 0 ? file.name.slice(extensionIndex) : '';
-		let name = file.name;
-		for (let suffix = 1; names.has(name); suffix++) {
-			name = `${stem} (${suffix})${extension}`;
-		}
+			const names = new Set(listing.entries.map((entry) => entry.name));
+			const extensionIndex = file.name.startsWith('.') ? -1 : file.name.lastIndexOf('.');
+			const stem = extensionIndex > 0 ? file.name.slice(0, extensionIndex) : file.name;
+			const extension = extensionIndex > 0 ? file.name.slice(extensionIndex) : '';
+			let name = file.name;
+			for (let suffix = 1; names.has(name); suffix++) {
+				name = `${stem} (${suffix})${extension}`;
+			}
 
-		const uploadFile =
-			name === file.name
-				? file
-				: new File([file], name, { type: file.type, lastModified: file.lastModified });
-		return uploadToTerminal(baseUrl, apiKey, directory, uploadFile, sessionId);
-	});
-	newFileUploadQueue = upload.then(
-		() => undefined,
-		() => undefined
-	);
-	return upload;
-};
-
-export const createDirectory = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string
-): Promise<{ path: string } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/mkdir`;
-	const headers: Record<string, string> = {
-		...bearerHeaders(apiKey),
-		'Content-Type': 'application/json'
-	};
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ path })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error('open-terminal createDirectory error:', err);
-			return null;
+			const uploadFile =
+				name === file.name
+					? file
+					: new File([file], name, { type: file.type, lastModified: file.lastModified });
+			return uploadToTerminal(target, directory, uploadFile);
 		});
-	return res;
-};
+		newFileUploadQueue = upload.then(
+			() => undefined,
+			() => undefined
+		);
+		return upload;
+	},
+	2
+);
 
-export const deleteEntry = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string
-): Promise<{ path: string; type: string } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/delete?path=${encodeURIComponent(path)}`;
-	const headers: Record<string, string> = bearerHeaders(apiKey);
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'DELETE',
-		headers
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
+export const createDirectory = withLegacyTerminalArgs(
+	async (target: TerminalTarget, path: string): Promise<{ path: string } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/mkdir`;
+		const headers: Record<string, string> = {
+			...terminalHeaders(target),
+			'Content-Type': 'application/json'
+		};
+
+		const res = await fetch(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ path })
 		})
-		.catch((err) => {
-			console.error('open-terminal deleteEntry error:', err);
-			return null;
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal createDirectory error:', err);
+				return null;
+			});
+		return res;
+	},
+	1
+);
 
-export const setCwd = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	sessionId?: string
-): Promise<{ cwd: string } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/cwd`;
-	const headers: Record<string, string> = {
-		...bearerHeaders(apiKey),
-		'Content-Type': 'application/json'
-	};
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ path })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
+export const deleteEntry = withLegacyTerminalArgs(
+	async (target: TerminalTarget, path: string): Promise<{ path: string; type: string } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/delete?path=${encodeURIComponent(path)}`;
+		const headers: Record<string, string> = terminalHeaders(target);
+
+		const res = await fetch(url, {
+			method: 'DELETE',
+			headers
 		})
-		.catch((err) => {
-			console.error('open-terminal setCwd error:', err);
-			return null;
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal deleteEntry error:', err);
+				return null;
+			});
+		return res;
+	},
+	1
+);
 
-export const moveEntry = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	source: string,
-	destination: string,
-	sessionId?: string
-): Promise<{ source: string; destination: string } | { error: string }> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/move`;
-	const headers: Record<string, string> = {
-		...bearerHeaders(apiKey),
-		'Content-Type': 'application/json'
-	};
-	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ source, destination })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
+export const setCwd = withLegacyTerminalArgs(
+	async (target: TerminalTarget, path: string): Promise<{ cwd: string } | null> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/cwd`;
+		const headers: Record<string, string> = {
+			...terminalHeaders(target),
+			'Content-Type': 'application/json'
+		};
+
+		const res = await fetch(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ path })
 		})
-		.catch((err) => {
-			console.error('open-terminal moveEntry error:', err);
-			return { error: err?.detail ?? 'Move failed' };
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal setCwd error:', err);
+				return null;
+			});
+		return res;
+	},
+	1
+);
 
-export const getListeningPorts = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	sessionId?: string | null
-): Promise<ListeningPort[]> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/ports`;
-	const res = await fetch(url, {
-		headers: {
-			...bearerHeaders(apiKey),
-			...(sessionId ? { 'X-Session-Id': sessionId } : {})
-		}
-	}).catch(() => null);
-	if (!res || !res.ok) return [];
-	const json = await res.json().catch(() => null);
-	return json?.ports ?? [];
-};
+export const moveEntry = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		source: string,
+		destination: string
+	): Promise<{ source: string; destination: string } | { error: string }> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/files/move`;
+		const headers: Record<string, string> = {
+			...terminalHeaders(target),
+			'Content-Type': 'application/json'
+		};
+
+		const res = await fetch(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ source, destination })
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal moveEntry error:', err);
+				return { error: err?.detail ?? 'Move failed' };
+			});
+		return res;
+	},
+	2
+);
+
+export const getListeningPorts = withLegacyTerminalArgs(
+	async (target: TerminalTarget): Promise<ListeningPort[]> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/ports`;
+		const res = await fetch(url, {
+			headers: {
+				...terminalHeaders(target)
+			}
+		}).catch(() => null);
+		if (!res || !res.ok) return [];
+		const json = await res.json().catch(() => null);
+		return json?.ports ?? [];
+	},
+	0
+);
 
 // Notebook execution
 
-export const createNotebookSession = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	path: string,
-	chatId?: string
-): Promise<{ id: string; kernel: string; status: string } | { error: string }> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/notebooks`;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers: {
-			...bearerHeaders(apiKey),
-			'Content-Type': 'application/json',
-			...(chatId ? { 'X-Session-Id': chatId } : {})
-		},
-		body: JSON.stringify({ path })
-	})
-		.then(async (res) => {
-			if (!res.ok) {
-				const body = await res.json().catch(() => ({}));
-				return { error: body?.detail ?? `HTTP ${res.status}` };
-			}
-			return res.json();
+export const createNotebookSession = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		path: string
+	): Promise<{ id: string; kernel: string; status: string } | { error: string }> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/notebooks`;
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				...terminalHeaders(target),
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({ path })
 		})
-		.catch((err) => {
-			console.error('open-terminal createNotebookSession error:', err);
-			return { error: 'Connection failed' };
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) {
+					const body = await res.json().catch(() => ({}));
+					return { error: body?.detail ?? `HTTP ${res.status}` };
+				}
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal createNotebookSession error:', err);
+				return { error: 'Connection failed' };
+			});
+		return res;
+	},
+	1
+);
 
-export const executeNotebookCell = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	sessionId: string,
-	cellIndex: number,
-	source?: string,
-	chatId?: string
-): Promise<{ status: string; execution_count?: number; outputs: any[] } | { error: string }> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}/execute`;
-	const body: Record<string, any> = { cell_index: cellIndex };
-	if (source !== undefined) body.source = source;
+export const executeNotebookCell = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		sessionId: string,
+		cellIndex: number,
+		source?: string,
+		chatId?: string
+	): Promise<{ status: string; execution_count?: number; outputs: any[] } | { error: string }> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}/execute`;
+		const body: Record<string, any> = { cell_index: cellIndex };
+		if (source !== undefined) body.source = source;
 
-	const res = await fetch(url, {
-		method: 'POST',
-		headers: {
-			...bearerHeaders(apiKey),
-			'Content-Type': 'application/json',
-			...(chatId ? { 'X-Session-Id': chatId } : {})
-		},
-		body: JSON.stringify(body)
-	})
-		.then(async (res) => {
-			if (!res.ok) {
-				const body = await res.json().catch(() => ({}));
-				return { error: body?.detail ?? `HTTP ${res.status}` };
-			}
-			return res.json();
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				...terminalHeaders(target),
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(body)
 		})
-		.catch((err) => {
-			console.error('open-terminal executeNotebookCell error:', err);
-			return { error: 'Connection failed' };
-		});
-	return res;
-};
+			.then(async (res) => {
+				if (!res.ok) {
+					const body = await res.json().catch(() => ({}));
+					return { error: body?.detail ?? `HTTP ${res.status}` };
+				}
+				return res.json();
+			})
+			.catch((err) => {
+				console.error('open-terminal executeNotebookCell error:', err);
+				return { error: 'Connection failed' };
+			});
+		return res;
+	},
+	3
+);
 
-export const stopNotebookSession = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	sessionId: string,
-	chatId?: string
-): Promise<boolean> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}`;
-	const res = await fetch(url, {
-		method: 'DELETE',
-		headers: { ...bearerHeaders(apiKey, true), ...(chatId ? { 'X-Session-Id': chatId } : {}) }
-	}).catch(() => null);
-	return res?.ok ?? false;
-};
+export const stopNotebookSession = withLegacyTerminalArgs(
+	async (target: TerminalTarget, sessionId: string): Promise<boolean> => {
+		const url = `${target.baseUrl.replace(/\/$/, '')}/notebooks/${sessionId}`;
+		const res = await fetch(url, {
+			method: 'DELETE',
+			headers: { ...terminalHeaders(target, true) }
+		}).catch(() => null);
+		return res?.ok ?? false;
+	},
+	1
+);
 
 export type TerminalDiffLine = {
 	type: 'added' | 'removed' | 'context';
@@ -1013,37 +1141,52 @@ export type TerminalComparison = {
 	hunks: { header: string; lines: TerminalDiffLine[] }[];
 };
 
-export const compareFiles = async (
-	baseUrl: string,
-	apiKey: TerminalCredential,
-	request: TerminalComparisonRequest,
-	sessionId?: string,
-	signal?: AbortSignal
-): Promise<TerminalComparison> => {
-	const response = await fetch(`${baseUrl.replace(/\/$/, '')}/files/compare`, {
-		method: 'POST',
-		signal,
+export const compareFiles = withLegacyTerminalArgs(
+	async (
+		target: TerminalTarget,
+		request: TerminalComparisonRequest,
+		signal?: AbortSignal
+	): Promise<TerminalComparison> => {
+		const response = await fetch(`${target.baseUrl.replace(/\/$/, '')}/files/compare`, {
+			method: 'POST',
+			signal,
+			headers: {
+				...terminalHeaders(target),
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(request)
+		});
+		const body = await response.json().catch(() => null);
+		if (
+			response.status === 405 ||
+			(response.status === 404 && ((!body?.detail && !body?.error) || body.detail === 'Not Found'))
+		) {
+			throw new Error(
+				'File comparison is not available on this terminal. Update Open Terminal to use Compare.'
+			);
+		}
+		if (!response.ok)
+			throw new Error(
+				typeof body?.detail === 'string'
+					? body.detail
+					: (body?.error ?? `Comparison failed (${response.status})`)
+			);
+		return body;
+	},
+	1
+);
+
+export async function templatesApi(path = '', method = 'GET', body?: unknown) {
+	const response = await fetch(`${WEBUI_API_BASE_URL}/terminals/templates${path}`, {
+		method,
 		headers: {
-			...bearerHeaders(apiKey),
-			'Content-Type': 'application/json',
-			...(sessionId ? { 'X-Session-Id': sessionId } : {})
+			Authorization: `Bearer ${localStorage.token}`,
+			...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
 		},
-		body: JSON.stringify(request)
+		...(body !== undefined ? { body: JSON.stringify(body) } : {})
 	});
-	const body = await response.json().catch(() => null);
-	if (
-		response.status === 405 ||
-		(response.status === 404 && ((!body?.detail && !body?.error) || body.detail === 'Not Found'))
-	) {
-		throw new Error(
-			'File comparison is not available on this terminal. Update Open Terminal to use Compare.'
-		);
-	}
+	const data = await response.json().catch(() => null);
 	if (!response.ok)
-		throw new Error(
-			typeof body?.detail === 'string'
-				? body.detail
-				: (body?.error ?? `Comparison failed (${response.status})`)
-		);
-	return body;
-};
+		throw new Error(typeof data?.detail === 'string' ? data.detail : 'Terminal request failed');
+	return data;
+}

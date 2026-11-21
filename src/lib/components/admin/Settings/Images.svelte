@@ -1,375 +1,149 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-
 	import { createEventDispatcher, onMount, getContext } from 'svelte';
-	import { config as backendConfig, user } from '$lib/stores';
 
+	import { config as backendConfig, imageModels, user, type ImageModel } from '$lib/stores';
 	import { getBackendConfig } from '$lib/apis';
 	import {
-		getImageGenerationModels,
-		getImageGenerationConfig,
-		updateImageGenerationConfig,
 		getConfig,
+		getImageConnectionModels,
 		updateConfig,
-		verifyConnection
+		type ImageProfile
 	} from '$lib/apis/images';
-	import Spinner from '$lib/components/common/Spinner.svelte';
-	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
+	import type { ImageCapability } from '$lib/utils/images';
+
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Textarea from '$lib/components/common/Textarea.svelte';
-	import CodeEditorModal from '$lib/components/common/CodeEditorModal.svelte';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
-	import AdminSettingField from './AdminSettingField.svelte';
+	import Plus from '$lib/components/icons/Plus.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
+	import AdminSettingSaveButton from './AdminSettingSaveButton.svelte';
 	import ImageGenerationEngines from './ImageGenerationEngines.svelte';
+	import AdminSettingField from './AdminSettingField.svelte';
+	import ImageConnection from './Images/ImageConnection.svelte';
+	import ImageConnectionModal from './Images/ImageConnectionModal.svelte';
 
 	const dispatch = createEventDispatcher();
-
 	const i18n: any = getContext('i18n');
 
+	type ImagesConfig = {
+		ENABLE_IMAGE_GENERATION: boolean;
+		ENABLE_IMAGE_PROMPT_GENERATION: boolean;
+		ENABLE_IMAGE_EDIT: boolean;
+		IMAGE_GENERATION_DEFAULT_MODEL: string;
+		IMAGE_EDIT_DEFAULT_MODEL: string;
+		IMAGE_CONNECTIONS: any[];
+		IMAGE_PROFILES: ImageProfile[];
+		IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: string;
+		IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: string;
+	};
+
 	let loading = false;
-	let imageGenerationEnginesEditor: ImageGenerationEngines;
+	let config: ImagesConfig | null = null;
+	let savedConfig: ImagesConfig | null = null;
+	let showAddConnectionModal = false;
 
-	let models = null;
-	let config: any = null;
-	const inputClass =
-		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
-	const textareaClass =
-		'w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
-
-	let showComfyUIWorkflowEditor = false;
-	let REQUIRED_WORKFLOW_NODES = [
-		{
-			type: 'prompt',
-			key: 'text',
-			node_ids: ''
-		},
-		{
-			type: 'model',
-			key: 'ckpt_name',
-			node_ids: ''
-		},
-		{
-			type: 'width',
-			key: 'width',
-			node_ids: ''
-		},
-		{
-			type: 'height',
-			key: 'height',
-			node_ids: ''
-		},
-		{
-			type: 'steps',
-			key: 'steps',
-			node_ids: ''
-		},
-		{
-			type: 'seed',
-			key: 'seed',
-			node_ids: ''
-		}
-	];
-
-	let showComfyUIEditWorkflowEditor = false;
-	let REQUIRED_EDIT_WORKFLOW_NODES = [
-		{
-			type: 'image',
-			key: 'image',
-			node_ids: ''
-		},
-		{
-			type: 'prompt',
-			key: 'prompt',
-			node_ids: ''
-		},
-		{
-			type: 'model',
-			key: 'unet_name',
-			node_ids: ''
-		},
-		{
-			type: 'width',
-			key: 'width',
-			node_ids: ''
-		},
-		{
-			type: 'height',
-			key: 'height',
-			node_ids: ''
-		}
-	];
-
-	const getModels = async () => {
-		models = await getImageGenerationModels(localStorage.token).catch((error) => {
-			toast.error(`${error}`);
-			return null;
-		});
+	$: settingLabels = {
+		ENABLE_IMAGE_GENERATION: $i18n.t('settings.admin.images.imageGeneration.label'),
+		ENABLE_IMAGE_EDIT: $i18n.t('settings.admin.images.imageEdit.label'),
+		IMAGE_GENERATION_DEFAULT_MODEL: $i18n.t('settings.admin.images.defaultGenerationModel.label'),
+		IMAGE_EDIT_DEFAULT_MODEL: $i18n.t('settings.admin.images.defaultEditModel.label'),
+		ENABLE_IMAGE_PROMPT_GENERATION: $i18n.t('settings.admin.images.imagePromptGeneration.label')
 	};
 
-	const parseJSONObject = (value: unknown, errorMessage: string) => {
-		if (value && typeof value === 'object' && !Array.isArray(value)) {
-			return value;
-		}
+	let connectionModels: ImageModel[] = [];
 
-		try {
-			const parsed = JSON.parse(typeof value === 'string' && value.trim() !== '' ? value : '{}');
-
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return parsed;
-			}
-		} catch (error) {
-			// The localized validation message below is more useful than the parser error.
-		}
-
-		throw new Error(errorMessage);
+	// Every model the connections offer, synced ones included, as the backend lists them.
+	const loadConnectionModels = async () => {
+		connectionModels = (await getImageConnectionModels(localStorage.token).catch(() => [])) ?? [];
 	};
 
-	const updateConfigHandler = async (configToSave = config) => {
-		if (config.ENABLE_IMAGE_GENERATION) {
-			if (
-				config.IMAGE_GENERATION_ENGINE === 'automatic1111' &&
-				config.AUTOMATIC1111_BASE_URL === ''
-			) {
-				toast.error($i18n.t('AUTOMATIC1111 Base URL is required.'));
-				return null;
-			} else if (config.IMAGE_GENERATION_ENGINE === 'comfyui' && config.COMFYUI_BASE_URL === '') {
-				toast.error($i18n.t('ComfyUI Base URL is required.'));
-				return null;
-			} else if (
-				config.IMAGE_GENERATION_ENGINE === 'openai' &&
-				config.IMAGES_OPENAI_API_KEY === ''
-			) {
-				toast.error($i18n.t('OpenAI API Key is required.'));
-				return null;
-			} else if (
-				config.IMAGE_GENERATION_ENGINE === 'gemini' &&
-				config.IMAGES_GEMINI_API_KEY === ''
-			) {
-				toast.error($i18n.t('Gemini API Key is required.'));
-				return null;
-			}
-		}
+	const getModelOptions = (models: ImageModel[], capability: ImageCapability) =>
+		models
+			.filter((model) => model[capability])
+			.map((model) => ({
+				value: model.id,
+				label: model.model ? `${model.connection_name} / ${model.name}` : model.connection_name
+			}));
 
-		let payload;
-		try {
-			payload = {
-				...configToSave,
-				IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX: (
-					configToSave.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX ?? ''
-				).trim(),
-				IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: (
-					configToSave.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX ?? ''
-				).trim(),
-				IMAGE_GENERATION_ENGINES:
-					imageGenerationEnginesEditor?.getValidatedEngines() ??
-					configToSave.IMAGE_GENERATION_ENGINES ??
-					[],
-				AUTOMATIC1111_PARAMS: parseJSONObject(
-					configToSave.AUTOMATIC1111_PARAMS,
-					$i18n.t('AUTOMATIC1111 additional parameters must be a valid JSON object.')
-				),
-				IMAGES_OPENAI_API_PARAMS: parseJSONObject(
-					configToSave.IMAGES_OPENAI_API_PARAMS,
-					$i18n.t('OpenAI additional parameters must be a valid JSON object.')
-				)
-			};
-		} catch (error) {
-			toast.error(error instanceof Error ? $i18n.t(error.message) : `${error}`);
-			return null;
-		}
+	$: generationModelOptions = getModelOptions(connectionModels, 'image_generation');
+	$: editModelOptions = getModelOptions(connectionModels, 'image_edit');
 
-		const res = await updateConfig(localStorage.token, payload).catch((error) => {
+	const save = async (next: ImagesConfig) => {
+		const res = await updateConfig(localStorage.token, {
+			ENABLE_IMAGE_GENERATION: next.ENABLE_IMAGE_GENERATION,
+			ENABLE_IMAGE_PROMPT_GENERATION: next.ENABLE_IMAGE_PROMPT_GENERATION,
+			ENABLE_IMAGE_EDIT: next.ENABLE_IMAGE_EDIT,
+			IMAGE_GENERATION_DEFAULT_MODEL: next.IMAGE_GENERATION_DEFAULT_MODEL,
+			IMAGE_EDIT_DEFAULT_MODEL: next.IMAGE_EDIT_DEFAULT_MODEL,
+			IMAGE_CONNECTIONS: next.IMAGE_CONNECTIONS,
+			IMAGE_PROFILES: next.IMAGE_PROFILES,
+			IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX:
+				next.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX.trim(),
+			IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX: next.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX.trim()
+		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
 		});
 
 		if (res) {
+			savedConfig = structuredClone(res);
+			imageModels.set(null);
+			loadConnectionModels();
 			backendConfig.set(await getBackendConfig());
-
-			if (res.ENABLE_IMAGE_GENERATION) {
-				getModels();
-			}
-
-			return res;
 		}
-
-		return null;
+		return res;
 	};
 
-	const validateJSON = (json) => {
-		try {
-			const obj = JSON.parse(json);
+	// Connection changes save right away, like other connection lists, without the unsaved toggles above.
+	const saveConnections = async (connections: any[]) => {
+		if (!config || !savedConfig) return;
 
-			if (obj && typeof obj === 'object') {
-				return true;
-			}
-		} catch (e) {}
-		return false;
+		const res = await save({ ...savedConfig, IMAGE_CONNECTIONS: connections });
+		if (res) {
+			config = { ...config, IMAGE_CONNECTIONS: res.IMAGE_CONNECTIONS };
+			toast.success($i18n.t('Connections saved successfully'));
+		}
 	};
 
 	const saveHandler = async () => {
+		if (!config) return;
+
 		loading = true;
+		const res = await save(config);
+		loading = false;
 
-		if (
-			typeof config?.IMAGES_OPENAI_API_PARAMS === 'string' &&
-			config.IMAGES_OPENAI_API_PARAMS.trim() !== '' &&
-			!validateJSON(config.IMAGES_OPENAI_API_PARAMS)
-		) {
-			toast.error($i18n.t('Invalid JSON format for Parameters'));
-			loading = false;
-			return;
-		}
-
-		if (
-			typeof config?.AUTOMATIC1111_PARAMS === 'string' &&
-			config.AUTOMATIC1111_PARAMS.trim() !== '' &&
-			!validateJSON(config.AUTOMATIC1111_PARAMS)
-		) {
-			toast.error($i18n.t('Invalid JSON format for Parameters'));
-			loading = false;
-			return;
-		}
-
-		try {
-			let comfyUIWorkflowNodes = config.COMFYUI_WORKFLOW_NODES;
-			let comfyUIEditWorkflowNodes = config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES;
-
-			if (config?.COMFYUI_WORKFLOW) {
-				if (!validateJSON(config?.COMFYUI_WORKFLOW)) {
-					throw new Error($i18n.t('Invalid JSON format for ComfyUI Workflow.'));
-				}
-
-				comfyUIWorkflowNodes = REQUIRED_WORKFLOW_NODES.map((node) => {
-					return {
-						type: node.type,
-						key: node.key,
-						node_ids:
-							node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
-					};
-				});
-			}
-
-			if (config?.IMAGES_EDIT_COMFYUI_WORKFLOW) {
-				if (!validateJSON(config?.IMAGES_EDIT_COMFYUI_WORKFLOW)) {
-					throw new Error($i18n.t('Invalid JSON format for ComfyUI Edit Workflow.'));
-				}
-
-				comfyUIEditWorkflowNodes = REQUIRED_EDIT_WORKFLOW_NODES.map((node) => {
-					return {
-						type: node.type,
-						key: node.key,
-						node_ids:
-							node.node_ids.trim() === '' ? [] : node.node_ids.split(',').map((id) => id.trim())
-					};
-				});
-			}
-
-			const res = await updateConfigHandler({
-				...config,
-				COMFYUI_WORKFLOW_NODES: comfyUIWorkflowNodes,
-				IMAGES_EDIT_COMFYUI_WORKFLOW_NODES: comfyUIEditWorkflowNodes
-			});
-
-			if (res) {
-				config.COMFYUI_WORKFLOW_NODES = comfyUIWorkflowNodes;
-				config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = comfyUIEditWorkflowNodes;
-				config.IMAGE_GENERATION_ENGINES = res.IMAGE_GENERATION_ENGINES;
-				dispatch('save');
-			}
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : `${error}`);
-		} finally {
-			loading = false;
+		if (res) {
+			config = structuredClone(res);
+			dispatch('save');
 		}
 	};
 
 	onMount(async () => {
-		if ($user?.role === 'admin') {
-			const res = await getConfig(localStorage.token).catch((error) => {
-				toast.error(`${error}`);
-				return null;
-			});
+		if ($user?.role !== 'admin') return;
 
-			if (res) {
-				config = res;
-				config.IMAGE_GENERATION_ENGINES ??= [];
-				config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX ??= '';
-				config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX ??= '';
-			}
+		const res = await getConfig(localStorage.token).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
 
-			if (!config) {
-				return;
-			}
-
-			if (config.ENABLE_IMAGE_GENERATION) {
-				getModels();
-			}
-
-			if (config.COMFYUI_WORKFLOW) {
-				try {
-					config.COMFYUI_WORKFLOW = JSON.stringify(JSON.parse(config.COMFYUI_WORKFLOW), null, 2);
-				} catch (e) {
-					console.error(e);
-				}
-			}
-
-			REQUIRED_WORKFLOW_NODES = REQUIRED_WORKFLOW_NODES.map((node) => {
-				const n = config.COMFYUI_WORKFLOW_NODES.find((n) => n.type === node.type) ?? node;
-				console.debug(n);
-
-				return {
-					type: n.type,
-					key: n.key,
-					node_ids: typeof n.node_ids === 'string' ? n.node_ids : n.node_ids.join(',')
-				};
-			});
-
-			if (config.IMAGES_EDIT_COMFYUI_WORKFLOW) {
-				try {
-					config.IMAGES_EDIT_COMFYUI_WORKFLOW = JSON.stringify(
-						JSON.parse(config.IMAGES_EDIT_COMFYUI_WORKFLOW),
-						null,
-						2
-					);
-				} catch (e) {
-					console.error(e);
-				}
-			}
-
-			config.IMAGES_OPENAI_API_PARAMS =
-				typeof config.IMAGES_OPENAI_API_PARAMS === 'object'
-					? JSON.stringify(config.IMAGES_OPENAI_API_PARAMS ?? {}, null, 2)
-					: config.IMAGES_OPENAI_API_PARAMS;
-
-			config.AUTOMATIC1111_PARAMS =
-				typeof config.AUTOMATIC1111_PARAMS === 'object'
-					? JSON.stringify(config.AUTOMATIC1111_PARAMS ?? {}, null, 2)
-					: config.AUTOMATIC1111_PARAMS;
-
-			REQUIRED_EDIT_WORKFLOW_NODES = REQUIRED_EDIT_WORKFLOW_NODES.map((node) => {
-				const n =
-					config.IMAGES_EDIT_COMFYUI_WORKFLOW_NODES.find((n) => n.type === node.type) ?? node;
-				console.debug(n);
-
-				return {
-					type: n.type,
-					key: n.key,
-					node_ids: typeof n.node_ids === 'string' ? n.node_ids : n.node_ids.join(',')
-				};
-			});
+		if (res) {
+			config = res;
+			savedConfig = structuredClone(res);
+			loadConnectionModels();
 		}
 	});
 </script>
 
-<form
-	class="flex h-full flex-col justify-between text-sm"
-	on:submit|preventDefault={async () => {
-		saveHandler();
+<ImageConnectionModal
+	bind:show={showAddConnectionModal}
+	onSubmit={async (connection) => {
+		await saveConnections([...(config?.IMAGE_CONNECTIONS ?? []), connection]);
 	}}
->
+/>
+
+<form class="flex h-full flex-col justify-between text-sm" on:submit|preventDefault={saveHandler}>
 	<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
 		{$i18n.t('settings.admin.images.title')}
 	</h2>
@@ -385,92 +159,137 @@
 					>
 						<Switch bind:state={config.ENABLE_IMAGE_GENERATION} ariaLabelledbyId={labelId} />
 					</AdminSettingRow>
+
+					<AdminSettingRow
+						label={$i18n.t('settings.admin.images.imageEdit.label')}
+						description={$i18n.t('settings.admin.images.imageEdit.description')}
+						let:labelId
+					>
+						<Switch bind:state={config.ENABLE_IMAGE_EDIT} ariaLabelledbyId={labelId} />
+					</AdminSettingRow>
+
+					{#if config.ENABLE_IMAGE_GENERATION || config.ENABLE_IMAGE_EDIT}
+						<div>
+							<div class="mb-2 flex items-center justify-between gap-4">
+								<div class="text-xs text-gray-600 dark:text-gray-400">
+									{$i18n.t('settings.admin.images.manageImageConnections.label')}
+								</div>
+
+								<Tooltip content={$i18n.t('settings.admin.images.addConnection.label')}>
+									<button
+										aria-label={$i18n.t('settings.admin.images.addConnection.label')}
+										class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-700 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-gray-300"
+										on:click={() => {
+											showAddConnectionModal = true;
+										}}
+										type="button"
+									>
+										<Plus />
+									</button>
+								</Tooltip>
+							</div>
+
+							<div class="flex flex-col gap-1.5">
+								{#each config.IMAGE_CONNECTIONS as connection, idx (connection.id)}
+									<ImageConnection
+										{connection}
+										onSubmit={(updated) => {
+											saveConnections(
+												(config?.IMAGE_CONNECTIONS ?? []).map((c, i) => (i === idx ? updated : c))
+											);
+										}}
+										onDelete={() => {
+											saveConnections(
+												(config?.IMAGE_CONNECTIONS ?? []).filter((_, i) => i !== idx)
+											);
+										}}
+									/>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				</AdminSettingSection>
 
-				{#if config.ENABLE_IMAGE_GENERATION}
-					<AdminSettingSection title={$i18n.t('settings.admin.images.sections.createImage.title')}>
-						<AdminSettingRow
-							label={$i18n.t('settings.admin.images.imageGenerationEngine.label')}
-							description={$i18n.t('settings.admin.images.imageGenerationEngine.description')}
-							let:labelId
-						>
-							<SettingsSelect
-								id={`${labelId}-control`}
-								bind:value={config.IMAGE_GENERATION_ENGINE}
-								placeholder={$i18n.t('Select Engine')}
+				{#if config.ENABLE_IMAGE_GENERATION || config.ENABLE_IMAGE_EDIT}
+					<AdminSettingSection
+						title={$i18n.t('settings.admin.images.sections.defaultModels.title')}
+					>
+						{#if config.ENABLE_IMAGE_GENERATION}
+							<AdminSettingRow
+								label={$i18n.t('settings.admin.images.defaultGenerationModel.label')}
+								description={$i18n.t('settings.admin.images.defaultGenerationModel.description')}
+								let:labelId
 							>
-								<option value="openai">{$i18n.t('Default (Open AI)')}</option>
-								<option value="comfyui">{$i18n.t('ComfyUI')}</option>
-								<option value="automatic1111">{$i18n.t('Automatic1111')}</option>
-								<option value="gemini">{$i18n.t('Gemini')}</option>
-							</SettingsSelect>
-						</AdminSettingRow>
-
-						<AdminSettingField
-							label={$i18n.t('Tool Description Suffix')}
-							description={$i18n.t(
-								'Append to the image generation tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
-							)}
-						>
-							<Textarea
-								className={textareaClass}
-								bind:value={config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX}
-								ariaLabel={$i18n.t('Tool Description Suffix')}
-								minSize={96}
-							/>
-						</AdminSettingField>
-						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imageGenerationModel.label')}
-								forId="image-generation-model"
-							>
-								<input
-									id="image-generation-model"
-									list="model-list"
-									class={inputClass}
-									bind:value={config.IMAGE_GENERATION_MODEL}
-									placeholder={$i18n.t('Select a model')}
-									required
-								/>
-
-								<datalist id="model-list">
-									{#each models ?? [] as model}
-										<option value={model.id}>{model.name}</option>
-									{/each}
-								</datalist>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imageSize.label')}
-								forId="image-size"
-							>
-								<input
-									id="image-size"
-									class={inputClass}
-									placeholder={$i18n.t('Enter Image Size (e.g. 512x512)')}
-									bind:value={config.IMAGE_SIZE}
-								/>
-							</AdminSettingField>
-
-							{#if ['comfyui', 'automatic1111', ''].includes(config?.IMAGE_GENERATION_ENGINE)}
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.steps.label')}
-									forId="image-steps"
+								<SettingsSelect
+									id={`${labelId}-control`}
+									bind:value={config.IMAGE_GENERATION_DEFAULT_MODEL}
 								>
-									<input
-										id="image-steps"
-										class={inputClass}
-										placeholder={$i18n.t('Enter Number of Steps (e.g. 50)')}
-										bind:value={config.IMAGE_STEPS}
-										required
-									/>
-								</AdminSettingField>
-							{/if}
-						</div>
+									<option value="">{$i18n.t('First available')}</option>
+									{#each generationModelOptions as option (option.value)}
+										<option value={option.value}>{option.label}</option>
+									{/each}
+								</SettingsSelect>
+							</AdminSettingRow>
+							<AdminSettingField
+								label={$i18n.t('Tool Description Suffix')}
+								forId="default-image-generation-description"
+								description={$i18n.t(
+									'Append to the image generation tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+								)}
+							>
+								<textarea
+									id="default-image-generation-description"
+									class="w-full rounded-lg bg-gray-50 px-2 py-1 text-xs dark:bg-white/5"
+									bind:value={config.IMAGE_GENERATION_TOOL_DESCRIPTION_SUFFIX}
+								></textarea>
+							</AdminSettingField>
+						{/if}
 
+						{#if config.ENABLE_IMAGE_EDIT}
+							<AdminSettingRow
+								label={$i18n.t('settings.admin.images.defaultEditModel.label')}
+								description={$i18n.t('settings.admin.images.defaultEditModel.description')}
+								let:labelId
+							>
+								<SettingsSelect
+									id={`${labelId}-control`}
+									bind:value={config.IMAGE_EDIT_DEFAULT_MODEL}
+								>
+									<option value="">{$i18n.t('First available')}</option>
+									{#each editModelOptions as option (option.value)}
+										<option value={option.value}>{option.label}</option>
+									{/each}
+								</SettingsSelect>
+							</AdminSettingRow>
+							<AdminSettingField
+								label={$i18n.t('Tool Description Suffix')}
+								forId="default-image-editing-description"
+								description={$i18n.t(
+									'Append to the image editing tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
+								)}
+							>
+								<textarea
+									id="default-image-editing-description"
+									class="w-full rounded-lg bg-gray-50 px-2 py-1 text-xs dark:bg-white/5"
+									bind:value={config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX}
+								></textarea>
+							</AdminSettingField>
+						{/if}
+					</AdminSettingSection>
+				{/if}
+
+				{#if config.ENABLE_IMAGE_GENERATION}
+					<AdminSettingSection title={$i18n.t('Additional Image Engine Configurations')}>
+						<ImageGenerationEngines
+							bind:engines={config.IMAGE_PROFILES}
+							{generationModelOptions}
+							{editModelOptions}
+						/>
+					</AdminSettingSection>
+					<AdminSettingSection title={$i18n.t('settings.admin.images.sections.legacy.title')}>
 						<AdminSettingRow
 							label={$i18n.t('settings.admin.images.imagePromptGeneration.label')}
-							description={$i18n.t('settings.admin.images.imagePromptGeneration.description')}
+							description={$i18n.t('settings.admin.images.imagePromptGeneration.legacyDescription')}
 							let:labelId
 						>
 							<Switch
@@ -478,705 +297,6 @@
 								ariaLabelledbyId={labelId}
 							/>
 						</AdminSettingRow>
-
-						{#if config?.IMAGE_GENERATION_ENGINE === 'openai'}
-							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
-									forId="images-openai-api-base-url"
-								>
-									<input
-										id="images-openai-api-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
-										bind:value={config.IMAGES_OPENAI_API_BASE_URL}
-									/>
-								</AdminSettingField>
-
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesOpenaiApiKey.label')}
-								>
-									<SensitiveInput
-										variant="settings"
-										placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiKey.label')}
-										bind:value={config.IMAGES_OPENAI_API_KEY}
-										required={false}
-									/>
-								</AdminSettingField>
-							</div>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesOpenaiApiVersion.label')}
-								forId="images-openai-api-version"
-							>
-								<input
-									id="images-openai-api-version"
-									class={inputClass}
-									placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiVersion.label')}
-									bind:value={config.IMAGES_OPENAI_API_VERSION}
-								/>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesOpenaiApiParams.label')}
-								description={$i18n.t('settings.admin.images.imagesOpenaiApiParams.description')}
-								forId="images-openai-api-params"
-							>
-								<Textarea
-									id="images-openai-api-params"
-									className={textareaClass}
-									bind:value={config.IMAGES_OPENAI_API_PARAMS}
-									placeholder={$i18n.t('Enter additional parameters in JSON format')}
-									minSize={100}
-								/>
-							</AdminSettingField>
-						{:else if (config?.IMAGE_GENERATION_ENGINE ?? 'automatic1111') === 'automatic1111'}
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.automatic1111BaseUrl.label')}
-								description={$i18n.t('settings.admin.images.automatic1111BaseUrl.description')}
-								forId="automatic1111-base-url"
-							>
-								<div class="flex w-full gap-2">
-									<input
-										id="automatic1111-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
-										bind:value={config.AUTOMATIC1111_BASE_URL}
-									/>
-									<button
-										class="shrink-0 text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-600 dark:hover:text-white"
-										type="button"
-										aria-label={$i18n.t('settings.admin.images.verifyConnection.label')}
-										on:click={async () => {
-											const res = await verifyConnection(localStorage.token, {
-												engine: 'automatic1111',
-												url: config.AUTOMATIC1111_BASE_URL,
-												key: config.AUTOMATIC1111_API_AUTH
-											}).catch((error) => {
-												toast.error(`${error}`);
-												return null;
-											});
-
-											if (res) {
-												toast.success(
-													$i18n.t('settings.admin.images.serverConnectionVerified.label')
-												);
-											}
-										}}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</button>
-								</div>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.apiAuthString.label')}
-								description={$i18n.t('settings.admin.images.apiAuthString.description')}
-							>
-								<SensitiveInput
-									variant="settings"
-									placeholder={$i18n.t('Enter api auth string (e.g. username:password)')}
-									bind:value={config.AUTOMATIC1111_API_AUTH}
-									required={false}
-								/>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.automatic1111Params.label')}
-								description={$i18n.t('settings.admin.images.automatic1111Params.description')}
-								forId="automatic1111-params"
-							>
-								<Textarea
-									id="automatic1111-params"
-									className={textareaClass}
-									bind:value={config.AUTOMATIC1111_PARAMS}
-									placeholder={$i18n.t('Enter additional parameters in JSON format')}
-									minSize={100}
-								/>
-							</AdminSettingField>
-						{:else if config?.IMAGE_GENERATION_ENGINE === 'comfyui'}
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.comfyuiBaseUrl.label')}
-								description={$i18n.t('settings.admin.images.comfyuiBaseUrl.description')}
-								forId="comfyui-base-url"
-							>
-								<div class="flex w-full gap-2">
-									<input
-										id="comfyui-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
-										bind:value={config.COMFYUI_BASE_URL}
-									/>
-									<button
-										class="shrink-0 text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-600 dark:hover:text-white"
-										type="button"
-										aria-label={$i18n.t('settings.admin.images.verifyConnection.label')}
-										on:click={async () => {
-											const res = await verifyConnection(localStorage.token, {
-												engine: 'comfyui',
-												url: config.COMFYUI_BASE_URL,
-												key: config.COMFYUI_API_KEY
-											}).catch((error) => {
-												toast.error(`${error}`);
-												return null;
-											});
-
-											if (res) {
-												toast.success(
-													$i18n.t('settings.admin.images.serverConnectionVerified.label')
-												);
-											}
-										}}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</button>
-								</div>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.comfyuiApiKey.label')}
-								description={$i18n.t('settings.admin.images.comfyuiApiKey.description')}
-							>
-								<SensitiveInput
-									variant="settings"
-									placeholder={$i18n.t('sk-1234')}
-									bind:value={config.COMFYUI_API_KEY}
-									required={false}
-								/>
-							</AdminSettingField>
-
-							<div>
-								<input
-									id="upload-comfyui-workflow-input"
-									hidden
-									type="file"
-									accept=".json"
-									on:change={(e) => {
-										const file = e.target.files[0];
-										const reader = new FileReader();
-
-										reader.onload = (e) => {
-											config.COMFYUI_WORKFLOW = e.target.result;
-											e.target.value = null;
-										};
-
-										reader.readAsText(file);
-									}}
-								/>
-								<AdminSettingRow
-									label={$i18n.t('settings.admin.images.comfyuiComfyuiWorkflow.label')}
-									description={$i18n.t('settings.admin.images.comfyuiComfyuiWorkflow.description')}
-								>
-									<div class="flex items-center justify-end gap-2">
-										{#if config.COMFYUI_WORKFLOW}
-											<button
-												class="text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-												type="button"
-												aria-label={$i18n.t('settings.admin.images.editWorkflowJsonContent.label')}
-												on:click={() => {
-													// open code editor modal
-													showComfyUIWorkflowEditor = true;
-												}}
-											>
-												{$i18n.t('Edit')}
-											</button>
-										{/if}
-
-										<Tooltip
-											content={$i18n.t(
-												'settings.admin.images.clickHereToUploadAWorkflowJsonFile.label'
-											)}
-										>
-											<button
-												class="text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-												type="button"
-												aria-label={$i18n.t(
-													'settings.admin.images.clickHereToUploadAWorkflowJsonFile.label'
-												)}
-												on:click={() => {
-													document.getElementById('upload-comfyui-workflow-input')?.click();
-												}}
-											>
-												{$i18n.t('Upload')}
-											</button>
-										</Tooltip>
-									</div>
-								</AdminSettingRow>
-
-								<div>
-									<CodeEditorModal
-										bind:show={showComfyUIWorkflowEditor}
-										value={config.COMFYUI_WORKFLOW}
-										lang="json"
-										onChange={(e) => {
-											config.COMFYUI_WORKFLOW = e;
-										}}
-										onSave={() => {
-											console.log('Saved');
-										}}
-									/>
-									<!-- {#if config.COMFYUI_WORKFLOW}
-									<Textarea
-										className="my-1 w-full resize-none rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 disabled:text-gray-600 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500"
-										rows="10"
-											bind:value={config.COMFYUI_WORKFLOW}
-										required
-									/>
-								{/if} -->
-								</div>
-							</div>
-
-							{#if config.COMFYUI_WORKFLOW}
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.generationWorkflowNodes.label')}
-									description={$i18n.t('settings.admin.images.generationWorkflowNodes.description')}
-								>
-									<div class="flex flex-col gap-1.5 text-xs">
-										{#each REQUIRED_WORKFLOW_NODES as node}
-											<div class="flex w-full flex-col">
-												<div class="shrink-0">
-													<label
-														for={`comfyui-workflow-node-${node.type}-key`}
-														class=" capitalize line-clamp-1 w-20 text-gray-400 dark:text-gray-500"
-													>
-														{node.type}{node.type === 'prompt' ? '*' : ''}
-													</label>
-												</div>
-
-												<div class="flex mt-0.5 items-center">
-													<div class="">
-														<Tooltip content={$i18n.t('Input Key (e.g. text, unet_name, steps)')}>
-															<input
-																id={`comfyui-workflow-node-${node.type}-key`}
-																class="{inputClass} w-24"
-																placeholder={$i18n.t('Key')}
-																bind:value={node.key}
-																required
-															/>
-														</Tooltip>
-													</div>
-
-													<div class="px-2 text-gray-400 dark:text-gray-500">:</div>
-
-													<div class="w-full">
-														<Tooltip
-															content={$i18n.t('Comma separated Node Ids (e.g. 1 or 1,2)')}
-															placement="top-start"
-														>
-															<input
-																class={inputClass}
-																placeholder={$i18n.t('Node Ids')}
-																aria-label={$i18n.t('Node Ids')}
-																bind:value={node.node_ids}
-															/>
-														</Tooltip>
-													</div>
-												</div>
-											</div>
-										{/each}
-									</div>
-
-									<div class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-										{$i18n.t('*Prompt node ID(s) are required for image generation')}
-									</div>
-								</AdminSettingField>
-							{/if}
-						{:else if config?.IMAGE_GENERATION_ENGINE === 'gemini'}
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesGeminiApiBaseUrl.label')}
-								description={$i18n.t('settings.admin.images.imagesGeminiApiBaseUrl.description')}
-								forId="images-gemini-api-base-url"
-							>
-								<input
-									id="images-gemini-api-base-url"
-									class={inputClass}
-									placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
-									bind:value={config.IMAGES_GEMINI_API_BASE_URL}
-								/>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesGeminiApiKey.label')}
-								description={$i18n.t('settings.admin.images.imagesGeminiApiKey.description')}
-							>
-								<SensitiveInput
-									variant="settings"
-									placeholder={$i18n.t('settings.admin.images.imagesGeminiApiKey.label')}
-									bind:value={config.IMAGES_GEMINI_API_KEY}
-									required
-								/>
-							</AdminSettingField>
-
-							<AdminSettingRow
-								label={$i18n.t('settings.admin.images.geminiEndpointMethod.label')}
-								description={$i18n.t('settings.admin.images.geminiEndpointMethod.description')}
-								let:labelId
-							>
-								<SettingsSelect
-									id={`${labelId}-control`}
-									bind:value={config.IMAGES_GEMINI_ENDPOINT_METHOD}
-									placeholder={$i18n.t('Select Method')}
-								>
-									<option value="predict">predict</option>
-									<option value="generateContent">generateContent</option>
-								</SettingsSelect>
-							</AdminSettingRow>
-						{/if}
-					</AdminSettingSection>
-
-					<AdminSettingSection title={$i18n.t('Additional Image Engine Configurations')}>
-						<ImageGenerationEngines
-							bind:this={imageGenerationEnginesEditor}
-							bind:engines={config.IMAGE_GENERATION_ENGINES}
-						/>
-					</AdminSettingSection>
-
-					<AdminSettingSection title={$i18n.t('settings.admin.images.sections.editImage.title')}>
-						<AdminSettingRow
-							label={$i18n.t('settings.admin.images.imageEdit.label')}
-							description={$i18n.t('settings.admin.images.imageEdit.description')}
-							let:labelId
-						>
-							<Switch bind:state={config.ENABLE_IMAGE_EDIT} ariaLabelledbyId={labelId} />
-						</AdminSettingRow>
-
-						<AdminSettingRow
-							label={$i18n.t('settings.admin.images.imageEditEngine.label')}
-							description={$i18n.t('settings.admin.images.imageEditEngine.description')}
-							let:labelId
-						>
-							<SettingsSelect
-								id={`${labelId}-control`}
-								bind:value={config.IMAGE_EDIT_ENGINE}
-								placeholder={$i18n.t('Select Engine')}
-							>
-								<option value="openai">{$i18n.t('Default (Open AI)')}</option>
-								<option value="comfyui">{$i18n.t('ComfyUI')}</option>
-								<option value="gemini">{$i18n.t('Gemini')}</option>
-							</SettingsSelect>
-						</AdminSettingRow>
-
-						{#if config?.ENABLE_IMAGE_EDIT}
-							<AdminSettingField
-								label={$i18n.t('Tool Description Suffix')}
-								description={$i18n.t(
-									'Append to the image editing tool description to guide the model when writing image prompts. Leave empty to use the built-in description.'
-								)}
-							>
-								<Textarea
-									className={textareaClass}
-									bind:value={config.IMAGE_EDIT_TOOL_DESCRIPTION_SUFFIX}
-									ariaLabel={$i18n.t('Tool Description Suffix')}
-									minSize={96}
-								/>
-							</AdminSettingField>
-							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imageEditModel.label')}
-									forId="image-edit-model"
-								>
-									<input
-										id="image-edit-model"
-										list="model-list"
-										class={inputClass}
-										bind:value={config.IMAGE_EDIT_MODEL}
-										placeholder={$i18n.t('Select a model')}
-									/>
-
-									<datalist id="model-list">
-										{#each models ?? [] as model}
-											<option value={model.id}>{model.name}</option>
-										{/each}
-									</datalist>
-								</AdminSettingField>
-
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imageEditSize.label')}
-									forId="image-edit-size"
-								>
-									<input
-										id="image-edit-size"
-										class={inputClass}
-										placeholder={$i18n.t('Enter Image Size (e.g. 512x512)')}
-										bind:value={config.IMAGE_EDIT_SIZE}
-									/>
-								</AdminSettingField>
-							</div>
-						{/if}
-
-						{#if config?.IMAGE_EDIT_ENGINE === 'openai'}
-							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesEditOpenaiApiBaseUrl.label')}
-									forId="images-edit-openai-api-base-url"
-								>
-									<input
-										id="images-edit-openai-api-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('settings.admin.images.imagesEditOpenaiApiBaseUrl.label')}
-										bind:value={config.IMAGES_EDIT_OPENAI_API_BASE_URL}
-									/>
-								</AdminSettingField>
-
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesEditOpenaiApiKey.label')}
-								>
-									<SensitiveInput
-										variant="settings"
-										placeholder={$i18n.t('settings.admin.images.imagesEditOpenaiApiKey.label')}
-										bind:value={config.IMAGES_EDIT_OPENAI_API_KEY}
-										required={false}
-									/>
-								</AdminSettingField>
-							</div>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesEditOpenaiApiVersion.label')}
-								forId="images-edit-openai-api-version"
-							>
-								<input
-									id="images-edit-openai-api-version"
-									class={inputClass}
-									placeholder={$i18n.t('settings.admin.images.imagesEditOpenaiApiVersion.label')}
-									bind:value={config.IMAGES_EDIT_OPENAI_API_VERSION}
-								/>
-							</AdminSettingField>
-						{:else if config?.IMAGE_EDIT_ENGINE === 'comfyui'}
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesEditComfyuiBaseUrl.label')}
-								description={$i18n.t('settings.admin.images.imagesEditComfyuiBaseUrl.description')}
-								forId="images-edit-comfyui-base-url"
-							>
-								<div class="flex w-full gap-2">
-									<input
-										id="images-edit-comfyui-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('Enter URL (e.g. http://127.0.0.1:7860/)')}
-										bind:value={config.IMAGES_EDIT_COMFYUI_BASE_URL}
-									/>
-									<button
-										class="shrink-0 text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-600 dark:hover:text-white"
-										type="button"
-										aria-label={$i18n.t('settings.admin.images.verifyConnection.label')}
-										on:click={async () => {
-											const res = await verifyConnection(localStorage.token, {
-												engine: 'comfyui',
-												url: config.IMAGES_EDIT_COMFYUI_BASE_URL,
-												key: config.IMAGES_EDIT_COMFYUI_API_KEY
-											}).catch((error) => {
-												toast.error(`${error}`);
-												return null;
-											});
-
-											if (res) {
-												toast.success(
-													$i18n.t('settings.admin.images.serverConnectionVerified.label')
-												);
-											}
-										}}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</button>
-								</div>
-							</AdminSettingField>
-
-							<AdminSettingField
-								label={$i18n.t('settings.admin.images.imagesEditComfyuiApiKey.label')}
-								description={$i18n.t('settings.admin.images.imagesEditComfyuiApiKey.description')}
-							>
-								<SensitiveInput
-									variant="settings"
-									placeholder={$i18n.t('sk-1234')}
-									bind:value={config.IMAGES_EDIT_COMFYUI_API_KEY}
-									required={false}
-								/>
-							</AdminSettingField>
-
-							<div>
-								<input
-									id="upload-comfyui-edit-workflow-input"
-									hidden
-									type="file"
-									accept=".json"
-									on:change={(e) => {
-										const file = e.target.files[0];
-										const reader = new FileReader();
-
-										reader.onload = (e) => {
-											config.IMAGES_EDIT_COMFYUI_WORKFLOW = e.target.result;
-											e.target.value = null;
-										};
-
-										reader.readAsText(file);
-									}}
-								/>
-								<AdminSettingRow
-									label={$i18n.t('settings.admin.images.comfyuiComfyuiWorkflow.label')}
-									description={$i18n.t('settings.admin.images.comfyuiComfyuiWorkflow.description')}
-								>
-									<div class="flex items-center justify-end gap-2">
-										{#if config.IMAGES_EDIT_COMFYUI_WORKFLOW}
-											<button
-												class="text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-												type="button"
-												aria-label={$i18n.t('settings.admin.images.editWorkflowJsonContent.label')}
-												on:click={() => {
-													// open code editor modal
-													showComfyUIEditWorkflowEditor = true;
-												}}
-											>
-												{$i18n.t('Edit')}
-											</button>
-										{/if}
-
-										<Tooltip
-											content={$i18n.t(
-												'settings.admin.images.clickHereToUploadAWorkflowJsonFile.label'
-											)}
-										>
-											<button
-												class="text-xs text-gray-500 transition-colors hover:text-gray-900 hover:underline dark:text-gray-500 dark:hover:text-white"
-												type="button"
-												aria-label={$i18n.t(
-													'settings.admin.images.clickHereToUploadAWorkflowJsonFile.label'
-												)}
-												on:click={() => {
-													document.getElementById('upload-comfyui-edit-workflow-input')?.click();
-												}}
-											>
-												{$i18n.t('Upload')}
-											</button>
-										</Tooltip>
-									</div>
-								</AdminSettingRow>
-
-								<CodeEditorModal
-									bind:show={showComfyUIEditWorkflowEditor}
-									value={config.IMAGES_EDIT_COMFYUI_WORKFLOW}
-									lang="json"
-									onChange={(e) => {
-										config.IMAGES_EDIT_COMFYUI_WORKFLOW = e;
-									}}
-									onSave={() => {
-										console.log('Saved');
-									}}
-								/>
-							</div>
-
-							{#if config.IMAGES_EDIT_COMFYUI_WORKFLOW}
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.editingWorkflowNodes.label')}
-									description={$i18n.t('settings.admin.images.editingWorkflowNodes.description')}
-								>
-									<div class="flex flex-col gap-1.5 text-xs">
-										{#each REQUIRED_EDIT_WORKFLOW_NODES as node}
-											<div class="flex w-full flex-col">
-												<div class="shrink-0">
-													<label
-														for={`comfyui-edit-workflow-node-${node.type}-key`}
-														class=" capitalize line-clamp-1 w-20 text-gray-400 dark:text-gray-500"
-													>
-														{node.type}{['prompt', 'image'].includes(node.type) ? '*' : ''}
-													</label>
-												</div>
-
-												<div class="flex mt-0.5 items-center">
-													<div class="">
-														<Tooltip content={$i18n.t('Input Key (e.g. text, unet_name, steps)')}>
-															<input
-																id={`comfyui-edit-workflow-node-${node.type}-key`}
-																class="{inputClass} w-24"
-																placeholder={$i18n.t('Key')}
-																bind:value={node.key}
-																required
-															/>
-														</Tooltip>
-													</div>
-
-													<div class="px-2 text-gray-400 dark:text-gray-500">:</div>
-
-													<div class="w-full">
-														<Tooltip
-															content={$i18n.t('Comma separated Node Ids (e.g. 1 or 1,2)')}
-															placement="top-start"
-														>
-															<input
-																class={inputClass}
-																placeholder={$i18n.t('Node Ids')}
-																aria-label={$i18n.t('Node Ids')}
-																bind:value={node.node_ids}
-															/>
-														</Tooltip>
-													</div>
-												</div>
-											</div>
-										{/each}
-									</div>
-
-									<div class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-										{$i18n.t('*Prompt node ID(s) are required for image generation')}
-									</div>
-								</AdminSettingField>
-							{/if}
-						{:else if config?.IMAGE_EDIT_ENGINE === 'gemini'}
-							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesEditGeminiApiBaseUrl.label')}
-									forId="images-edit-gemini-api-base-url"
-								>
-									<input
-										id="images-edit-gemini-api-base-url"
-										class={inputClass}
-										placeholder={$i18n.t('settings.admin.images.imagesOpenaiApiBaseUrl.label')}
-										bind:value={config.IMAGES_EDIT_GEMINI_API_BASE_URL}
-									/>
-								</AdminSettingField>
-
-								<AdminSettingField
-									label={$i18n.t('settings.admin.images.imagesEditGeminiApiKey.label')}
-								>
-									<SensitiveInput
-										variant="settings"
-										placeholder={$i18n.t('settings.admin.images.imagesEditGeminiApiKey.label')}
-										bind:value={config.IMAGES_EDIT_GEMINI_API_KEY}
-										required={config.ENABLE_IMAGE_EDIT}
-									/>
-								</AdminSettingField>
-							</div>
-						{/if}
 					</AdminSettingSection>
 				{/if}
 			</div>
@@ -1184,18 +304,12 @@
 	</div>
 
 	<div class="flex justify-end pt-6 text-sm font-normal">
-		<button
-			class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
-			type="submit"
+		<AdminSettingSaveButton
+			settings={config}
+			{savedConfig}
+			labels={settingLabels}
 			disabled={loading}
-		>
-			{$i18n.t('Save')}
-
-			{#if loading}
-				<span class="shrink-0">
-					<Spinner className="size-3" />
-				</span>
-			{/if}
-		</button>
+			{loading}
+		/>
 	</div>
 </form>

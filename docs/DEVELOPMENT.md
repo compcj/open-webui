@@ -234,13 +234,39 @@ and a full dependency install are not needed. For behavior changes, select meani
 exercise the changed workflow. Record baseline failures separately; never widen a task into a
 repository-wide cleanup solely to make an unrelated check green.
 
+## v0.13.4 merge and release checks
+
+Use Node 22 and Python 3.11/3.12. Isolate SQLite data, static files and uploads for each run.
+Use independent PostgreSQL databases and Redis namespaces for service-backed tests.
+Pin the external [Open WebUI tests](https://github.com/open-webui/tests/tree/66c2ededb9ab48dc6eb89556fb16780f784e6591)
+and set `OPEN_WEBUI_SOURCE_DIR` to the candidate checkout's absolute `backend` directory. Run
+the suite from its own checkout. Record the exact suite SHA, scope and test outcomes in the
+[release validation record](upstream/v0.13.4-validation.md).
+
+```sh
+git rev-parse HEAD
+git merge-base HEAD 0666e59d26a4d056e0bacee41742486badd71cf8
+node -p "require('./package.json').version"
+node -p "require('./package-lock.json').packages[''].version"
+npm run test:frontend -- --run --maxWorkers=2 --minWorkers=1
+npm run check
+python -m pytest backend/tests -q
+git diff --check
+```
+
+Exercise both release sources independently, including a failed lookup and the numeric `f9` to `f10`
+transition. Check the release notes selected by `scripts/prepare-release.js`, standard and slim lock
+hashes, pinned torch family versions, GHCR exact and series tags and OCI version metadata. Docker
+tag validation uses local metadata or builds without pushing. Deployment smoke checks cover a genuine
+0.4+ terminal, an isolated preview hostname and signed file delivery.
+
 ## Fork regression map
 
 Read [the upstream merge index](upstream/README.md) and the
-[v0.13.3 decisions](upstream/v0.13.3-decisions.md) before comparing or merging upstream.
+[current decisions](upstream/v0.13.4-decisions.md) before comparing or merging upstream.
 Older documents in `docs/superpowers/` describe historical tasks and do not set the current baseline.
 Official commit IDs and actual ancestry, not local tag names alone, determine an upgrade target.
-The [dated fork audit](upstream/v0.13.3-fork-audit.md) inventories current behavior and all
+The [dated fork audit](upstream/v0.13.4-fork-audit.md) inventories current behavior and all
 fork-only commits. Its historical verification numbers do not establish current runtime health.
 
 | Behavior                              | Implementation boundary                                                                | Regression starting point                                                                                                                                                                    |

@@ -22,10 +22,18 @@ Tether 设备身份来自认证后的服务端记录，客户端传入的设备 
 Tether 不能继承管理员终端连接的技能自动发现 opt-in，也不能用作知识库终端直接导入来源。
 手动技能、模型预设及其他工具继续遵守各自权限。详见[知识写入](knowledge-write-tools.md)。
 
+## 托管终端与文件
+
+Terminals orchestrator 从 0.4.0 起提供模板和用户、聊天、模型等实例范围。升级后由管理员核对旧配置并手动重新绑定连接，实例的启动和停止需要 0.4.1 或更新版本。管理员可将模板管理和其他用户实例的管理通过显式 write grant 委派给指定用户或群组。拥有共享聊天写权限的成员仍须具有自己的终端使用权限，文件、浏览器、终端工具与实例请求均按实际操作者检查。
+
+普通终端与 Tether 的聊天附件默认上传至 WebUI。需将附件复制到终端时，为该连接显式选择 filesystem 上传模式。原生 Agent 只接收本次待发送消息中由用户附加并获准读取的文件。更换聊天、账号、终端或模型作用域后，进行中的上传结果不会写入另一条消息。
+
+多台 Tether 设备提供同名模型时，每个发生冲突的模型都可按来源选择，现有的模型路由仍有效。固定项、默认模型和自动化中的旧 Agent ID 只有在实时目录中有唯一的授权匹配项时才迁移。无法确定目标时显示原值，待用户重新选择。
+
 ## Agent 聊天
 
 选择终端提供的 Agent 模型并使用已保存聊天；每次只运行一个 Agent。上下文由 Agent 管理，
-WebUI 的 off/legacy/V2 压缩不介入其内部会话。Agent 聊天不支持重新生成、继续旧回复或原地创建分支。
+WebUI 的 off/legacy/V2 压缩不介入其内部会话。原回复作者可在原已保存聊天中用已验证的检查点重新生成或分支。重新生成需要终端与对应 Agent 支持该操作。
 终端、Agent 或目录不可用时，保留原模型身份并提示离线；等待恢复或手动选择普通模型。
 自动化在开始前重新检查终端和 Agent 的可用性。
 
@@ -33,7 +41,13 @@ Agent 会话绑定回复作者、聊天、终端与工作目录。分享、复�
 不复制可续跑的 Agent 会话或执行身份。切换目录/终端不会把旧会话附到新目标。
 续跑签名同时绑定实际终端地址；连接 ID 相同但地址变化也不能沿用旧执行身份。
 
+同一已安装 Agent 支持所选基础模型、执行绑定完全匹配且用户仍有访问权限时可切换基础模型。旧签名会话须具备已结算证明才能恢复。已结算但绑定证据不足时从可见历史启动新会话，尚未结算时阻止新执行。
+
+原生 Agent 的 Auto 审批独立设置，默认由 WebUI 决定审批流程。支持提供方 Auto 的 Agent 可自行处理常规操作，实际升级的请求交给当前回复作者。普通模型与普通工具沿用 WebUI 的独立审批设置。
+
 ## 停止与故障恢复
+
+运行中只有本条回复作者可追加指示。状态绑定作者、分支、任务和临时上下文，直到执行者确认结束且结果完整发布。断线重连和重复提交不得使同一指示重复执行。
 
 开始远端操作之前保存执行记录。停止后先保留停止意图，再要求 Open Terminal 确认执行已结束；
 确认成功并保存已接受的原文后，原子地完成回复并解除下一轮阻塞。重复停止不能中断清理过程。
@@ -68,6 +82,4 @@ Proxy 网页/端口通过[独立来源预览](terminal-preview.md)，默认没�
 
 ## Verification
 
-See [development checks](DEVELOPMENT.md#v0133-integration-verification) and the
-[actual v0.13.3 validation record](upstream/v0.13.3-validation.md). Test doubles and loopback transports
-do not demonstrate availability of a particular user's remote Agent or credentials.
+See the [development checks](DEVELOPMENT.md), [v0.13.4 decisions](upstream/v0.13.4-decisions.md) and [v0.13.4 validation record](upstream/v0.13.4-validation.md) for tested paths and environment limits.

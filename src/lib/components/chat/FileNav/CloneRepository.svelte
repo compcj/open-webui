@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { getContext, onDestroy } from 'svelte';
-	import type { TerminalConnection } from '$lib/apis/terminal';
+	import type { TerminalTarget } from '$lib/apis/terminal';
 	import { cloneRepository } from '$lib/apis/terminal/git';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Icon from './Icon.svelte';
 
 	const i18n = getContext<any>('i18n');
-	export let connection: TerminalConnection;
-	export let chatId: string | null;
+	export let terminal: TerminalTarget;
+
 	export let directory: string;
 	export let disabled = false;
 	export let onCloned: (path: string) => void;
@@ -25,7 +25,7 @@
 		cloningDirectory = directory;
 		error = '';
 		try {
-			const path = await cloneRepository(connection, chatId, directory, url, controller.signal);
+			const path = await cloneRepository(terminal, directory, url, controller.signal);
 			if (!controller.signal.aborted) onCloned(path);
 		} catch (err) {
 			if (!controller.signal.aborted)

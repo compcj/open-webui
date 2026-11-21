@@ -48,7 +48,7 @@ describe('temporary Chat boundaries', () => {
    const {prepare,send,scope,graph}=deps;
    const temporaryController={prepare,identity:scope,chatId:'temporary:scope',capture:()=>()=>true};
    let $chatId='temporary:scope',temporaryScope,temporaryConnectionSessionId,history=structuredClone(graph),chatFiles=[];
-   const embedded=false,$temporaryChatEnabled=true,contextCompactionMode='v2',localStorage={token:'captured'},params={},$settings={},$config={features:{}},$user={},$socket={id:'socket'},$selectedTerminalId=null,$selectedFolder=null;
+   const terminalContext=null, embedded=false,$temporaryChat=true,contextCompactionMode='v2',localStorage={token:'captured'},params={},$settings={},$config={features:{}},$user={},$socket={id:'socket'},$selectedTerminalId=null,$selectedFolder=null;
    const $models=[{id:'m'}],model=$models[0],selectedToolIds=[],selectedSkillIds=[],selectedFilterIds=[];
    const chatId={set:async id=>{$chatId=id;}},getTemporaryConnectionSessionId=()=> 'connection';
    const scrollToBottom=()=>{},eventTarget={dispatchEvent:()=>{}},CustomEvent=class{},tick=async()=>{};

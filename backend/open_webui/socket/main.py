@@ -436,8 +436,13 @@ async def publish_note_presence(note_id: str):
         if REDIS is not None and not await lock.owned():
             return
         await sio.emit(
-            'note:presence',
-            {'note_id': note_id, 'users': sorted(people.values(), key=lambda person: person['id'])},
+            'events',
+            {
+                'data': {
+                    'type': 'note:presence',
+                    'data': {'note_id': note_id, 'users': sorted(people.values(), key=lambda person: person['id'])},
+                }
+            },
             room=f'note:{note_id}',
         )
 
@@ -728,7 +733,7 @@ async def disconnect_sessions_for_users(user_ids: list[str], *, refresh_access: 
     for sid in session_ids:
         if refresh_access:
             try:
-                await sio.emit('access:updated', {}, to=sid)
+                await sio.emit('events', {'data': {'type': 'access:updated'}}, to=sid)
             except Exception:
                 log.exception('Failed to notify session %s about changed access', sid)
         try:
@@ -1295,11 +1300,16 @@ async def document_save_handler(document_id, data, user):
         )
         if saved:
             await sio.emit(
-                'events:note',
+                'events',
                 {
-                    'id': note_id,
-                    'page': get_page(saved.data, page['id']),
-                    'updated_at': saved.updated_at,
+                    'data': {
+                        'type': 'note:updated',
+                        'data': {
+                            'id': note_id,
+                            'page': get_page(saved.data, page['id']),
+                            'updated_at': saved.updated_at,
+                        },
+                    }
                 },
                 to=f'note:{note_id}',
             )
@@ -1790,7 +1800,11 @@ async def get_event_emitter(request_info, update_db=True):
             pending_approval_ids = await ChatMessages.get_chat_ids_with_pending_approval([chat_id])
             event_data = {
                 **event_data,
-                'data': {**(event_data.get('data') or {}), 'pending_approval': chat_id in pending_approval_ids},
+                'data': {
+                    **(event_data.get('data') or {}),
+                    'pending_approval': chat_id in pending_approval_ids,
+                    **({'folder_unread_counts': await get_folder_unread_counts(user_id)} if not internal else {}),
+                },
             }
 
         if event_data.get('type') == 'tool_result_compaction':
@@ -2102,6 +2116,8 @@ async def get_event_call(request_info):
 
     async def __event_caller__(event_data):
         session_id = request_info['session_id']
+        chat_id = request_info['chat_id']
+        message_id = request_info['message_id']
         rpc_id = None
         if is_temporary_chat_id(request_info['chat_id']) and not request_info.get('temporary_context'):
             owner = await get_temporary_chat(redis, request_info['chat_id'])
@@ -2109,6 +2125,15 @@ async def get_event_call(request_info):
                 session_id = request_info['session_id'] = owner['session_id']
                 if 'session_id' in (event_data.get('data') or {}):
                     event_data = {**event_data, 'data': {**event_data['data'], 'session_id': session_id}}
+
+        if request_info.get('internal') is True and 'session_id' not in (event_data.get('data') or {}):
+            # The page only answers for its open chat.
+            metas = await Chats.get_chat_metas_by_chat_ids([chat_id], include_archived=True)
+            if not metas:
+                return {'error': 'Client session disconnected.'}
+            chat_id, message_id = metas[0]['parent_chat_id'], metas[0]['parent_message_id']
+            if chat_id not in ((SESSION_POOL.get(session_id) or {}).get('chat_ids') or []):
+                session_id = await asyncio.to_thread(get_user_chat_session_id, request_info['user_id'], chat_id)
 
         # session_id is client-supplied; only the requesting user's own live session may be targeted.
         session = SESSION_POOL.get(session_id)
@@ -2187,9 +2212,19 @@ async def get_event_call(request_info):
                         async with asyncio.timeout(60):
                             while True:
                                 # Redis session scans are synchronous; keep them off the event loop.
-                                next_session_id = await asyncio.to_thread(
-                                    get_user_chat_session_id, request_info['user_id'], request_info['chat_id']
-                                )
+                                if is_temporary_chat_id(request_info['chat_id']):
+                                    owner = await get_temporary_chat(redis, request_info['chat_id'])
+                                    next_session_id = (
+                                        owner['session_id']
+                                        if owner and owner['user_id'] == request_info['user_id']
+                                        else None
+                                    )
+                                    if get_user_id_from_session_pool(next_session_id) != request_info['user_id']:
+                                        next_session_id = None
+                                else:
+                                    next_session_id = await asyncio.to_thread(
+                                        get_user_chat_session_id, request_info['user_id'], chat_id
+                                    )
                                 if next_session_id is not None:
                                     session_id = request_info['session_id'] = next_session_id
                                     break
