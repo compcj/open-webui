@@ -50,6 +50,9 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - Responses API payload conversion uses `utils/responses_reasoning.py` from `routers/openai.py`.
   Preserve removal of top-level `reasoning_effort` and merging into `reasoning.effort` without
   dropping other reasoning fields. Check the accompanying frontend selection/default behavior.
+- `ModelMeta.intelligence_score` is optional display metadata. Accept `null` or a strict integer
+  from 0 through 99. Missing and cleared scores have no badge, and zero is a valid score. Keep
+  provider parameters and model-list ordering independent of this field.
 - OpenClaw-compatible skills span `models/skills.py` (`SkillMeta.openclaw` permissive bag),
   `routers/skills.py` (`/load/url`, `/id/{id}/install_deps`), `utils/skills_runtime.py`,
   `utils/middleware.py` (skill injection block), `tools/builtin.py` (`view_skill`), and the
@@ -109,6 +112,14 @@ Applies to `backend/` and its descendants, together with the [root guide](../AGE
 - A repeated tool ID in one batch/replay must not execute twice. A fresh provider round may reuse
   an ID and needs a distinct stable execution identity. Deterministically split concatenated calls,
   retire their parent placeholder, preserve completed children and resume only pending children.
+- Stage builtin `ask_user` as a standalone call with 1–3 uniquely identified questions. Omitted or
+  empty `options` means free text. Choice questions accept 2–4 presets and always allow typed
+  answers, including with legacy `allow_other=false`. Share normalization between live callbacks
+  and saved questions, keeping the original provider arguments for replay.
+  Submitted answers must cover exactly the question IDs. Check a preset's index, label and any
+  supplied description against the normalized question. Require nonblank typed text and preserve
+  it verbatim, including whitespace and leading zeroes. A malformed staged question gets a completed
+  error result. An invalid answer to a saved question returns 400 and leaves the question pending.
 - Redis cancellation intent is independent of the liveness lease. Pub/Sub is a notification;
   owner polling must recover missed messages even when task TTL is disabled. Report stopped only
   after owner completion/cleanup, never after lease pruning or publication alone. Repeated stops
@@ -168,6 +179,18 @@ attachments by ordinal positions after output expansion or repeat the old async 
 Keep `backend/tests/test_terminal_agents_attachments.py` when changing either pipeline stage.
 
 See [version decisions](../docs/upstream/v0.12.4-decisions.md) for rationale and upgrade boundaries.
+
+Register `browser_open_tab` for interactive chats advertising `features.terminal_browser_tab=true`
+with an originating socket callback and a `browser_action` tool on the selected terminal. Exclude
+internal and automation requests. Return the created browser session ID and actual mode. Proxy
+results explain the Chrome requirement. An unconfirmed create directs the caller to `browser_tabs`
+before retrying.
+
+The admin Connections field `SHOW_FILES_ON_TERMINAL_SELECT` maps to `terminal.show_files_on_select`
+and defaults to false. Preserve saved values on partial updates and expose the effective setting
+as `features.show_files_on_terminal_select` to signed-in clients. It governs desktop file-list
+opening on terminal selection. File access still requires the user's terminal permissions.
+See [opening files in chat](../docs/TERMINAL_FILES.md#opening-files-in-chat).
 
 ## v0.12 data and collaboration boundaries
 
@@ -309,8 +332,12 @@ See [version decisions](../docs/upstream/v0.12.4-decisions.md) for rationale and
   Temporary events stay in the scoped cache and page state; they never create SQL message rows or
   restore the full temporary conversation after a page reload.
 - Count final input, tools and multimodal allowances with an explicit source. Calibrate only matched
-  single-call input usage, never cumulative billing totals. Ordinary chat reserves configured output
-  only; internal V2 summaries use their separate percentage/absolute output calculation below.
+  single-call input usage, never cumulative billing totals. For ordinary V2 requests, take the first
+  positive output limit from the final payload, then its `options`, then inherited model parameters.
+  Within each source, check `max_completion_tokens`, `max_tokens`, `max_output_tokens`, then
+  `num_predict`. This ordering matches Responses conversion. Subtract the reserve (zero if unset)
+  from the effective window and cap the compaction trigger at the resulting input budget. Internal
+  V2 summaries use their separate output calculation below.
 - Append dynamic budget reminders after the existing messages/tool results, preserving their order
   and the stable prefix. Continuations replace the previous request-local reminder, never persist it
   in raw history. Responses conversion must keep late system messages in `input`, not overwrite
@@ -435,6 +462,11 @@ and [checks](../docs/DEVELOPMENT.md#native-model-connection-verification).
   independently of native envelopes and existing `reasoning_details`; do not infer a model or enable
   schema conversion from this field. A signature delta is a complete value: repeated snapshots replace
   it, and absent/empty deltas never erase it. Do not concatenate signatures as argument/text fragments.
+- When a Chat Completions stream omits or repeats tool-call indices, use the provider ID within
+  that round to pair arguments, signatures and emitted argument events. For a repeated complete
+  indexless declaration with the same ID, keep the first call and accept a signature update from an
+  identical declaration. An anonymous argument or signature fragment needs a unique pending match.
+  Mark ambiguous matches incomplete and skip their execution.
 - Preserve carriers through late signature-only deltas, output storage, approval resumes and batch
   replay. Restore the original provider wrapper, arguments and signature once; never repeat execution.
   Signed message text stays exact, including whitespace and empty messages. Continue must preserve

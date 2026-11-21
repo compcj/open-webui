@@ -19,6 +19,9 @@ connections retain their separate `reasoning_details` replay envelope.
   新请求仍按其配置和变量重新准备；这不会冻结整段聊天的所有动态上下文。
 - 流式工具调用的签名保留在对应 `tool_calls[]` 上，参数完成后才到达的签名也会保存。
   批量分发回放时恢复原始外层调用、参数和签名，保存后加载和审批恢复保留同一签名。
+- 网关省略或复用 `tool_calls[].index` 时，WebUI 按当轮调用的 `id` 区分并行调用。完整流以
+  `finish_reason="stop"` 收尾时，也会执行有效调用并在下一轮回传各自的结果。相同 ID 重发完整的
+  无索引声明至多执行一次。如果没有 ID 的参数或签名片段能匹配多个调用，这些调用会返回不完整错误。
 - 消息级签名保留在 assistant 消息上。流式或非流式的签名文本保留空白、空消息和原始响应边界；
   “继续回答”不会把两份独立签名的文本合并。已有工具或代码结果不会因签名处理而再次执行。
 - 签名是不可解释的字符串，重复完整值按快照更新，空尾包不能清除已收到的非空签名。
@@ -38,6 +41,12 @@ them. They are neither concatenated as text fragments nor synthesized. Existing 
 remains independent. Model-switch projections remove old signatures without altering stored originals;
 request-filter routing changes also clean outgoing and accumulated tool-continuation projections.
 V2 counts signature fields and includes them in input fingerprints.
+
+Some gateways omit `tool_calls[].index` or reuse it for parallel calls. Distinct IDs within the
+round keep arguments, signatures and results paired. When a completed stream ends with
+`finish_reason="stop"`, WebUI can still execute eligible calls and send their results in the next round.
+A complete indexless declaration repeated under the same ID executes at most once. If an argument
+or signature fragment has no ID and matches several pending calls, each affected call fails as incomplete.
 
 ## OpenAI 兼容参数与续轮 / OpenAI-compatible requests
 

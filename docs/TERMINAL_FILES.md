@@ -51,10 +51,23 @@ discard untrusted upstream security headers, cookies, refresh headers, and redir
 control JSON/SSE and interactive sessions remain available. This policy is confined to terminal
 content routes.
 
-New signed results display inline file cards instead of opening the current file browser through
-a path-only event. These cards offer preview, source viewing where applicable, and download. Their
-Open-in-file-browser action is omitted because an ordinary file browser uses the current chat's
-context, which can differ from the signed file's original automation or chat context.
+## Opening files in chat
+
+A signed `display_file` result appears as an inline card. Its preview, source view (where supported)
+and download use the signed file's original chat or automation context. The card omits the
+open-in-file-browser action because the current chat can point to a different workspace.
+
+With tab display selected, a path-only `terminal:display_file` event opens or reuses a background
+file tab in the originating chat on the selected terminal, preserving the requested page and the
+active tab's focus. Click the file tab to view it. The inline display preference keeps files in the
+message. When the prompt has a filesystem attachment, the event only refreshes a matching open preview.
+
+Admins can enable **Show Files on Terminal Select** under **Admin Settings → Integrations → Terminal**.
+The environment default `SHOW_FILES_ON_TERMINAL_SELECT` is false and the saved setting is
+`terminal.show_files_on_select`. When enabled, selecting a terminal on desktop (at least 1024 px
+wide) opens its file list for any user with terminal access. A `run_command` event refreshes only
+existing directory tabs on the selected terminal, preserving their paths and focus. Commands with
+a filesystem attachment or a selected file preview skip that directory refresh.
 
 ## Per-chat operations and comparisons
 
@@ -86,7 +99,12 @@ directory.
 
 ### Browser tabs and port previews
 
-Use Chrome mode for full browser capabilities when the selected terminal offers a Chrome session.
+In the main chat, a model can call `browser_open_tab` to open a blank tab when the selected
+Open Terminal provides `browser_action`. The result identifies the new browser `session_id` and
+mode. In Chrome mode, reuse that ID with `browser_action` to navigate, read or click in the same
+tab. A Proxy result explains that interaction requires Chrome. If creation is unconfirmed, check
+`browser_tabs` for an existing session before opening another.
+
 Proxy mode and embedded port pages require an independent preview hostname configured by the
 administrator. The embedded page runs in a sandbox with no access to WebUI's DOM or browser storage.
 Preview tickets are bound to the current login, terminal and chat context and expire after five

@@ -80,8 +80,10 @@ Tether has an independent admin switch, off by default. Saved personal tool/term
 Isolated Proxy preview requires a separate hostname configured through `TERMINAL_PREVIEW_BASE_URL`, HTTPS outside explicit local development, and a preview-only reverse-proxy route. It defaults off. Tickets last five minutes and active panels renew authorization every minute. Sandboxed pages cannot use DOM cookies/localStorage; use Chrome for full browser capabilities. See [deployment and limits](docs/terminal-preview.md).
 
 在主聊天中选定支持浏览器操作的 Open Terminal 后，模型可以调用 `browser_open_tab` 打开新的空白标签页，再用返回的会话 ID 在同一页导航、读取和点击。交互操作需要终端提供 Chrome。
+如果创建结果未能确认，模型会收到提示，可先用 `browser_tabs` 查找已经打开的标签页。
 
 In the main chat, a model can call `browser_open_tab` on a selected Open Terminal with browser tools. The tool opens a blank tab and returns its session ID for navigation, reading and clicking. These interactions require Chrome on the terminal.
+If creation cannot be confirmed, the tool prompts the model to check `browser_tabs` before retrying.
 
 ### 新增功能与扩展 / Fork additions and extensions
 
@@ -114,10 +116,12 @@ badge appears before the name in the model picker and `@` model suggestions. Lea
 the badge; zero is a valid score. Scores are saved with the model configuration and are for display only.
 
 **询问用户 / Ask User** — 模型每次可用 `ask_user` 提出 1–3 道题。选择题提供 2–4 个预设选项，也可自填答案。填空题支持直接粘贴多行日志、命令输出或错误信息。文本框内按回车换行，点击“下一步”或“提交答案”确认。
+恢复已保存的内置提问时也可自填。输入 `00123` 这样的编号会保留前导零。
 
 The model can mix 1–3 questions in one `ask_user` call. Choices offer 2–4 presets and a write-in
-answer. Text questions accept multiline logs, command output, or numbers such as `00123`. Press
-Enter for a new line and use **Next** or **Submit answers** to confirm.
+answer, including when you resume a saved built-in question. Text questions accept multiline logs
+and command output and preserve leading zeros in IDs such as `00123`. Press Enter for a new line
+and use **Next** or **Submit answers** to confirm.
 
 ### 功能与设计决策差异 / Behavior and design differences
 
@@ -151,9 +155,11 @@ notebooks, bulk deletion and ZIP downloads. File comparisons read from the same 
 
 管理员可在「设置 → 扩展功能 → 终端」中为所有人开启「选择终端时显示文件」，默认关闭。
 桌面端开启后，选择终端会打开文件列表。模型通过 `display_file` 展示到标签页的文件会在后台打开，点击文件标签即可查看。
+模型运行 `run_command` 后，只在原处刷新当前终端已打开的目录标签页。
 
 In Admin Settings → Integrations → Terminal, admins can enable **Show Files on Terminal Select** for everyone.
 It defaults to off and applies to desktop terminal selection. Files displayed in tabs by `display_file` open in the background.
+After a model runs `run_command`, only open directory tabs for the selected terminal refresh in place.
 
 共享聊天仅所有者可发起普通或 Realtime 通话，管理员也不能代替其他所有者；切换到他人的聊天会结束通话。
 旧转写继续保留作者归属与私人语音元数据过滤，普通语音听写保持原有权限。
@@ -249,6 +255,8 @@ See the [fix record and verification scope](docs/upstream/v0.11.4-tool-citation-
 通过 Chat Completions 兼容接口调用 Gemini 时，保留网关返回的
 `extra_content.google.thought_signature`，支持流式工具调用、批量调用、保存后重放和审批恢复；
 签名文本也保留原文与响应边界。该字段与既有 `reasoning_details` 独立，无需开启 Schema 兼容模式。
+网关省略或重复并行工具调用的索引时，WebUI 按调用 ID 配对参数、签名和结果。同一 ID 的无索引完整声明只执行一次。
+如果无 ID 的参数片段可能属于多个调用，相关调用会在执行前报错。
 说明、排错和已知边界见[工具续轮与 Gemini 签名指南](docs/gemini-cache-replay.md)。
 
 The configured model system prompt is resolved before a chat request's first send and reused by its
@@ -256,6 +264,9 @@ tool continuations. Gemini through Chat Completions preserves the gateway's
 `extra_content.google.thought_signature` across streaming tool calls, batches, saved replay and
 approval resumes. Signed text keeps its original content and response boundaries. This carrier is
 independent of existing `reasoning_details` and the optional schema compatibility profile.
+When the gateway omits or repeats indices for parallel calls, WebUI matches arguments, signatures
+and results by call ID. A repeated full declaration with the same ID and no index runs once. If an
+argument fragment without an ID could belong to several calls, those calls fail before execution.
 See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) for scope and troubleshooting.
 
 模型编辑页提供 **回传推理内容 / Replay reasoning content**（默认开启）：只回传上游实际返回的
@@ -266,6 +277,7 @@ See the [continuation and Gemini signature guide](docs/gemini-cache-replay.md) f
 不按模型名猜测，也不改变 Responses、原生协议或已有审批快照。详见[D04a 技术决策与合并检查](docs/upstream/v0.13.3-private-context-followup.md)。
 **extra_body 兼容模式 / Extra body compatibility** 默认关闭；开启后展开自定义参数中的 `extra_body` 对象，
 显式顶层参数优先。缓存/会话标识字符串保持原值；请求过滤器每轮处理未重复加工的输入，模型提示词在本次请求内冻结。
+系统消息保留已有的内容块和缓存标记。委派工具按配置顺序列出当前用户可用的子代理模型，重复的模型只列一次。
 工具收尾保留定义、设置 `tool_choice=none` 并在末尾添加 user 提示，后端继续阻止额外执行。
 DeepSeek 缓存读取计数纳入多轮统计；未返回计数仍表示未知。详见[输入缓存兼容说明](docs/gemini-cache-replay.md#openai-兼容参数与续轮--openai-compatible-requests)。
 
@@ -278,6 +290,8 @@ budgeting, and preserves frozen internal snapshots. See the [D04a technical deci
 **Extra body compatibility**
 (off by default) flattens an `extra_body` object with explicit top-level precedence. Cache/session strings
 stay strings, filters receive fresh input each round, and model prompts remain frozen within the request.
+System messages retain their content blocks and cache annotations. The delegation tool lists accessible
+subagent models in the configured order and shows each model once.
 Final stops retain tools with `tool_choice=none` and a trailing user instruction; backend execution remains
 blocked. Multi-call cache accounting includes DeepSeek counters, with missing measurements kept unknown.
 
@@ -286,6 +300,7 @@ blocked. Multi-call cache accounting includes DeepSeek counters, with missing me
 管理员在 **设置 → 界面 → 上下文压缩** 选择 **关闭／原版压缩／V2压缩**。
 V2 将延续摘要、近期完整原文和 Token 预算提醒结合，默认上下文长度 **262144**、有效窗口 **95%**、
 触发比例 **90%**、近期原文预算 **20000 tokens**；可单独选择摘要模型并调整关键参数。
+V2 按 Responses 请求实际采用的输出上限预留空间。使用默认比例时，若窗口为 100000 tokens，且只设置了 `max_output_tokens=32000`，输入预算和压缩触发阈值均为 63000 tokens。
 预算提醒附加在消息末尾，尽量保持已有上下文前缀稳定，以利于输入缓存复用。
 V2 默认启用工具结果预算：单个结果最多占模型窗口的 **10%**，同一批次最多 **30%**。
 仅为新工具结果分配额度，必要时先压缩较早历史；每次摘要释放的空间会重新分配，其余结果能放下时保留原文。
@@ -302,6 +317,8 @@ V2 设置中的“摘要输出预算比例”默认 **5%**，按摘要模型自�
 
 Under **Settings → Interface → Context Compaction**, admins choose **Off / Legacy / V2** globally.
 V2 combines continuation summaries, complete recent conversation groups and token budget reminders.
+V2 reserves space for the output limit sent to the Responses API. With the default percentages,
+a 100,000-token window and only `max_output_tokens=32000` set, the input budget and compaction trigger are both 63,000 tokens.
 Budget reminders are appended after the conversation to preserve the existing prefix for input cache reuse.
 V2 enables tool budgets by default: **10%** of the model window per result and **30%** per batch.
 Only new results share tool allowances, with older history compacted first when needed. Each summary
@@ -326,6 +343,11 @@ switching modes preserves raw history and each algorithm's summaries. See the
 [configuration and troubleshooting guide](docs/context-compaction.md).
 
 ### 控件、共享聊天与技能升级 / Controls, shared chats and skill upgrades
+
+手机聊天输入框下方的控件分为两行。「+」菜单和可用的工具、终端入口在第一行，模型选择、推理控件和语音、发送或停止按钮在第二行。
+
+On narrow screens, the controls below the message box use two rows. The first holds the **+** menu and available tool
+and terminal controls. The second holds the model picker, reasoning controls, and voice, send or stop actions.
 
 模型控件按“会话显式选择 → 用户记忆 → 会话高级参数 → 个人高级参数 → 控件／模型默认 → 全局默认”取值。
 默认／重置会清除显式选择和旧记忆，显示实际生效值；新格式已有配置优先，不同时维护两份设置。

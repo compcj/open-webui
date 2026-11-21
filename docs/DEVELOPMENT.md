@@ -149,6 +149,40 @@ On a memory-constrained machine report the limitation instead of claiming the bu
 `hatch_build.py` also invokes npm install/build when packaging
 the Python project; `pip install .` is not a lightweight Python-only setup.
 
+### Frontend format and translation verification
+
+Use Node 22 and the installed project dependencies. When changing extractable UI text in Svelte,
+TypeScript or JavaScript, run the same two generators as the `Format & Build` job from the repository
+root. They write files. Use a checkout containing the proposed change so unrelated edits stay safe.
+
+```sh
+npm run format
+npm run i18n:parse
+git diff --stat
+git diff -- src/lib/i18n/locales
+```
+
+The extractor visits every locale in `src/lib/i18n/locales/languages.json`. Review the added and
+removed keys, preserve existing translations and `{{placeholders}}`, and include all affected catalogs
+in the source change. An empty value for an untranslated key is expected and allows English fallback.
+Targeted Prettier, the placeholder validator and Vitest can all pass with missing catalog keys.
+
+With the reviewed candidate committed or staged in an otherwise clean checkout, repeat both generators
+and check the result against the Git index.
+
+```sh
+npm run format
+npm run i18n:parse
+git diff --exit-code
+git ls-files --others --exclude-standard -- src/lib/i18n/locales
+```
+
+The diff must exit zero and the last command must print nothing. A failure at `Ensure working tree is clean`
+means an earlier step changed a tracked file. Inspect the paths in that step's diff, including
+`package-lock.json` if installation changed it. The production build runs after this gate. The
+[November 21 run](https://github.com/compcj/open-webui/actions/runs/44863837636/job/136722995461)
+shows four keys present in English and Simplified Chinese that were missing from the other 62 catalogs.
+
 ## What the existing CI actually checks
 
 - [Workflow and build-script CI](../.github/workflows/actions.yaml) validates workflow structure and
@@ -160,7 +194,8 @@ the Python project; `pip install .` is not a lightweight Python-only setup.
   all other diagnostics remain enabled.
 - [Frontend CI](../.github/workflows/frontend.yaml) runs Node 22. One job runs installation,
   `npm run format`, `npm run i18n:parse`, `git diff --exit-code`, and a production build. Another
-  runs Vitest. The active workflow does not run `npm run check` or ESLint.
+  runs Vitest. Reproduce the [format and translation checks](#frontend-format-and-translation-verification)
+  to diagnose a generated diff. The active workflow does not run `npm run check` or ESLint.
 - [Backend CI](../.github/workflows/backend.yaml) runs Ruff formatting, selected `F` logic checks,
   and the full `backend/tests` pytest suite on Python 3.11/3.12, including when the Actions lockfile
   changes. Tests use locked dependencies with
@@ -246,6 +281,18 @@ Additional boundaries that must survive upstream integration:
 | App interaction permission              | Private interaction versus public writes, post-response write recheck                           | `backend/tests/test_apps_channel_permissions.py`                                                                                                                                         |
 | GCS/Azure completed cache               | Adjacent atomic downloads, concurrent readers and failure cleanup                               | `backend/tests/test_cloud_storage_atomic.py`                                                                                                                                             |
 | Build/release reliability               | Temporary npm caches, bounded Pyodide retries, fixed-commit release notes                       | `scripts/npm-ci.test.js`, `scripts/prepare-pyodide.test.js`, `scripts/prepare-release.test.js`                                                                                           |
+
+These focused checks cover the post-v0.13.3 model picker, chat tools, terminal UI and provider replay.
+
+```sh
+npm run test:frontend -- --run src/lib/components/common/ModelScoreBadge.test.ts src/lib/components/chat/AskUserCard.test.ts src/lib/components/chat/Chat.terminal-events.test.ts src/lib/components/chat/MessageInput/TerminalMenu.test.ts src/lib/components/chat/Chat.browser-tool.test.ts src/lib/components/chat/ChatTabs/tabs.test.ts
+python -m pytest -q backend/tests/test_model_intelligence_score.py backend/tests/test_ask_user.py backend/tests/test_v0133_tether.py backend/tests/test_terminal_browser_tool.py
+python -m pytest -q backend/tests/test_gemini_thought_signatures.py backend/tests/test_streaming_tool_call_dedup.py backend/tests/test_streaming_error_recovery.py backend/tests/test_openai_responses_payload.py backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_v2.py
+```
+
+For composer layout changes, exercise the plus menu, model controls and send/voice actions on both
+sides of the `md` breakpoint. For terminal changes, check that a command refreshes an open directory
+and that a displayed file can open in a background tab while input focus stays in the chat.
 
 ### Fork documentation audit
 

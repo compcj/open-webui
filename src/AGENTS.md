@@ -13,8 +13,11 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   Vite proxies backend routes according to `WEBUI_BACKEND_URL` (default `http://localhost:8080`).
 - Coordinate changes to model metadata, user settings, request payloads, and websocket/streaming
   events with their backend producer or consumer. Distinguish absent values from explicit overrides.
-- Put user-visible text through the existing i18n context (`$i18n.t(...)`). Preserve translation
-  interpolation variables and avoid mass changes to locale files unrelated to the task.
+- Put user-visible text through `$i18n.t(...)`. Keep static `// t('key')` extraction markers for
+  messages looked up dynamically, such as image-engine validation errors passed to `t(error.message)`.
+  Adding, changing, moving or deleting a `t(...)` call can change every configured locale. The parser
+  scans `src/**/*.{js,ts,svelte}` and drops keys with no static reference. Review generated additions
+  and removals across all locales and preserve existing translations and `{{placeholders}}`.
 - Skills edit only `data.files`. `lib/utils/skills.ts` adapts legacy OpenClaw packages and preserves
   unknown metadata; canonical `SKILL.md` supplies frontmatter. Keep non-secret env/config controls,
   gating display, export and explicit dependency install. Use `expected_version_id`; surface 409
@@ -22,10 +25,6 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   imports request `response_format=packages`; keep multi-skill selection and file/history UI.
   The integrations menu filters `user-invocable: false` from OpenClaw compatibility metadata;
   do not assume every mention picker applies that filter or treat it as access control.
-- `npm run i18n:parse` regenerates and formats catalogs from `src/**/*.{js,ts,svelte}`. Inspect
-  added and removed keys, preserve existing translations and placeholders, and verify a second run
-  produces no changes before pushing UI text changes. Dynamic message keys (for example, image-engine
-  validation errors passed to `t(error.message)`) need static `// t('key')` extraction markers.
 - Reuse existing components and styles. Check keyboard interaction, focus, loading/error states,
   narrow screens, and dark mode when affected by a UI change.
 
@@ -43,6 +42,12 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   Selecting an @ model switches the chat's model for subsequent turns. Regenerate with the
   current model in the selected column. Show Input Selections defaults to off and never clears
   the selected tools, skills, filters or capabilities. Check Tab suggestions, IME and narrow screens.
+- Below the `md` breakpoint, keep the composer's plus menu and input selections on their own row,
+  above the model selector, model controls and voice/send actions. From `md` up, use one row.
+- `meta.intelligence_score` is optional display metadata. The model editor saves integers from 0 to
+  99 and clears the field to `null`. Show zero and hide absent or invalid values. Use the same
+  accessible badge before the name in the model picker and `@` suggestions. Keep the score out of
+  inference parameters.
 - Submit only changed top-level UI settings: omission preserves a value, explicit `null` resets it.
   Nested preference maps remain whole fields. Keep ordered saves, account isolation, and error
   feedback; do not send a stale snapshot of every setting.
@@ -99,6 +104,11 @@ Applies to `src/` and its descendants, together with the [root guide](../AGENTS.
   explicit stream `error: null` clears a prior error. Hide superseded split-tool placeholders only
   in rendered output; preserve their raw replay data. Show Thinking for pending empty output,
   including empty native envelopes, but not while waiting for `ask_user` or after completion.
+- Builtin `ask_user` accepts 1–3 questions. Each offers 2–4 presets plus a write-in answer, or a
+  multiline field when options are absent or empty. Enter inserts a newline. Require a nonblank
+  answer per question and preserve pasted whitespace and leading zeros. In main and side chats,
+  bind restored prompts to the reply and tool call. Enable write-ins on older builtin prompts in
+  the UI while preserving stored arguments and honoring native and external `allow_other` flags.
 
 See [version decisions](../docs/upstream/v0.13.3-decisions.md) for rationale and future merge checks.
 
@@ -181,7 +191,11 @@ narrow/dark layouts. See [user guide](../docs/knowledge-write-tools.md) and
 ## Formatting and tests
 
 - `.prettierrc` defines tabs, single quotes, no trailing commas, 100-column print width, and LF.
-  Use the installed Prettier and Svelte plugin on explicit changed paths.
+  Use the installed Prettier and Svelte plugin for targeted checks during editing. For UI text or
+  catalog changes, run the [full format and translation checks](../docs/DEVELOPMENT.md#frontend-format-and-translation-verification).
+  Include required repository-wide formatting and generated catalogs with the source change. Local
+  Prettier checks and hand edits to `en-US` and `zh-CN` can miss changes elsewhere. A second pass
+  of `npm run format` and `npm run i18n:parse` must produce no further tracked changes.
 - Add focused Vitest coverage beside helpers as `*.test.ts` for changed behavior. Prefer observable
   inputs/outputs over assertions tied to implementation text. Existing source-contract tests are
   limited evidence and do not replace an end-to-end check of an affected user workflow.
@@ -248,6 +262,19 @@ execution, selection, Agent resume or preview capability identities.
 Admin Connections exposes default-off Tether independently of Direct Integrations. Omitted fields
 must not clear saved configuration. Saved manual personal terminals/tools still obey Direct Integrations;
 server terminals and server-authorized Tether discovery have their own permissions.
+
+Only the global admin flag `show_files_on_terminal_select` (default false) opens Files when a user
+selects a system or direct terminal at 1024px or wider. Ignore the old personal preference.
+`terminal:run_command` refreshes mounted directory tabs for the selected terminal in place, preserving
+their paths and focus. In tab mode, `display_file` opens or reuses the requested file in the background
+of the originating chat and terminal. Preserve the requested page, active pane and navigation history.
+Inline results stay in the message. A matching filesystem attachment only refreshes its existing preview.
+
+Advertise `terminal_browser_tab` only from the main chat for its selected, enabled terminal. Handle
+`browser_open_tab` on the reply author's socket, claiming the RPC for temporary chats. Recheck the
+actor, chat and selected terminal once the view and terminal features load. Open one blank tab,
+request Chrome if available and return that tab's session ID and actual mode. Model interaction
+requires Chrome. If creation is unconfirmed, inspect `browser_tabs` before retrying.
 
 Proxy previews require the configured independent host. Request opaque tickets from the main API,
 renew active views every 60 seconds, and invalidate stale asynchronous callbacks on terminal/context,

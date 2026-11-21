@@ -111,7 +111,9 @@ unfiltered input; their output receives the frozen model prompt at dispatch. Int
 supported. Preserve content-block cache annotations and final-stop tool definitions. Keep Gemini Chat
 Completions `extra_content.google.thought_signature` opaque and
 separate from `reasoning_details`, with original message/call and batch boundaries. Preserve signed
-text and earlier stream output without repeating tools. See the [replay guide](docs/gemini-cache-replay.md)
+text and earlier stream output without repeating tools. If stream indices are missing or reused,
+pair fragments by provider call ID within the round. Ambiguous fragments leave the affected calls
+incomplete. See the [replay guide](docs/gemini-cache-replay.md)
 and [regression checks](docs/DEVELOPMENT.md#gemini-cache-replay-verification).
 OpenAI-compatible model metadata defaults `reasoning_content_replay` on and
 `extra_body_compatibility` off. Replay only actual upstream reasoning content; keep `reasoning_details`
@@ -144,6 +146,7 @@ Recheck this boundary when merging upstream hidden-context changes. See the
   not competitors for a new batch's allowance. Reserve capped new demand, compact older history first,
   then allocate fairly and reclaim actual savings after each reduction. Count the complete final request,
   including media, references, repeated injection and JSON framing; only unselected new results can shrink.
+  Include Responses `max_output_tokens` in the output reserve using the transport's field precedence.
 - `backend/open_webui/models/chat_tool_result_selections.py` owns saved pending/prepared versions;
   the temporary adapter preserves the same states atomically in its cache. Prepare
   atomically after full budget validation and before transport, revalidating sources and concurrent
@@ -213,6 +216,10 @@ See [backend rules](backend/AGENTS.md#knowledge-write-tools),
   keeps its existing input. Preserve ordered incremental saves and account isolation.
 - Trace frontend/backend contracts together: request fields, defaults, permissions, streaming events,
   persistent settings, and error responses. Test the affected boundary, not only one side.
+- When a change adds, renames, moves or removes UI translation keys, regenerate all configured
+  catalogs and include their generated changes with the source. Review existing translations and
+  interpolation variables. Verify the proposed commit with the same format, extraction and clean-tree
+  checks as [Frontend Build](docs/DEVELOPMENT.md#frontend-format-and-translation-verification).
 - Keep `package.json` and `package-lock.json` consistent. For Python dependency changes, inspect
   `pyproject.toml`, `uv.lock`, and `backend/requirements.txt`; also check `backend/requirements-slim.txt` for shared pins and intentional exclusions. Use the relevant package manager to update locks rather than editing resolution data.
 - Do not hand-edit build output, `.svelte-kit/`, dependency directories, or downloaded Pyodide files.
@@ -326,6 +333,13 @@ turn limit; unsettled work and active-task retry protection remain intact.
 - Model mentions switch subsequent chat turns; regeneration uses the current slot model. Preserve
   remembered controls, reset, precedence and account isolation. Use upstream tabs/split views and
   Controls/+ menu, with Show Input Selections off by default and all fork controls retained.
+- Keep `meta.intelligence_score` optional and display-only (integer 0–99). Builtin `ask_user` accepts
+  1–3 questions with 2–4 presets or a text field. Preserve write-in answers, including whitespace and
+  leading zeros, through approval and saved-chat resume.
+- Terminal command completion refreshes existing directory views in place. File display events can
+  open a background file tab. Only the admin's desktop selection setting opens Files automatically
+  on terminal selection. Main-chat `browser_open_tab` returns the session it actually opened. See
+  [terminal file and browser behavior](docs/TERMINAL_FILES.md).
 - Each Chat instance owns models, task IDs and temporary scope. Layout persistence contains no
   temporary history, scope identity or preview capability. Side chats use raw history projections,
   stripping execution/checkpoint/selection/Agent resume identities before creating a new chat.
