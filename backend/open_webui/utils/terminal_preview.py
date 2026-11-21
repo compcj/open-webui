@@ -24,6 +24,7 @@ PORT_CREATE_RETENTION = 25 * 60 * 60
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{43}$')
 PREVIEW_PATH = re.compile(r'^/p/([A-Za-z0-9_-]{43})(?:/|$)')
 CHROME_TICKET_PATH = re.compile(r'(/browser/view/[^/]+/)[^/]+')
+FILE_DELIVERY_PATH = re.compile(r'/api/v1/terminals/[^/]+/files/(?:download|image)/?')
 IDENTITY_FIELDS = (
     'user_id',
     'login_session',
@@ -234,7 +235,10 @@ class PreviewHostMiddleware:
         original_path = scope.get('path', '')
         redacted = PREVIEW_PATH.sub('/p/[redacted]/', original_path)
         redacted = CHROME_TICKET_PATH.sub(r'\1[redacted]', redacted)
-        if redacted != original_path:
+        route_path = original_path.removeprefix(scope.get('root_path', ''))
+        # The signed ref is the only input on these two delivery routes. Keep
+        # the original query for authorization and omit it from access/audit logs.
+        if redacted != original_path or (scope.get('query_string') and FILE_DELIVERY_PATH.fullmatch(route_path)):
             routed_scope = {**scope, 'safe_log_path': redacted}
             scope['path'], scope['raw_path'], scope['query_string'] = redacted, redacted.encode(), b''
             scope = routed_scope

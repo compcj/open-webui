@@ -229,6 +229,65 @@ def test_managed_connections_preview_tickets_and_generic_proxy_have_distinct_htt
     assert missing.status_code == 404 and missing.json()['detail'] == 'Terminal server not found'
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('root_path', ['', '/webui'])
+async def test_uvicorn_access_logs_hide_file_refs_while_downloads_and_images_remain_authorized(api, caplog, root_path):
+    import asyncio
+    import logging
+    import socket
+
+    import uvicorn
+    from httpx import AsyncClient
+    from open_webui.utils.terminal_preview import PreviewHostMiddleware
+
+    audit_uris = []
+
+    @api.app.middleware('http')
+    async def capture_uri(request, call_next):
+        audit_uris.append(request.scope.get('safe_log_path') or str(request.url))
+        return await call_next(request)
+
+    api.app.add_middleware(PreviewHostMiddleware, settings=AsyncMock(return_value={}))
+    urls = api.urls('/work/image.svg')
+    ref = urlsplit(urls['download_url']).query.split('=', 1)[1]
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+    logger = logging.getLogger('uvicorn.access')
+    server = uvicorn.Server(uvicorn.Config(api.app, http='h11', lifespan='off', log_config=None, root_path=root_path))
+    with socket.socket() as listener, caplog.at_level(logging.INFO, logger=logger.name):
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        logger.addHandler(caplog.handler)
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+            async with AsyncClient(base_url=f'http://127.0.0.1:{port}', trust_env=False) as client:
+                for kind, mime in [('download', 'application/octet-stream'), ('image', 'image/svg+xml')]:
+                    api.state.response = Upstream(svg, 'image/svg+xml')
+                    response = await client.get(urls[kind + '_url'], headers={'Authorization': 'owner'})
+                    assert response.status_code == 200 and response.content == svg
+                    assert response.headers['content-type'] == mime
+                    denied = await client.get(urls[kind + '_url'], headers={'Authorization': 'other'})
+                    assert denied.status_code == 403
+                assert (await client.get('/docs?trace=visible')).status_code == 200
+        finally:
+            server.should_exit = True
+            try:
+                await asyncio.wait_for(task, 10)
+            finally:
+                logger.removeHandler(caplog.handler)
+
+    messages = [record.getMessage() for record in caplog.records if record.name == logger.name]
+    assert any('/docs?trace=visible' in message for message in messages)
+    for kind in ('download', 'image'):
+        assert any('/files/' + kind in message for message in messages)
+    assert len(api.state.calls) == 2
+    assert all(ref not in uri for uri in [*messages, *audit_uris])
+
+
 def test_download_is_authenticated_bound_and_streamed(api):
     url = api.urls()['download_url']
     assert api.client.get(url).status_code == 401
