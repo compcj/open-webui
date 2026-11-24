@@ -3,10 +3,10 @@ name: Workflow and Build Script Checks
 on:
   push:
     branches: [main, dev]
-    paths: ['.github/workflows/**', 'scripts/**', 'Dockerfile']
+    paths: ['.github/workflows/**', 'scripts/**', 'package-lock.json', 'Dockerfile']
   pull_request:
     branches: [main, dev]
-    paths: ['.github/workflows/**', 'scripts/**', 'Dockerfile']
+    paths: ['.github/workflows/**', 'scripts/**', 'package-lock.json', 'Dockerfile']
 
 permissions:
   contents: read
@@ -34,6 +34,11 @@ jobs:
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
           sh scripts/check-workflows.sh "$RUNNER_TEMP/actionlint"
+
+      - name: Install YAML parser for release tests
+        run: |
+          yaml_version=$(node -p "require('./package-lock.json').packages['node_modules/yaml'].version")
+          npm install --prefix scripts --no-save --ignore-scripts --no-audit --no-fund "yaml@$yaml_version"
 
       - name: Test build and release scripts
         run: node --test scripts/*.test.js

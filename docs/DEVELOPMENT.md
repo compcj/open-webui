@@ -120,7 +120,7 @@ whose own comment recommends WSL. These scripts can create local secret/data fil
 | Purpose                    | Command (repository root)                                                                       | Meaning / limitation                                                                 |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Frontend suite, one run    | `npm run test:frontend -- --run`                                                                | Confirm expected tests were collected; the script permits no tests                   |
-| Build/release script tests | `node --test scripts/*.test.js`                                                                 | Node 22 built-in tests; no npm install required; requires Bash (Git Bash on Windows) |
+| Build/release script tests | `node --test scripts/*.test.js`                                                                 | Node 22, Bash (Git Bash on Windows), and the `yaml` version from `package-lock.json` |
 | Workflow validation        | `bash scripts/check-workflows.sh`                                                               | Installed actionlint checks workflow structure and expression contexts               |
 | Focused frontend test      | `npm run test:frontend -- --run src/lib/utils/reasoning-effort.test.ts`                         | Model reasoning selection/default helpers                                            |
 | Svelte/TypeScript          | `npm run check`                                                                                 | Runs SvelteKit sync and svelte-check; writes generated `.svelte-kit` files           |
@@ -188,7 +188,9 @@ shows four keys present in English and Simplified Chinese that were missing from
 - [Workflow and build-script CI](../.github/workflows/actions.yaml) validates workflow structure and
   expression contexts with pinned, checksum-verified actionlint, runs the Node 22 script tests, and
   verifies workflow dependency coverage and provenance with pinned, checksum-verified `gh-actions-lock`.
-  It does not install application dependencies or publish a release.
+  On a fresh checkout, run its `Install YAML parser for release tests` step from the repository root.
+  It installs the version from `package-lock.json` under `scripts/node_modules` for the GHCR tag tests.
+  A normal frontend install also supplies the parser.
   The shared validation script narrowly suppresses actionlint 1.7.12's unsupported-key diagnostic
   for `concurrency.queue` in `release.yml` ([upstream issue](https://github.com/rhysd/actionlint/issues/657));
   all other diagnostics remain enabled.
