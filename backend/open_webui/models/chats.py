@@ -3000,13 +3000,9 @@ class ChatTable:
             return True
         from open_webui.models.shared_chats import SharedChats
 
-        shared = await SharedChats.get_by_chat_id(id, db=db)
-        if (
-            shared
-            and shared.chat.get('share_mode') == 'continue'
-            and await AccessGrants.has_access(
-                user_id=user.id, resource_type='shared_chat', resource_id=id, permission='read', db=db
-            )
+        share_mode = await SharedChats.get_share_mode_by_chat_id(id, db=db)
+        if share_mode == 'continue' and await AccessGrants.has_access(
+            user_id=user.id, resource_type='shared_chat', resource_id=id, permission='read', db=db
         ):
             return True
         if chat.folder_id:

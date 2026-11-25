@@ -150,6 +150,7 @@ async def test_context_usage_persists_accounting_without_a_status_notice():
     accounting = {'model': 'model', 'branch_id': 'a', 'last_tool_batch': {'batch_id': 'silent'}}
     chats = SimpleNamespace(
         save_tool_budget_accounting=AsyncMock(return_value=True),
+        has_chat_access=AsyncMock(return_value=True),
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
@@ -161,7 +162,6 @@ async def test_context_usage_persists_accounting_without_a_status_notice():
         is_saved_chat_id=lambda id: id == 'chat',
         is_temporary_chat_id=lambda id: False,
     )
-    chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
     emitter = await namespace['get_event_emitter']({'user_id': 'owner', 'chat_id': 'chat', 'message_id': 'a'})
     await emitter({'type': 'context_usage', 'data': {'mode': 'v2', 'tool_budget_accounting': accounting}})
@@ -434,6 +434,7 @@ async def test_failed_accounting_write_reports_usage_error_without_status_or_ori
     accounting = {'model': 'model', 'branch_id': 'a', 'last_tool_batch': {'batch_id': 'silent'}}
     chats = SimpleNamespace(
         save_tool_budget_accounting=AsyncMock(return_value=False),
+        has_chat_access=AsyncMock(return_value=True),
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
@@ -445,7 +446,6 @@ async def test_failed_accounting_write_reports_usage_error_without_status_or_ori
         is_saved_chat_id=lambda id: id == 'chat',
         is_temporary_chat_id=lambda id: False,
     )
-    chats.get_accessible_chat_by_id = AsyncMock(return_value=SimpleNamespace(id='chat'))
     load_functions(namespace, 'socket/main.py', {'get_event_emitter'})
     emitter = await namespace['get_event_emitter']({'user_id': 'owner', 'chat_id': 'chat', 'message_id': 'a'})
     event = {'type': 'context_usage', 'data': {'mode': 'v2', 'tool_budget_accounting': accounting}}

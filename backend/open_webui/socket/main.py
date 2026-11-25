@@ -115,7 +115,7 @@ async def get_authorized_chat_session_ids(room, skip_sid=None, chat_id=None):
             if not session:
                 continue
             reader = await Users.get_user_by_id(session['id'])
-            if reader and await Chats.get_accessible_chat_by_id(chat_id, reader):
+            if reader and await Chats.has_chat_access(chat_id, reader):
                 recipients.append(sid)
                 continue
             await sio.leave_room(sid, f'chat:{chat_id}')
@@ -1791,12 +1791,13 @@ async def get_event_emitter(request_info, update_db=True):
         chat_id = request_info['chat_id']
         message_id = request_info['message_id']
         internal = request_info.get('internal') is True
-        save_to_chat = update_db and message_id and is_saved_chat_id(chat_id)
+        saved_chat = is_saved_chat_id(chat_id)
+        save_to_chat = update_db and message_id and saved_chat
 
         if internal and event_data.get('type') == 'notification':
             return
 
-        if event_data.get('type') == 'chat:active' and is_saved_chat_id(chat_id):
+        if event_data.get('type') == 'chat:active' and saved_chat:
             pending_approval_ids = await ChatMessages.get_chat_ids_with_pending_approval([chat_id])
             event_data = {
                 **event_data,
@@ -1830,10 +1831,15 @@ async def get_event_emitter(request_info, update_db=True):
                 }
 
         room = f'user:{user_id}'
-        reader = await Users.get_user_by_id(user_id) if is_saved_chat_id(chat_id) else None
-        author_has_access = not is_saved_chat_id(chat_id) or bool(
-            reader and await Chats.get_accessible_chat_by_id(chat_id, reader)
-        )
+        author_has_access = True
+        if saved_chat:
+            try:
+                reader = await Users.get_user_by_id(user_id)
+                author_has_access = bool(reader and await Chats.has_chat_access(chat_id, reader))
+            except Exception:
+                # Other recipients have independent checks, and the worker still owns persistence.
+                author_has_access = False
+                log.debug('Chat author delivery authorization unavailable')
         if is_temporary_chat_id(chat_id):
             owner = await get_temporary_chat(redis, chat_id)
             room = owner['session_id'] if owner and owner['user_id'] == user_id else request_info.get('session_id')
@@ -1851,7 +1857,7 @@ async def get_event_emitter(request_info, update_db=True):
                 room=room,
             )
 
-        if not internal and is_saved_chat_id(chat_id):
+        if not internal and saved_chat:
             event_type = event_data.get('type')
             shared_event = None
             if event_type in {

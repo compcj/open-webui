@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.utils.chat_context_copy import copy_chat_without_context_state
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import JSON, BigInteger, Column, ForeignKey, Text, delete, select
+from sqlalchemy import JSON, BigInteger, Column, ForeignKey, Text, case, cast, delete, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -155,6 +155,53 @@ class SharedChatsTable:
             if shared_chat:
                 return SharedChatModel.model_validate(shared_chat)
             return None
+
+    async def get_share_mode_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> ChatShareMode:
+        """Return the supported mode of the latest snapshot without transferring its conversation."""
+        async with get_async_db_context(db) as session:
+            # Sort identifiers so the database reads only the winning snapshot's conversation.
+            latest_id = (
+                select(SharedChat.id)
+                .where(SharedChat.chat_id == chat_id)
+                .order_by(SharedChat.updated_at.desc())
+                .limit(1)
+                .correlate(None)
+                .scalar_subquery()
+            )
+            snapshot = SharedChat.chat
+            dialect = session.get_bind().dialect.name
+            if dialect == 'sqlite':
+                # Python's JSON codec permits these numeric values. [] preserves their token
+                # boundaries and cannot turn text into either matching key or mode.
+                normalized = snapshot
+                for number in ('-Infinity', 'Infinity', 'NaN'):
+                    normalized = func.replace(normalized, number, '[]')
+                snapshot = case((func.json_valid(snapshot), snapshot), (func.json_valid(normalized), normalized))
+                # json_extract takes the first duplicate key. Python's JSON readers take the last.
+                # Older SQLite versions also truncate decoded strings at NUL.
+                fields = func.json_each(func.replace(snapshot, r'\u0000', r'\uFFFD')).table_valued('key', 'value', 'id')
+                return await session.scalar(
+                    select(case((fields.c.value == 'continue', 'continue')))
+                    .select_from(SharedChat)
+                    .join(fields, true())
+                    .where(SharedChat.id == latest_id, fields.c.key == 'share_mode')
+                    .order_by(fields.c.id.desc())
+                    .limit(1)
+                )
+            if dialect == 'postgresql':
+                # JSON extraction rejects legacy NULs, unpaired surrogates and characters outside
+                # the database encoding. DEL is representable and cannot create either ASCII token.
+                raw = cast(snapshot, Text)
+                normalized = func.regexp_replace(raw, r'\\u(0000|(?!00[0-7])[0-9a-fA-F]{4})', r'\\u007F', 'g')
+                # json_send exposes the stored JSON bytes to a fast literal escape check.
+                has_unicode_escape = func.pg_catalog.position(func.pg_catalog.json_send(snapshot), b'\\u') > 0
+                snapshot = case((has_unicode_escape, cast(normalized, JSON)), else_=snapshot)
+                mode = snapshot['share_mode'].as_string().collate('C')
+            else:
+                mode = snapshot['share_mode'].as_string()
+            return await session.scalar(
+                select(case((mode == 'continue', 'continue'))).where(SharedChat.id == latest_id)
+            )
 
     async def get_by_user_id(
         self,

@@ -80,10 +80,8 @@ async def runtime(tmp_path, monkeypatch):
 
     shared_module = ModuleType('open_webui.models.shared_chats')
     shared_module.SharedChats = SimpleNamespace(
-        get_by_chat_id=AsyncMock(
-            side_effect=lambda *args, **kwargs: (
-                None if state.folder else SimpleNamespace(chat={'share_mode': state.share_mode})
-            )
+        get_share_mode_by_chat_id=AsyncMock(
+            side_effect=lambda *args, **kwargs: None if state.folder else state.share_mode
         )
     )
     monkeypatch.setitem(sys.modules, shared_module.__name__, shared_module)

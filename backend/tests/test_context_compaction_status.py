@@ -24,7 +24,7 @@ from test_web_tool_citations import load_functions
 async def test_socket_persists_lifecycle_but_not_usage(kind, persist):
     chats = SimpleNamespace(
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
-        get_accessible_chat_by_id=AsyncMock(return_value=SimpleNamespace(id='chat')),
+        has_chat_access=AsyncMock(return_value=True),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
     namespace = dict(
@@ -40,7 +40,7 @@ async def test_socket_persists_lifecycle_but_not_usage(kind, persist):
     status = {'action': 'context_compaction', 'mode': 'v2', 'model': 'model', 'done': True}
     await emitter({'type': kind, 'data': status})
     assert sio.emit.await_args.args[1]['message_id'] == 'a'
-    chats.get_accessible_chat_by_id.assert_awaited_once()
+    chats.has_chat_access.assert_awaited_once_with('chat', SimpleNamespace(id='owner'))
     assert chats.add_message_status_to_chat_by_id_and_message_id.await_count == int(persist)
     if persist:
         chats.add_message_status_to_chat_by_id_and_message_id.assert_awaited_once_with('chat', 'a', status)
@@ -168,7 +168,7 @@ async def test_status_survives_reload_in_both_history_stores(tmp_path, embedded,
 async def test_socket_rejects_non_notifications_before_emit_and_save(data):
     chats = SimpleNamespace(
         add_message_status_to_chat_by_id_and_message_id=AsyncMock(),
-        get_accessible_chat_by_id=AsyncMock(return_value=SimpleNamespace(id='chat')),
+        has_chat_access=AsyncMock(return_value=True),
     )
     sio = SimpleNamespace(emit=AsyncMock(), manager=SimpleNamespace(rooms={'/': {'user:owner': {}}}))
     namespace = dict(

@@ -932,6 +932,10 @@ clone-only reader and stranger identities; revoke a writer's group/share access 
 approvals, stops and socket events are refused. Check nested groups and group model defaults, clone
 snapshot isolation, concurrent shared V2 sends, and explicit skill dependency installation.
 
+Run `python -m pytest -q backend/tests/test_socket_chat_access.py backend/tests/test_shared_chat_access_mode.py`
+to check live delivery, projected SQL columns, and the latest snapshot's decoded share mode. Set
+`TEST_POSTGRES_URL` to a disposable PostgreSQL database to exercise its JSON handling alongside SQLite.
+
 Manually exercise model controls after import, refresh, reset, account switches and direct connections;
 include keyboard/Chinese IME and narrow-screen layout. Run translation extraction twice (`npm run i18n:parse`) and compare locale hashes after each run. Validate links in changed Markdown and run
 Prettier, Ruff and `git diff --check` on actual changed files. Preserve historical decision records.
