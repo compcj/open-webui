@@ -679,6 +679,8 @@ For manual acceptance, configure an OpenAI-compatible model window of 100000 and
 with default ratios and no output reserve the window/trigger must be 100000/90000. Check the
 compaction progress/result on its response, reload persistence, and visibility when model tool
 status updates are disabled. Use synthetic history/provider replies for automated threshold tests.
+The summary performance tests count full payload estimates and tokenizer input on a fixed transcript.
+They also exercise `/health` during planning, cancellation, long text, and media at the budget boundary.
 
 New regression locations:
 
@@ -733,7 +735,7 @@ python --version
 
 ```sh
 python -m pytest backend/tests/test_context_compaction_v2.py backend/tests/test_context_compaction_v2_storage.py backend/tests/test_context_compaction_api.py backend/tests/test_context_compaction_dispatch.py backend/tests/test_context_compaction_legacy.py backend/tests/test_context_compaction_cleanup.py -q
-python -m pytest backend/tests/test_context_compaction_summary_safety.py -q
+python -m pytest backend/tests/test_context_compaction_summary_safety.py backend/tests/test_context_compaction_summary_performance.py -q
 python -m pytest backend/tests/test_context_compaction_model_routing.py backend/tests/test_context_compaction_status.py backend/tests/test_openai_responses_payload.py backend/tests/test_web_tool_citations.py backend/tests/test_image_tool_context.py -q
 python -m pytest backend/tests/test_tool_result_budget.py backend/tests/test_tool_result_budget_integration.py backend/tests/test_tool_result_replay.py backend/tests/test_tool_result_selections.py backend/tests/test_tool_budget_accounting.py backend/tests/test_tool_result_storage.py backend/tests/test_tool_result_adapters.py backend/tests/test_context_compaction_status.py -q
 python -m pytest backend/tests -q

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import importlib
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -101,6 +102,34 @@ async def test_final_guard_enforces_output_after_provider_params_without_context
     assert req.state.metadata == {'chat_id': 'chat'}
     assert parent_state == {'mode': 'v2', 'calibration': {'tokens': 1}}
     assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_final_summary_response_is_decoded_once_off_the_event_loop(summary_runtime, monkeypatch):
+    loop_thread = threading.get_ident()
+    decoded_on = []
+    read_response = v2.response_text
+
+    def observe(response):
+        decoded_on.append(threading.get_ident())
+        return read_response(response)
+
+    monkeypatch.setattr(v2, 'response_text', observe)
+    models = {'summary': {'info': {'meta': {'context_window': 1500}}}}
+    req = SimpleNamespace(state=SimpleNamespace(metadata={}), app=SimpleNamespace(state=SimpleNamespace(MODELS=models)))
+
+    async def send(summary_req, form_data, **kwargs):
+        await apply_context_compaction(summary_req, None, form_data, {}, 'summary')
+        return JSONResponse({'choices': [{'message': {'content': 'handoff'}}]})
+
+    summary_runtime.generate_chat_completion = send
+    assert (
+        await v2.generate_summary(
+            req, None, 'summary', models, [{'role': 'user', 'content': 'notes for Friday'}], '', v2.CompactionSettings()
+        )
+        == 'handoff'
+    )
+    assert len(decoded_on) == 1 and decoded_on[0] != loop_thread
 
 
 @pytest.mark.asyncio

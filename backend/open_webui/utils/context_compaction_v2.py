@@ -16,10 +16,12 @@ import logging
 import math
 import re
 import time
+from bisect import bisect_left, bisect_right
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
+from threading import Event
 from typing import Any
 
 from open_webui.utils.context_compaction_config import CompactionSettings, load_compaction_settings
@@ -30,6 +32,7 @@ log = logging.getLogger(__name__)
 _INTERNAL = ContextVar('context_compaction_v2_internal', default=False)
 HISTORY_START = '<compacted_conversation_history>'
 HISTORY_END = '</compacted_conversation_history>'
+MEDIA_TOKEN_ALLOWANCE = 4096
 DEFAULT_SUMMARY_PROMPT = """Create a concise factual continuation handoff from the conversation data below.
 Preserve the user's goals, constraints, preferences, decisions, exact file/artifact identifiers,
 important tool results, completed work, failures, outstanding questions and next steps.
@@ -246,10 +249,10 @@ class SummaryRequestGuard:
     output_budget: int | None = None
     final_output_reserve: int | None = None
 
-    def enforce(self, payload: dict, model_id: str) -> dict:
+    async def enforce(self, payload: dict, model_id: str) -> dict:
         if model_id != self.model_id:
             raise CompactionFailure('Summary provider changed model; select a dedicated summary model')
-        tokens = estimate_payload_tokens(payload)
+        tokens = await asyncio.to_thread(estimate_payload_tokens, payload)
         # Late provider instructions/schemas or native conversion may add overhead.
         # Attribute any positive delta to fixed content, conservatively; source
         # shortening never licenses more output than the original allocation.
@@ -318,9 +321,9 @@ def estimate_content(value: Any) -> int:
         elif part.get('type') in {'image_url', 'input_image', 'image'}:
             # Image tokens vary by provider/resolution. This intentionally reserves
             # a conservative fixed allowance; it is not provider-reported usage.
-            total += 4096
+            total += MEDIA_TOKEN_ALLOWANCE
         elif part.get('type') in {'input_audio', 'audio', 'video', 'file', 'input_file'}:
-            total += max(4096, estimate_text(part))
+            total += max(MEDIA_TOKEN_ALLOWANCE, estimate_text(part))
         else:
             total += estimate_text(part)
     return total
@@ -342,7 +345,7 @@ def estimate_message(message: dict) -> int:
         'thinking',
     ):
         total += estimate_text(message.get(key))
-    total += 4096 * len(message.get('images') or [])
+    total += MEDIA_TOKEN_ALLOWANCE * len(message.get('images') or [])
     return total
 
 
@@ -383,7 +386,7 @@ def estimate_payload_tokens(payload: dict) -> int:
     native = native_request(payload)
     if native is not None:
         wire, media = native_budget_projection(native[1])
-        return 3 + estimate_text(wire) + 4096 * media
+        return 3 + estimate_text(wire) + MEDIA_TOKEN_ALLOWANCE * media
     return (
         3
         + sum(estimate_message(m) for m in payload.get('messages', []))
@@ -889,11 +892,13 @@ def find_protected_user(messages: list[dict], raw_user: dict) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def summary_units(messages: list[dict]) -> list[str | dict]:
+def summary_units(messages: list[dict], *, check_active=None) -> list[str | dict]:
     """Keep media in native content blocks instead of tokenizing base64 as prose."""
     units = []
     media_types = {'image_url', 'input_image', 'image', 'input_audio', 'audio', 'video', 'file', 'input_file'}
     for message in messages:
+        if check_active is not None:
+            check_active()
         transcript = copy.deepcopy(wire_message(message))
         media = []
         if message.get('_saved_summary_source'):
@@ -939,6 +944,141 @@ def summary_units(messages: list[dict]) -> list[str | dict]:
     return units
 
 
+class _SummarySource:
+    """An indexed transcript. Text offsets count characters; each media block is indivisible."""
+
+    def __init__(self, messages, stopped: Event):
+        self.stopped = stopped
+        self.units = summary_units(messages, check_active=self.check_active)
+        self.boundaries = [0]
+        for unit in self.units:
+            # This width only guides probes. Acceptance always counts the actual payload.
+            width = len(unit) if isinstance(unit, str) else MEDIA_TOKEN_ALLOWANCE
+            self.boundaries.append(self.boundaries[-1] + width)
+        self.end = self.boundaries[-1]
+
+    def check_active(self):
+        if self.stopped.is_set():
+            raise TimeoutError('Summary planning stopped')
+
+    def measure(self, base, instruction, handoff, start, end):
+        self.check_active()
+        texts, media = [], []
+        first = bisect_right(self.boundaries, start) - 1
+        for index in range(first, bisect_left(self.boundaries, end)):
+            self.check_active()
+            unit = self.units[index]
+            if isinstance(unit, str):
+                origin = self.boundaries[index]
+                texts.append(unit[max(0, start - origin) : end - origin])
+            else:
+                media.append(unit)
+        text = f'Previous handoff:\n{handoff}\n\nConversation data fragment (may continue):\n' + '\n'.join(texts)
+        content = [{'type': 'text', 'text': text}, *media] if media else text
+        payload = {
+            **base,
+            'messages': [
+                *base.get('messages', []),
+                {'role': 'system', 'content': instruction},
+                {'role': 'user', 'content': content},
+            ],
+        }
+        self.check_active()
+        return payload, estimate_payload_tokens(payload)
+
+    def _probe_end(self, accepted, target):
+        index = bisect_right(self.boundaries, target) - 1
+        boundary = self.boundaries[index]
+        if boundary > accepted:
+            return boundary
+        if isinstance(self.units[index], str):
+            return target
+        return self.boundaries[index + 1]
+
+    def _smaller_end(self, start, accepted, rejected):
+        first = bisect_right(self.boundaries, accepted)
+        stop = bisect_left(self.boundaries, rejected)
+        if first < stop:
+            return self.boundaries[(first + stop - 1) // 2]
+        # A batch of complete units already fits. Split text only when the
+        # current unit itself needs a smaller piece; never split a media block.
+        if self.boundaries[first - 1] > start or not isinstance(self.units[first - 1], str):
+            return None
+        return (accepted + rejected) // 2 if rejected - accepted > 1 else None
+
+    def fit(self, start, limit, fixed_tokens, measure):
+        width = max(1, limit - fixed_tokens)
+        end = self._probe_end(start, min(start + width, self.end))
+        accepted, rejected, best = start, None, None
+        while end is not None:
+            payload, tokens = measure(end)
+            if tokens <= limit:
+                accepted, best = end, (payload, tokens)
+                if accepted == self.end:
+                    break
+            else:
+                rejected = end
+            if rejected is None:
+                width = 2 * max(width, accepted - start)
+                end = self._probe_end(accepted, min(start + width, self.end))
+            else:
+                end = self._smaller_end(start, accepted, rejected)
+
+        self.check_active()
+        if best is None:
+            unit = self.units[bisect_right(self.boundaries, start) - 1]
+            if isinstance(unit, dict):
+                raise CompactionFailure(
+                    'A media block cannot fit the summary model context; select a larger multimodal summary model'
+                )
+            raise CompactionFailure(
+                'The summary model context cannot fit a source fragment with its instructions and previous handoff; '
+                'choose a larger model or reduce summary output'
+            )
+        payload, tokens = best
+        # Only the winning body is mutable by the provider. Probes share the read-only base.
+        return accepted, copy.deepcopy(payload), tokens
+
+    def reduced(self, previous, summary_tokens):
+        self.check_active()
+        original = estimate_text(previous)
+        for unit in self.units:
+            if original > summary_tokens:
+                return True
+            self.check_active()
+            original += estimate_text(unit) if isinstance(unit, str) else estimate_content([unit])
+        return original > summary_tokens
+
+
+@dataclass(frozen=True)
+class _ProviderSummaryResponse:
+    response: Any
+    final_output_limit: int | None
+
+
+def _summary_result(response, output_limit):
+    from open_webui.utils.context_compaction_dispatch import is_context_limit_error, response_error
+
+    final_limit = None
+    if isinstance(response, _ProviderSummaryResponse):
+        final_limit = response.final_output_limit
+        response = response.response
+    error = response_error(response)
+    if error:
+        if is_context_limit_error(error):
+            raise SummaryContextLimitError(str(error))
+        raise CompactionFailure('Summary provider returned an error; retry or select another summary model')
+    result = response_text(response)
+    if not result:
+        raise CompactionFailure('Summary model returned no final content')
+    tokens = estimate_text(result)
+    if final_limit is not None and tokens > final_limit:
+        raise CompactionFailure('Summary model exceeded its output allowance after provider parameters')
+    if tokens > output_limit:
+        raise CompactionFailure('Summary model exceeded its output allowance; retry or select another summary model')
+    return result, tokens
+
+
 async def progressive_summary(
     messages: list[dict],
     previous: str,
@@ -950,131 +1090,88 @@ async def progressive_summary(
     budget_for=None,
     output_key: str = 'max_tokens',
 ) -> str:
-    """Feed every source character/media block into bounded summary calls.
+    """Send ordered source chunks. Only a successful summary advances the cursor."""
+    from open_webui.utils.context_compaction_dispatch import is_context_limit_error
 
-    A rejected fragment never advances the cursor. Context-limit recovery lowers
-    only the variable fragment allowance, retaining that limit for later chunks.
-    """
-    from open_webui.utils.context_compaction_dispatch import is_context_limit_error, response_error
-
-    units = summary_units(messages)
-    if not units:
-        raise CompactionFailure('No complete history can be summarized')
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    initial_cancels = task.cancelling()
+    stopped = Event()
     instruction = settings.summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT
-    position, offset, summary = 0, 0, previous
-    source_limit = None
-    while position < len(units):
-        deadline = asyncio.get_running_loop().time() + settings.timeout_seconds
+    position, summary, source_limit = 0, previous, None
+    try:
+        async with asyncio.timeout(settings.timeout_seconds) as deadline:
 
-        def payload_for(texts, media):
-            text = f'Previous handoff:\n{summary}\n\nConversation data fragment (may continue):\n' + '\n'.join(texts)
-            content = [{'type': 'text', 'text': text}, *media] if media else text
-            return {
-                **copy.deepcopy(base_payload),
-                'messages': [
-                    *copy.deepcopy(base_payload.get('messages', [])),
-                    {'role': 'system', 'content': instruction},
-                    {'role': 'user', 'content': content},
-                ],
-            }
+            def check_deadline():
+                # Discard buffered success or failure if a transport swallowed cancellation.
+                if task.cancelling() > initial_cancels:
+                    raise asyncio.CancelledError
+                if loop.time() >= deadline.when():
+                    raise TimeoutError
 
-        fixed_tokens = estimate_payload_tokens(payload_for([], []))
-        budget = budget_for(fixed_tokens) if budget_for else None
-        current_input_budget = budget.input_budget if budget else input_budget
-        if fixed_tokens >= current_input_budget or (budget and budget.output_reserve < 1):
-            raise CompactionFailure(
-                'The summary model context cannot fit its instructions, previous handoff and output; '
-                'choose a larger model or reduce summary instructions/output'
-            )
-        for attempt in range(settings.max_retries + 1):
-            text_parts, media_parts = [], []
-            next_position, next_offset = position, offset
-            fragment_budget = (
-                min(current_input_budget, fixed_tokens + source_limit) if source_limit else current_input_budget
-            )
-            while next_position < len(units):
-                unit = units[next_position]
-                if isinstance(unit, dict):
-                    candidate = payload_for(text_parts, [*media_parts, unit])
-                    if estimate_payload_tokens(candidate) > fragment_budget:
-                        if text_parts or media_parts:
-                            break
-                        raise CompactionFailure(
-                            'A media block cannot fit the summary model context; select a larger multimodal summary model'
+            source = await asyncio.to_thread(_SummarySource, messages, stopped)
+            if not source.units:
+                raise CompactionFailure('No complete history can be summarized')
+            while position < source.end:
+                measure = partial(source.measure, base_payload, instruction, summary, position)
+                _, fixed_tokens = await asyncio.to_thread(measure, position)
+                budget = budget_for(fixed_tokens) if budget_for else None
+                current_input_budget = budget.input_budget if budget else input_budget
+                if fixed_tokens >= current_input_budget or (budget and budget.output_reserve < 1):
+                    raise CompactionFailure(
+                        'The summary model context cannot fit its instructions, previous handoff and output; '
+                        'choose a larger model or reduce summary instructions/output'
+                    )
+
+                for attempt in range(settings.max_retries + 1):
+                    limit = (
+                        min(current_input_budget, fixed_tokens + source_limit) if source_limit else current_input_budget
+                    )
+                    end, body, tokens = await asyncio.to_thread(source.fit, position, limit, fixed_tokens, measure)
+                    check_deadline()
+                    if budget:
+                        set_summary_output(body, output_key, budget.output_reserve)
+                    try:
+                        response = await provider(body)
+                        check_deadline()
+                        result, result_tokens = await asyncio.to_thread(
+                            _summary_result, response, budget.output_reserve if budget else input_budget - 1
                         )
-                    media_parts.append(unit)
-                    next_position, next_offset = next_position + 1, 0
-                    continue
-                low, high, best = next_offset + 1, len(unit), None
-                while low <= high:
-                    middle = (low + high) // 2
-                    if (
-                        estimate_payload_tokens(payload_for([*text_parts, unit[next_offset:middle]], media_parts))
-                        <= fragment_budget
-                    ):
-                        best, low = middle, middle + 1
-                    else:
-                        high = middle - 1
-                if best is None:
-                    if text_parts or media_parts:
-                        break
-                    raise CompactionFailure(
-                        'The summary model context cannot fit a source fragment with its instructions and previous handoff; '
-                        'choose a larger model or reduce summary output'
-                    )
-                text_parts.append(unit[next_offset:best])
-                if best < len(unit):
-                    next_offset = best
+                    except Exception as exc:
+                        check_deadline()
+                        if attempt >= settings.max_retries:
+                            if isinstance(exc, CompactionFailure):
+                                raise
+                            raise CompactionFailure(
+                                'Summary request timed out or failed; retry or select another summary model'
+                            ) from exc
+                        if is_context_limit_error(getattr(exc, 'detail', exc)):
+                            tightened = (tokens - fixed_tokens) // 2
+                            if tightened < 1:
+                                raise CompactionFailure(
+                                    'Summary instructions or an indivisible media block exceed the provider context; '
+                                    'choose a larger summary model or reduce its instructions'
+                                ) from exc
+                            source_limit = min(source_limit, tightened) if source_limit else tightened
+                        continue
+
+                    check_deadline()
+                    position, summary = end, result
                     break
-                next_position, next_offset = next_position + 1, 0
-            payload = payload_for(text_parts, media_parts)
-            if budget:
-                set_summary_output(payload, output_key, budget.output_reserve)
-            try:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise asyncio.TimeoutError()
-                response = await asyncio.wait_for(provider(payload), timeout=remaining)
-                error = response_error(response)
-                if error:
-                    if is_context_limit_error(error):
-                        raise SummaryContextLimitError(str(error))
-                    raise CompactionFailure('Summary provider returned an error; retry or select another summary model')
-                result = response_text(response)
-                if not result:
-                    raise CompactionFailure('Summary model returned no final content')
-                result_tokens = estimate_text(result)
-                if result_tokens > (budget.output_reserve if budget else input_budget - 1):
-                    raise CompactionFailure(
-                        'Summary model exceeded its output allowance; retry or select another summary model'
-                    )
-                summary = result
-                position, offset = next_position, next_offset
-                break
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if attempt >= settings.max_retries:
-                    if isinstance(exc, CompactionFailure):
-                        raise
-                    raise CompactionFailure(
-                        'Summary request timed out or failed; retry or select another summary model'
-                    ) from exc
-                if is_context_limit_error(getattr(exc, 'detail', exc)):
-                    actual_fragment = estimate_payload_tokens(payload) - fixed_tokens
-                    tightened = actual_fragment // 2
-                    if tightened < 1:
-                        raise CompactionFailure(
-                            'Summary instructions or an indivisible media block exceed the provider context; '
-                            'choose a larger summary model or reduce its instructions'
-                        ) from exc
-                    source_limit = min(source_limit, tightened) if source_limit else tightened
-    original_tokens = estimate_text(previous) + sum(
-        estimate_content([unit]) if isinstance(unit, dict) else estimate_text(unit) for unit in units
-    )
-    if estimate_text(summary) >= original_tokens:
-        raise CompactionFailure('Summary did not reduce context; reduce summary output or select another summary model')
-    return summary
+                if position < source.end:
+                    deadline.reschedule(loop.time() + settings.timeout_seconds)
+
+            if not await asyncio.to_thread(source.reduced, previous, result_tokens):
+                raise CompactionFailure(
+                    'Summary did not reduce context; reduce summary output or select another summary model'
+                )
+            check_deadline()
+            return summary
+    except TimeoutError as exc:
+        raise CompactionFailure('Summary request timed out or failed; retry or select another summary model') from exc
+    finally:
+        # An in-flight native encode may run to completion, but it cannot start a new probe or send.
+        stopped.set()
 
 
 def get_checkpoint_store():
@@ -1248,21 +1345,16 @@ async def generate_summary(
             allocated,
             output_key,
             current_fixed_tokens,
-            estimate_payload_tokens(body),
+            await asyncio.to_thread(estimate_payload_tokens, body),
             purpose,
             output_budget,
         )
         summary_request.state.context_compaction_summary = guard
         with internal_compaction():
             response = await generate_chat_completion(
-                summary_request, form_data=copy.deepcopy(body), user=user, bypass_system_prompt=True
+                summary_request, form_data=body, user=user, bypass_system_prompt=True
             )
-        if (
-            guard.final_output_reserve is not None
-            and estimate_text(response_text(response)) > guard.final_output_reserve
-        ):
-            raise CompactionFailure('Summary model exceeded its output allowance after provider parameters')
-        return response
+        return _ProviderSummaryResponse(response, guard.final_output_reserve)
 
     return await progressive_summary(
         messages, previous, settings, payload, 0, provider, budget_for=budget_for, output_key=output_key

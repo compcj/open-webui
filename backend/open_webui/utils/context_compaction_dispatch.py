@@ -44,7 +44,7 @@ async def apply_context_compaction(request, user, payload: dict, metadata: dict 
     state = getattr(request.state, 'context_compaction', None)
     summary_guard = getattr(request.state, 'context_compaction_summary', None)
     if isinstance(summary_guard, SummaryRequestGuard):
-        payload = summary_guard.enforce(payload, model_id)
+        payload = await summary_guard.enforce(payload, model_id)
     elif state and state.get('mode') == 'v2' and not is_internal_compaction():
         # Provider-owned conversation history cannot be measured or compacted locally.
         payload.pop('previous_response_id', None)
