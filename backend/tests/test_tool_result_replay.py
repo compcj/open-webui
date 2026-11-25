@@ -345,6 +345,28 @@ class StableReplayTests(IsolatedCase):
         assert result['messages'][-1]['content'] == new['text']
         assert plan.last_batch['processed_tokens'] == 350
 
+    def test_failed_reference_reports_batch_room_separately_from_input_room(self):
+        old = descriptor('new', 'saved', 'x' * 196)
+        new = descriptor('new', 'private-output-id', 'private command output')
+        rows = [{**old, 'state': 'prepared', 'method': 'original', 'allocation': 196}, {**new, 'state': 'pending'}]
+        v2, _, plan, payload, selections = self.make_plan([old, new], rows, limit=1000, chars=True)
+        plan.single = plan.batch = 200
+        with (
+            patch.object(
+                v2, 'estimate_payload_tokens', side_effect=lambda p: sum(len(m['content']) for m in p['messages'])
+            ),
+            self.assertLogs('open_webui.utils.tool_result_budget', level='WARNING') as logs,
+            self.assertRaisesRegex(v2.CompactionFailure, 'tool result reference'),
+        ):
+            asyncio.run(plan.finish(payload))
+        assert len(logs.output) == 1
+        message = logs.output[0]
+        assert 'input_budget=1000 input_remaining_before_allocation=804' in message
+        assert 'result_limit=200 batch_limit=200 batch_remaining_before_allocation=4' in message
+        assert 'allocated_tokens=4' in message and 'reduction_reasons=batch_limit' in message
+        assert 'private' not in message
+        assert selections.rows['new', 'private-output-id']['state'] == 'pending'
+
     def test_partial_race_rechecks_batch_before_fixing_fresh_members(self):
         refs = [descriptor('new', 'first', 'a' * 20), descriptor('new', 'second', 'b' * 50)]
         v2, _, plan, payload, selections = self.make_plan(

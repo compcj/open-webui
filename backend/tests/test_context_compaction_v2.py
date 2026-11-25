@@ -338,6 +338,9 @@ class EngineTests(IsolatedCase):
         self.assertIn('cause=TimeoutError', diagnostic)
         self.assertIn('input_within_budget=True', diagnostic)
         self.assertIn('input_budget=', diagnostic)
+        self.assertIn(
+            f'trigger_input_tokens={m.estimate_payload_tokens(payload)} trigger_threshold=36000 forced=True', diagnostic
+        )
         self.assertIn('summary_model=', diagnostic)
         self.assertIn('timeout_seconds=60', diagnostic)
         self.assertNotIn('private provider', diagnostic)

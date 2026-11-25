@@ -538,6 +538,10 @@ class CompactionFailure(Exception):
     """A recoverable summary failure; caller decides whether original input fits."""
 
 
+class _CheckpointConflict(CompactionFailure):
+    """The summarized sources or checkpoint version changed before persistence."""
+
+
 class SummaryContextLimitError(CompactionFailure):
     """Explicit internal context rejection that can shrink the source fragment."""
 
@@ -1099,6 +1103,7 @@ async def progressive_summary(
     stopped = Event()
     instruction = settings.summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT
     position, summary, source_limit = 0, previous, None
+    stage, tokens = 'fragment_planning', None
     try:
         async with asyncio.timeout(settings.timeout_seconds) as deadline:
 
@@ -1132,15 +1137,17 @@ async def progressive_summary(
                     if budget:
                         set_summary_output(body, output_key, budget.output_reserve)
                     try:
+                        stage = 'summary_call'
                         response = await provider(body)
                         check_deadline()
+                        stage = 'response_validation'
                         result, result_tokens = await asyncio.to_thread(
                             _summary_result, response, budget.output_reserve if budget else input_budget - 1
                         )
                     except Exception as exc:
                         check_deadline()
                         if attempt >= settings.max_retries:
-                            if isinstance(exc, CompactionFailure):
+                            if isinstance(exc, (CompactionFailure, TimeoutError)):
                                 raise
                             raise CompactionFailure(
                                 'Summary request timed out or failed; retry or select another summary model'
@@ -1153,12 +1160,14 @@ async def progressive_summary(
                                     'choose a larger summary model or reduce its instructions'
                                 ) from exc
                             source_limit = min(source_limit, tightened) if source_limit else tightened
+                        stage, tokens = 'fragment_planning', None
                         continue
 
                     check_deadline()
                     position, summary = end, result
                     break
                 if position < source.end:
+                    stage, tokens = 'fragment_planning', None
                     deadline.reschedule(loop.time() + settings.timeout_seconds)
 
             if not await asyncio.to_thread(source.reduced, previous, result_tokens):
@@ -1168,7 +1177,11 @@ async def progressive_summary(
             check_deadline()
             return summary
     except TimeoutError as exc:
-        raise CompactionFailure('Summary request timed out or failed; retry or select another summary model') from exc
+        measured = tokens if tokens is not None else 'unknown'
+        raise CompactionFailure(
+            f'Summary request timed out (stage={stage}, fragment_input_tokens={measured}). '
+            'Retry or select another summary model.'
+        ) from exc
     finally:
         # An in-flight native encode may run to completion, but it cannot start a new probe or send.
         stopped.set()
@@ -1481,6 +1494,30 @@ async def prepare_v2_request(
     before = tokens
     reserved_tokens = tool_plan.reserve(original) if tool_plan else tokens
     did_compact = False
+    fit_tools_before_checkpoint = False
+
+    async def finish_tools(body, *, on_fitted=None):
+        try:
+            return await tool_plan.finish(body, on_fitted=on_fitted)
+        except CompactionFailure as exc:
+            from fastapi import HTTPException
+
+            if isinstance(exc, _CheckpointConflict):
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            await emit_event(
+                metadata,
+                'tool_result_compaction',
+                {
+                    'mode': 'v2',
+                    'model': model_id,
+                    'action': 'tool_result_compaction',
+                    'done': True,
+                    'error': True,
+                    'description': str(exc),
+                },
+            )
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if force or reserved_tokens >= budget.threshold or reserved_tokens > budget.input_budget:
         await emit_event(
             metadata,
@@ -1582,6 +1619,17 @@ async def prepare_v2_request(
                 if not expanded > allowed:
                     expanded = select_available(0, all_optional=True)
                 if not expanded > allowed:
+                    # The reservation is a target for history retention. Once all
+                    # optional groups are covered, fit the new results to the
+                    # space actually freed before giving up this smaller history.
+                    if (
+                        after < reserved_tokens
+                        and admit_tools
+                        and tool_plan
+                        and tool_plan.batches(result, pending_only=True)
+                    ):
+                        fit_tools_before_checkpoint = True
+                        break
                     if after >= before:
                         raise CompactionFailure(
                             'Summary did not reduce context; reduce summary output or select another summary model'
@@ -1608,45 +1656,64 @@ async def prepare_v2_request(
                 'summary': summary.strip(),
                 'source_scope': 'saved_history_v1' if state['shared_history'] else None,
             }
-            saved = await store.save_checkpoint(data, expected_version=expected_version)
-            if saved is None:
-                raise CompactionFailure('History changed or another compaction finished; retry using the latest chat')
-            original, tokens, source, did_compact = result, after, None, True
-            await emit_event(
-                metadata,
-                'context_compaction',
-                {
-                    **usage_data(after, budget, model_id),
+
+            async def save_checkpoint(after_tokens):
+                nonlocal did_compact
+                if await store.save_checkpoint(data, expected_version=expected_version) is None:
+                    raise _CheckpointConflict(
+                        'History changed or another compaction finished; retry using the latest chat'
+                    )
+                did_compact = True
+                status = {
+                    **usage_data(after_tokens, budget, model_id),
                     'action': 'context_compaction',
                     'description': 'Context compacted',
                     'done': True,
                     'before_tokens': before,
-                    'after_tokens': after,
-                },
-            )
+                    'after_tokens': after_tokens,
+                }
+                # The checkpoint is durable even if its notification overlaps a stop.
+                notification = asyncio.create_task(emit_event(metadata, 'context_compaction', status))
+                try:
+                    await asyncio.shield(notification)
+                except asyncio.CancelledError:
+                    await notification
+                    raise
+
+            if fit_tools_before_checkpoint:
+                result = await finish_tools(result, on_fitted=save_checkpoint)
+            else:
+                await save_checkpoint(after)
+            original, tokens, source = result, after, None
         except asyncio.CancelledError:
-            await emit_event(
-                metadata,
-                'context_compaction',
-                {
-                    'mode': 'v2',
-                    'model': model_id,
-                    'action': 'context_compaction',
-                    'done': True,
-                    'error': True,
-                    'description': 'Context compaction cancelled; raw history and previous checkpoint preserved',
-                },
-            )
-            raise
-        except ContextStoreError:
-            # Storage loss/fencing cannot degrade into an unchecked raw send.
+            if not did_compact:
+                await emit_event(
+                    metadata,
+                    'context_compaction',
+                    {
+                        'mode': 'v2',
+                        'model': model_id,
+                        'action': 'context_compaction',
+                        'done': True,
+                        'error': True,
+                        'description': 'Context compaction cancelled; raw history and previous checkpoint preserved',
+                    },
+                )
             raise
         except Exception as exc:
+            if did_compact:
+                raise  # History succeeded. A subsequent selection error belongs to the tool operation.
+            cause = exc.__cause__ or exc.__context__
+            failure = (
+                exc.__cause__ if fit_tools_before_checkpoint and isinstance(exc.__cause__, CompactionFailure) else exc
+            )
             description = (
-                str(exc)
-                if isinstance(exc, CompactionFailure)
+                str(failure)
+                if isinstance(failure, CompactionFailure)
                 else 'Context compaction failed; retry or change the summary model'
             )
+            if isinstance(exc, ContextStoreError):
+                description = f'Context compaction storage error ({exc.code})'
             await emit_event(
                 metadata,
                 'context_compaction',
@@ -1663,13 +1730,13 @@ async def prepare_v2_request(
             # reason for those and only the type of any underlying exception.
             log_reason = (
                 'Summary request exceeds the context limit'
-                if isinstance(exc, SummaryContextLimitError)
+                if isinstance(failure, SummaryContextLimitError)
                 else description
             )
-            cause = exc.__cause__ or exc.__context__
             log.warning(
                 'V2 compaction failed: failure=%s cause=%s reason=%r '
                 'input_tokens=%d input_budget=%d input_within_budget=%s tool_budget_pending=%s '
+                'trigger_input_tokens=%d trigger_threshold=%d forced=%s '
                 'summary_model=%r timeout_seconds=%s',
                 type(exc).__name__,
                 type(cause).__name__ if cause is not None else 'none',
@@ -1678,9 +1745,16 @@ async def prepare_v2_request(
                 budget.input_budget,
                 before <= budget.input_budget,
                 bool(tool_plan),
+                reserved_tokens,
+                budget.threshold,
+                force,
                 settings.summary_model or model_id,
                 settings.timeout_seconds,
             )
+            if fit_tools_before_checkpoint or isinstance(exc, ContextStoreError):
+                # Neither a failed fit against the smallest history nor a storage
+                # conflict can be recovered by falling back to the larger request.
+                raise
             if before > budget.input_budget and not tool_plan:
                 from fastapi import HTTPException
 
@@ -1688,31 +1762,10 @@ async def prepare_v2_request(
                     status_code=400,
                     detail=f'Context exceeds the input budget ({before}/{budget.input_budget} tokens). {description}',
                 ) from exc
-    if tool_plan and admit_tools:
-        try:
-            original = await tool_plan.finish(original)
-        except asyncio.CancelledError:
-            raise
-        except CompactionFailure as exc:
-            from fastapi import HTTPException
-
-            await emit_event(
-                metadata,
-                'tool_result_compaction',
-                {
-                    'mode': 'v2',
-                    'model': model_id,
-                    'action': 'tool_result_compaction',
-                    'done': True,
-                    'error': True,
-                    'description': str(exc),
-                },
-            )
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        tokens, source = estimate_payload_tokens(original), None
-    elif tool_plan:
-        # A manual history-only action has no following provider send. Pending
-        # tools remain unadopted and usage describes their actual current text.
+    if tool_plan:
+        if admit_tools and not fit_tools_before_checkpoint:
+            original = await finish_tools(original)
+        # Manual history compaction reports current text without adopting pending results.
         tokens, source = estimate_payload_tokens(original), None
     # A prefill must remain the final assistant message for the provider to continue it.
     if (

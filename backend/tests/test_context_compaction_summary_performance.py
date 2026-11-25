@@ -193,7 +193,9 @@ def test_stopping_planning_settles_before_worker_release_and_never_sends(monkeyp
                 with pytest.raises(asyncio.CancelledError):
                     await task
             else:
-                with pytest.raises(v2.CompactionFailure, match='timed out'):
+                with pytest.raises(
+                    v2.CompactionFailure, match=r'timed out .*stage=fragment_planning, fragment_input_tokens=unknown'
+                ):
                     await asyncio.wait_for(asyncio.shield(task), timeout=8)
             assert not returned.is_set(), f'{stop} did not settle until the planning worker returned'
         finally:
@@ -232,9 +234,36 @@ async def test_provider_returning_after_cancellation_cannot_finish_summary(stop)
         with pytest.raises(asyncio.CancelledError):
             await task
     else:
-        with pytest.raises(v2.CompactionFailure, match='timed out'):
+        with pytest.raises(v2.CompactionFailure, match=r'timed out .*stage=summary_call, fragment_input_tokens=\d+'):
             await task
     assert len(sends) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stage', ['summary_call', 'response_validation'])
+async def test_summary_timeout_reports_final_attempt_without_provider_body(stage, monkeypatch):
+    calls = []
+
+    def timeout(*args):
+        raise TimeoutError('private upstream response')
+
+    async def provider(body):
+        calls.append(v2.estimate_payload_tokens(body))
+        if stage == 'summary_call':
+            timeout()
+        return completion('handoff')
+
+    if stage == 'response_validation':
+        monkeypatch.setattr(v2, '_summary_result', timeout)
+    cfg = v2.CompactionSettings(max_retries=1, timeout_seconds=60)
+    with pytest.raises(v2.CompactionFailure) as error:
+        await v2.progressive_summary(
+            [{'role': 'user', 'content': 'private command text'}], '', cfg, {}, 16000, provider
+        )
+    assert len(calls) == 2
+    assert f'stage={stage}, fragment_input_tokens={calls[-1]}' in str(error.value)
+    assert isinstance(error.value.__cause__, TimeoutError)
+    assert 'private' not in str(error.value)
 
 
 @pytest.mark.asyncio

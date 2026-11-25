@@ -1,5 +1,6 @@
 """Exercise projections, source storage, replay and exact rereading together."""
 
+import asyncio
 import copy
 import importlib
 import json
@@ -7,7 +8,208 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 from test_tool_result_storage import database, edit, descriptor
+
+
+@pytest_asyncio.fixture
+async def checkpointed_commands(database):
+    from open_webui.utils import context_compaction_v2 as v2
+
+    with patch.multiple(
+        importlib.import_module('open_webui.env'),
+        CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE=1024,
+        ENABLE_ORJSON=False,
+        create=True,
+    ):
+        from open_webui.utils.misc import convert_output_to_messages
+
+    db = database
+    settings = v2.CompactionSettings(mode='v2', default_context_window=4096, recent_tokens=0, reminder_enabled=False)
+    state = dict(mode='v2', settings=settings, chat_id='chat', user_message_id='u', metadata={'message_id': 'a'})
+    request = SimpleNamespace(state=SimpleNamespace(context_compaction=state))
+    user = {'role': 'user', 'content': db.raw['u']['content'], '_context_message_id': 'u'}
+    payload = {'model': 'model', 'messages': [user]}
+    output = []
+    handoffs = []
+
+    async def append_command(call_id, text):
+        call = {'call_id': call_id, 'status': 'completed'}
+        batch = [
+            {**call, 'type': 'function_call', 'id': 'fc-' + call_id, 'name': 'run_command', 'arguments': '{}'},
+            {
+                **call,
+                'type': 'function_call_output',
+                'id': 'out-' + call_id,
+                'output': [{'type': 'input_text', 'text': text}],
+            },
+        ]
+        output.extend(batch)
+        await edit(db, 'a', output=output)
+        messages = convert_output_to_messages(batch, raw=True, flatten_tool_images=True, include_tool_result_refs=True)
+        for message in messages:
+            message['_context_message_id'] = 'a'
+            for ref in message.get('_tool_result_refs', []):
+                ref['message_id'] = 'a'
+        payload['messages'].extend(messages)
+        return messages[-1]['_tool_result_refs'][0]
+
+    async def summarize(req, actor, model, models, messages, previous, settings, *, purpose='history', **kwargs):
+        if purpose == 'tool':
+            return 'Command completed with exit code 0.'
+        handoffs.append(previous)
+        return f'Handoff {len(handoffs)}'
+
+    async def prepare(**options):
+        return await v2.prepare_v2_request(request, None, payload, {}, 'model', {'model': {}}, **options)
+
+    with (
+        patch.object(v2, 'load_stored_models', AsyncMock(return_value={})),
+        patch.object(v2, 'generate_summary', side_effect=summarize),
+        patch.object(v2, 'emit_event', AsyncMock()) as emit,
+    ):
+        for call_id in ('one', 'two'):
+            await append_command(call_id, f'{call_id} completed. ' * 80)
+            await prepare(force=True, admit_tools=False)
+        checkpoints = v2.get_checkpoint_store()
+        assert await checkpoints.latest_version('chat', 'model') == 2
+
+        await append_command('recent', 'Previous command output. ' * 250)
+        ref = await append_command('current', 'Current command output. ' * 500)
+        assert await db.selections.register_pending('chat', 'model', [ref], branch_id='a')
+        call, result = payload['messages'][-2:]
+        prefix = [v2.history_message('Handoff 3'), user, call]
+        fixed = v2.estimate_payload_tokens({**payload, 'messages': [*prefix, {**result, 'content': ''}]})
+        effective = v2.resolve_budget(settings, 'model', {}, payload).input_budget
+
+        async def send(room):
+            payload['max_tokens'] = effective - fixed - room
+            original = copy.deepcopy(payload)
+            try:
+                return await prepare()
+            finally:
+                assert payload == original
+
+        emit.reset_mock()
+        yield SimpleNamespace(
+            send=send,
+            checkpoints=checkpoints,
+            prefix=prefix,
+            fixed=fixed,
+            text=ref['text'],
+            handoffs=handoffs,
+            emit=emit,
+            v2=v2,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['summary', 'excerpt'])
+async def test_run_command_after_two_history_checkpoints(database, checkpointed_commands, method, monkeypatch):
+    from open_webui.utils.tool_result_budget import ToolBudgetPlan
+
+    case = checkpointed_commands
+    if method == 'excerpt':
+        monkeypatch.setattr(ToolBudgetPlan, 'summarize', AsyncMock(side_effect=TimeoutError))
+    sent = await case.send(room=120)
+    assert sent['messages'][:-1] == case.prefix
+    assert case.v2.estimate_payload_tokens(sent) <= case.fixed + 120
+    (selected,) = await database.selections.list_selections('chat', 'model', 'a')
+    assert selected['state'] == 'prepared' and selected['result_id'] in sent['messages'][-1]['content']
+    assert selected['method'] == method
+    assert (await database.store.get_result(selected['result_id'], branch_id='a'))['text'] == case.text
+    assert await case.send(room=120) == sent
+    assert await case.checkpoints.latest_version('chat', 'model') == 3
+    assert case.handoffs == ['', 'Handoff 1', 'Handoff 2']
+
+
+@pytest.mark.asyncio
+async def test_run_command_reference_still_must_fit(database, checkpointed_commands, caplog):
+    from fastapi import HTTPException
+
+    case = checkpointed_commands
+    with pytest.raises(
+        HTTPException, match=r'tool result reference \(allocated 0 tokens, reference requires \d+'
+    ) as error:
+        await case.send(room=0)
+    assert error.value.status_code == 400
+    (diagnostic,) = [
+        record.getMessage() for record in caplog.records if record.name == 'open_webui.utils.tool_result_budget'
+    ]
+    failure = next(
+        call.args[2]
+        for call in case.emit.await_args_list
+        if call.args[2].get('tool') == 'run_command' and call.args[2].get('error')
+    )
+    assert 'input_remaining_before_allocation=0' in diagnostic and 'input_space' in diagnostic
+    assert f'operation_id={failure["operation_id"]}' in diagnostic
+    assert await case.checkpoints.latest_version('chat', 'model') == 2
+    (selected,) = await database.selections.list_selections('chat', 'model', 'a')
+    assert selected['state'] == 'pending'
+
+
+@pytest.mark.asyncio
+async def test_cancelling_during_checkpoint_notification_preserves_success(database, checkpointed_commands):
+    case = checkpointed_commands
+    notifying, release = asyncio.Event(), asyncio.Event()
+    delivered = []
+
+    async def emit(metadata, kind, data):
+        if kind == 'context_compaction' and data['done']:
+            notifying.set()
+            await release.wait()
+            delivered.append(data)
+
+    case.emit.side_effect = emit
+    sending = asyncio.create_task(case.send(room=120))
+    try:
+        await asyncio.wait_for(notifying.wait(), timeout=10)
+        sending.cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+    assert len(delivered) == 1 and not delivered[0].get('error')
+    assert await case.checkpoints.latest_version('chat', 'model') == 3
+    (selected,) = await database.selections.list_selections('chat', 'model', 'a')
+    assert selected['state'] == 'pending'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['stale-checkpoint', 'store-unavailable', 'cancelled', 'selection-conflict'])
+async def test_run_command_fit_failure_preserves_durable_outcome(database, checkpointed_commands, failure):
+    from fastapi import HTTPException
+    from open_webui.utils.context_store_errors import ContextUnavailable
+
+    case = checkpointed_commands
+    if failure == 'selection-conflict':
+        target = patch.object(database.selections, 'prepare_selections', AsyncMock(return_value=None))
+        expected = HTTPException
+    else:
+        expected = {
+            'stale-checkpoint': HTTPException,
+            'store-unavailable': ContextUnavailable,
+            'cancelled': asyncio.CancelledError,
+        }[failure]
+        target = patch.object(
+            case.checkpoints,
+            'save_checkpoint',
+            AsyncMock(return_value=None, side_effect=None if expected is HTTPException else expected),
+        )
+    with target, pytest.raises(expected) as error:
+        await case.send(room=120)
+    if expected is HTTPException:
+        assert error.value.status_code == 409
+    stored = failure == 'selection-conflict'
+    assert await case.checkpoints.latest_version('chat', 'model') == (3 if stored else 2)
+    history_events = [call.args[2] for call in case.emit.await_args_list if call.args[1] == 'context_compaction']
+    assert [event['done'] for event in history_events] == [False, True]
+    assert bool(history_events[-1].get('error')) == (not stored)
+    tool_events = [call.args[2] for call in case.emit.await_args_list if call.args[1] == 'tool_result_compaction']
+    assert [event['done'] for event in tool_events] == [False, True]
+    assert tool_events[-1]['error'] and tool_events[-1]['operation_id'] == tool_events[0]['operation_id']
+    (selected,) = await database.selections.list_selections('chat', 'model', 'a')
+    assert selected['state'] == 'pending'
 
 
 @pytest.mark.asyncio

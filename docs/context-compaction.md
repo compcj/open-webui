@@ -249,6 +249,8 @@ D = min(本批剩余额度, sum(min(新结果原文 tokens, S)))
 每次处理当前超额原文最大的结果，并列按调用顺序；得到摘要／摘录后按实际长度回收空间、重新分配。
 其他原文能放下就直接保留，不为每个结果预先耗尽分配额度。最终连同引用、重复注入和 JSON 包装重新计数；
 若仍超过 B，仅调整尚未固定的新结果，通过替换后的完整请求寻找可用摘录长度。无法容纳必需内容才停止。
+若所有可压缩的历史都已纳入摘要，新工具结果可以使用小于预留额度的剩余空间。
+此时先验证带摘要或摘录的完整请求，再保存历史检查点。若连原始结果引用也放不下，错误会显示实际分配和引用所需的 token 数。
 
 例如固定输入 120000、历史已采用摘要 10000、新结果 19000，B 为 223000 且单项／批次上限足够时，
 约 149000 的总输入应保留新结果原文。历史原文即使很长，也不会再次争夺工具额度。
@@ -266,6 +268,9 @@ allocate new results, reduce the largest over-budget original first (call order 
 reclaim its actual savings and reallocate. Keep remaining originals when they fit. The final check counts
 citations, repeated injection and JSON framing; only unselected new results may shrink, using complete
 request measurements rather than an assumed text-token subtraction. Fail if required content cannot fit.
+After all eligible history has been summarized, a new result can use less than its reservation.
+The complete request with the projected result must fit before the history checkpoint is saved. If the
+reference to the original result cannot fit, the error reports the allocated and required token counts.
 For fixed input 120000 + selected history 10000 + incoming 19000, B=223000 and sufficient S/Q, the roughly
 149000-token input keeps the new result raw. Historical raw sizes do not compete again. With 70000 fixed
 history + 30000 desired new tokens and B=95000, compact history first.
@@ -412,7 +417,12 @@ selected mode, requires chat ownership and is unavailable while a response is ac
 诊断“压缩失败后继续生成，再断流”时，先查看后端 `V2 compaction failed` 日志中的 `reason`、
 `cause`、`summary_model` 和 `timeout_seconds`，再比较 `input_tokens` 与 `input_budget`。
 `tool_budget_pending=True` 表示还需完成工具结果预算校验，不能仅凭这条日志认定请求可以发送。
+`trigger_input_tokens` 包含新工具结果的预留量，可以与 `trigger_threshold` 对照；`forced` 标识强制压缩。
 摘要超时的底层异常类型为 `TimeoutError`；空摘要、无有效缩减等原因由 `reason` 区分。
+超时原因中的 `stage` 可区分本地分块（`fragment_planning`）、调用摘要模型（`summary_call`）和校验返回结果（`response_validation`）。
+`fragment_input_tokens` 是当前分块在发送前的估算，尚未完成估算时为 `unknown`。模型调用包括最终发送校验，是否到达上游需对照上游日志。
+分配额度放不下工具结果的必要内容时，用 `operation_id` 对应该回复的工具状态。后台记录分配前的输入余量和批次余量、实际分配及缩减原因。
+刷新后的“已保存历史估算”按当前分支重算，“最近工具批次”显示最近一次有效采用记录；失败尝试的分配见对应的失败状态。
 随后出现的 `ClientPayloadError` 表示响应传输不完整，本身不能证明上下文超限。
 Chat Completions 停止自动重试时，`reason=stream_committed` 表示已收到阻止重发的事件或缓冲达到上限；
 这包括思考、正文、工具、用量、结束及未知事件。`reason=retry_exhausted` 表示第二次请求也失败；
@@ -420,8 +430,14 @@ Chat Completions 停止自动重试时，`reason=stream_committed` 表示已收�
 
 For a compaction warning followed by a stream interruption, inspect the V2 log's reason, cause type,
 summary model, timeout and input budget first. Pending tool budgeting still needs to pass before
-transport. A later incomplete-transfer error alone does not establish context overflow. Chat
-Completions logs distinguish a committed stream from an exhausted retry; commitment includes
+transport. A later incomplete-transfer error alone does not establish context overflow. Internal
+summary timeouts report the local fragment planning, model call or response validation stage and the
+estimated fragment input when measured. The model call includes final dispatch checks. Compare
+`trigger_input_tokens` with `trigger_threshold` and check `forced` to identify the trigger. A rejected
+tool allocation logs the remaining input and batch allowances, the allocation and its reasons. Match
+its operation ID to the tool status. On reload, usage is a current saved-history estimate and the
+latest complete batch shows a selection prepared for sending.
+Chat Completions logs distinguish a committed stream from an exhausted retry; commitment includes
 substantive or unknown events and the prelude buffer limit. Diagnostic fields exclude request,
 provider-error and exception-chain bodies.
 
